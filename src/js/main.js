@@ -11,4 +11,7 @@ import '../../vendor/vfs.js';            // → VFS, IDBBackend, OPFSBackend, FS
 import '../../vendor/bridge-client.js';  // → gcuFetch, hasBridge, bridgeVersion, clearBridgeCache
 import './store/schema.js';              // data model + helpers (before store)
 import './store/store.js';               // → Store (uses VFS + schema globals)
+import './parse/xml.js';                 // → parseXml (before feed)
+import './parse/sanitize.js';            // → sanitizeHtml (before feed)
+import './adapters/feed.js';             // → parseFeed, feedAdapter (uses xml/sanitize/schema)
 import './boot.js';                      // boots on DOMContentLoaded

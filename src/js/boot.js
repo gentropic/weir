@@ -3,7 +3,8 @@
 // this; for now it proves storage + bridge connectivity end to end.
 
 import { Store } from './store/store.js';
-import { hasBridge, bridgeVersion } from '../../vendor/bridge-client.js';
+import { parseFeed, feedAdapter } from './adapters/feed.js';
+import { hasBridge, bridgeVersion, gcuFetch } from '../../vendor/bridge-client.js';
 
 const VERSION = '__WEIR_VERSION__';        // replaced at build time
 const BUILD_DATE = '__WEIR_BUILD_DATE__';  // replaced at build time
@@ -29,6 +30,22 @@ function renderCounts(store) {
   setText('topbar-sub', feeds ? `${c.unread} unread · ${feeds} source${feeds === 1 ? '' : 's'}` : 'no feeds yet');
 }
 
+// Console dev hook (pre-poller): fetch a feed through the bridge, parse it with
+// the feed adapter, and store the items. Lets the whole vertical slice be driven
+// from the devtools console before the poller + stream UI exist:
+//   await __weir.addFeed('https://hnrss.org/frontpage')
+async function addFeed(url, opts = {}) {
+  const store = window.__weirStore;
+  if (!store) throw new Error('store not ready');
+  const feed = await store.putFeed({ url, name: opts.name || url, adapter: 'feed', ...opts });
+  const res = await gcuFetch(url);
+  const items = await feedAdapter.parse(res, feed);
+  const r = await store.upsertItems(items);
+  await store.flush();
+  console.log(`[weir] ${feed.id}: +${r.inserted} new · ${r.updated} updated · ${r.skipped} skipped`);
+  return r;
+}
+
 async function probeBridge() {
   try {
     if (!(await hasBridge())) { setText('bridge-status', 'bridge: not detected'); return; }
@@ -47,7 +64,8 @@ async function boot() {
   let store;
   try {
     store = await Store.open({ backend: { type: 'idb', name: 'weir' } });
-    window.__weirStore = store;   // for console poking during dev
+    window.__weirStore = store;
+    window.__weir = { store, addFeed, parseFeed, feedAdapter, gcuFetch };   // dev console API
   } catch (e) {
     setText('vfs-status', `store init failed: ${e.message}`);
     setText('backend-status', 'store: unavailable');

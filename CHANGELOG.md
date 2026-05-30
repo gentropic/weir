@@ -6,6 +6,24 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### feed adapter + parsers — 2026-05-30
+
+- `src/js/parse/xml.js`: minimal, tolerant XML parser (no DOMParser dependency —
+  runs in node and the browser). Handles CDATA, comments, entities, namespace
+  prefixes; forgiving of malformed close tags.
+- `src/js/parse/sanitize.js`: pragmatic v0.1 HTML sanitizer — strips scripts,
+  event handlers, and javascript:/data: URLs; suppresses `<img src>` to
+  `data-weir-src` unless the feed allows images (SPEC §2). Flagged for a
+  DOM-grade replacement later.
+- `src/js/adapters/feed.js`: the `feed` adapter — RSS 2.0 / RSS 1.0 (RDF) /
+  Atom 1.0 / JSON Feed → raw Items. Feed-scoped stable ids (guid/id/link, hashed
+  fallback), RFC822 + ISO date parsing, podcast/audio + thumbnail media, and
+  `detectFeedUrl` autodiscovery.
+- Console dev hook `__weir.addFeed(url)` (boot): fetch via the bridge → parse →
+  store, so the whole slice is drivable from devtools before the poller/UI land.
+- Tests: `tools/smoke-feed.mjs` (RSS/Atom/JSON fixtures + store round-trip);
+  folded into `npm run smoke`.
+
 ### Storage layer + bridge probe — 2026-05-30
 
 - VFS-backed store (`src/js/store/`): `schema.js` (Item/Feed/Tag/Settings, retention
