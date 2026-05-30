@@ -1,6 +1,5 @@
-<!-- weir v0.1 shell — two-pane layout (source rail + item stream). Static
-     placeholders; data wiring (feeds, items, sparklines) comes with the store
-     and adapters. IDs here are read by src/js/boot.js. -->
+<!-- weir v0.1 shell — two-pane layout. The rail's Sources list and the stream
+     are rendered by src/js/ui/app.js; the status bar is wired by boot.js. -->
 <div class="app">
 
   <!-- ── Source rail ── -->
@@ -12,14 +11,14 @@
 
     <nav class="rail-section">
       <div class="rail-label">Views</div>
-      <div class="navrow active"><span class="lbl"><span class="ico ico-inbox">⬓</span> Inbox</span><span class="count" id="count-inbox">0</span></div>
-      <div class="navrow"><span class="lbl"><span class="ico">★</span> saved</span><span class="count" id="count-saved">0</span></div>
-      <div class="navrow"><span class="lbl"><span class="ico">▤</span> archived</span><span class="count" id="count-archived">0</span></div>
+      <div class="navrow active" data-view="inbox"><span class="lbl"><span class="ico ico-inbox">⬓</span> Inbox</span><span class="count" id="count-inbox">0</span></div>
+      <div class="navrow" data-view="saved"><span class="lbl"><span class="ico">★</span> saved</span><span class="count" id="count-saved">0</span></div>
+      <div class="navrow" data-view="archived"><span class="lbl"><span class="ico">▤</span> archived</span><span class="count" id="count-archived">0</span></div>
     </nav>
 
     <div class="rail-section">
       <div class="rail-label">Sources</div>
-      <div class="rail-empty">No sources yet</div>
+      <div id="sources"><div class="rail-empty">No sources yet</div></div>
     </div>
   </aside>
 
@@ -27,39 +26,30 @@
   <main class="main">
     <div class="topbar">
       <div class="title">
-        <h1>Inbox</h1>
-        <span class="sub" id="topbar-sub">no feeds yet</span>
+        <h1 id="view-title">Inbox</h1>
+        <span class="sub" id="view-sub">no feeds yet</span>
       </div>
       <div class="actions">
-        <div class="keyhint"><kbd>j</kbd><kbd>k</kbd><kbd>r</kbd><kbd>s</kbd><kbd>?</kbd></div>
+        <input id="search-input" class="field" type="search" placeholder="search… (/)" autocomplete="off" spellcheck="false">
+        <form id="addfeed" autocomplete="off">
+          <input id="addfeed-input" class="field" type="text" placeholder="add feed URL…" autocomplete="off" spellcheck="false">
+        </form>
+        <div class="keyhint"><kbd>j</kbd><kbd>k</kbd><kbd>r</kbd><kbd>s</kbd><kbd>e</kbd><kbd>?</kbd></div>
       </div>
     </div>
 
-    <div class="stream">
-      <section class="onboard">
-        <div class="onboard-glyph">⬓</div>
-        <h2>No feeds yet</h2>
-        <p>
-          The shell is scaffolded and the local-first storage backbone is wired.
-          Adapters, the poller, and OPML import come next — then this becomes a
-          real inbox of timestamped streams.
-        </p>
-        <div class="onboard-status">
-          <span class="stat"><span class="dot" id="vfs-dot" data-state="pending"></span><span id="vfs-status">checking store…</span></span>
-          <span class="stat" id="backend-status">store: …</span>
-          <span class="stat">persistence: <span id="persist-status">—</span></span>
-          <span class="stat" id="bridge-status">bridge: probing…</span>
-        </div>
-      </section>
-    </div>
+    <div class="stream" id="stream"></div>
 
     <div class="statusbar">
       <div class="left">
-        <span id="weir-version">weir</span>
-        <span>build <span id="build-date">—</span></span>
+        <span class="stat"><span class="dot" id="vfs-dot" data-state="pending"></span><span id="backend-status">store: …</span></span>
+        <span id="poll-status">idle</span>
       </div>
       <div class="right">
+        <span id="bridge-status">bridge: …</span>
+        <span id="persist-status">—</span>
         <span>store <span id="storage-usage">— / —</span></span>
+        <span id="weir-version">weir</span>
       </div>
     </div>
   </main>

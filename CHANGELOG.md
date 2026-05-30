@@ -6,6 +6,29 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### poller + stream renderer — 2026-05-30
+
+The data path now reaches the screen. weir is a usable reader.
+
+- `src/js/poller.js`: per-feed scheduling via injected fetch (the bridge's
+  gcuFetch in the app). Catch-up on open, `setInterval` ticks (paused when the
+  tab is hidden, per settings), concurrency cap, feed-health bookkeeping
+  (consecutive_failures, last_error, next_poll_at, state), and feed-URL
+  autodiscovery retry when a site URL is pasted.
+- `src/js/ui/format.js`: relative/absolute time, byte + duration formatting,
+  HTML escaping, 7-day daily-count + sparkline points.
+- `src/js/ui/app.js`: the two-pane controller — rail with live source sparklines
+  + unread counts, view switching (inbox/saved/archived) and per-feed filtering,
+  item rows by type (pills on the six accents), inline expand-to-read with lazy
+  content + suppressed-image "load images" verb + podcast audio player, keyboard
+  model (j/k, Enter, Esc, r/s/e/o, g i/s/a, /), add-feed box, and a first-run
+  onboarding panel.
+- boot now assembles store + poller + app and starts polling; status bar shows
+  store/poll/bridge/persistence/storage.
+- Tests: `tools/smoke-poller.mjs` (poll, dedup, failure handling, format helpers).
+  Renderer validated end-to-end in headless Chromium (rows, expand, mark-read,
+  keyboard nav, no JS errors) via a throwaway harness.
+
 ### feed adapter + parsers — 2026-05-30
 
 - `src/js/parse/xml.js`: minimal, tolerant XML parser (no DOMParser dependency —
