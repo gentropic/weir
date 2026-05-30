@@ -20,6 +20,15 @@
       <div class="rail-label">Sources</div>
       <div id="sources"><div class="rail-empty">No sources yet</div></div>
     </div>
+
+    <div class="rail-section" id="routes-section" style="display:none">
+      <div class="rail-label">Routed</div>
+      <div id="routes"></div>
+    </div>
+
+    <div class="rail-section">
+      <div class="navrow" id="open-rules"><span class="lbl"><span class="ico">⚙</span> routing.js</span><span class="ico arrow">→</span></div>
+    </div>
   </aside>
 
   <!-- ── Main ── -->
@@ -47,6 +56,7 @@
       <div class="left">
         <span class="stat"><span class="dot" id="vfs-dot" data-state="pending"></span><span id="backend-status">store: …</span></span>
         <span id="poll-status">idle</span>
+        <span id="notify-status"></span>
       </div>
       <div class="right">
         <span id="bridge-status">bridge: …</span>
@@ -56,4 +66,17 @@
       </div>
     </div>
   </main>
+</div>
+
+<!-- Routing rules editor (SPEC §6) -->
+<div class="overlay" id="rules-overlay" hidden>
+  <div class="panel">
+    <div class="panel-head"><span>routing.js</span><span class="rules-error" id="rules-error"></span></div>
+    <textarea id="rules-text" class="rules-text" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+    <div class="panel-foot">
+      <button class="btn" id="rules-save">Save</button>
+      <button class="btn" id="rules-rerun">Re-run over history</button>
+      <button class="btn" id="rules-close">Close</button>
+    </div>
+  </div>
 </div>

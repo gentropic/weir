@@ -5,6 +5,7 @@
 
 import { relativeTime, isoTitle, escapeHtml, fmtDuration, dailyCounts, sparkPoints } from './format.js';
 import { parseOpml, buildOpml } from '../opml.js';
+import { DEFAULT_ROUTING } from '../router.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
@@ -12,11 +13,13 @@ const RENDER_CAP = 300;
 const RAIL_CAP = 60;
 
 export class App {
-  constructor({ store, poller }) {
+  constructor({ store, poller, router }) {
     this.store = store;
     this.poller = poller;
+    this.router = router;
     this.view = 'inbox';
     this.feedFilter = null;
+    this.route = null;          // active routed view (#name), or null
     this.searchText = '';
     this.selectedId = null;
     this.expandedId = null;
@@ -54,16 +57,27 @@ export class App {
     fileEl?.addEventListener('change', async () => { const f = fileEl.files[0]; if (f) this.importOpml(await f.text()); fileEl.value = ''; });
     document.getElementById('btn-export')?.addEventListener('click', () => this.exportOpml());
 
+    document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
+    document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
+    document.getElementById('rules-save')?.addEventListener('click', () => this.saveRules());
+    document.getElementById('rules-rerun')?.addEventListener('click', () => this.uiRerunRules());
+    document.getElementById('rules-close')?.addEventListener('click', () => this.closeRules());
+    this.store.on('notify', () => this.renderNotify());
+
     document.addEventListener('keydown', (e) => this.onKey(e));
     setInterval(() => this.renderPollStatus(), 30_000);
 
     this.renderAll();
+    this.renderNotify();
     this.renderPollStatus();
   }
 
-  query() { return this.store.query({ view: this.view, feed_id: this.feedFilter || undefined, text: this.searchText || undefined }); }
+  query() {
+    if (this.route) return this.store.query({ route: this.route, text: this.searchText || undefined });
+    return this.store.query({ view: this.view, feed_id: this.feedFilter || undefined, text: this.searchText || undefined });
+  }
 
-  renderAll() { this.renderCounts(); this.renderRail(); this.renderTopbar(); this.renderStream(); }
+  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderTopbar(); this.renderStream(); }
 
   renderCounts() {
     const c = this.store.counts();
@@ -73,7 +87,7 @@ export class App {
 
   renderTopbar() {
     const feed = this.feedFilter && this.store.getFeed(this.feedFilter);
-    document.getElementById('view-title').textContent = feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
+    document.getElementById('view-title').textContent = this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
     const n = this.items.length;
     const feeds = this.store.listFeeds().length;
     let sub;
@@ -86,7 +100,7 @@ export class App {
   renderRail() {
     const feeds = this.store.listFeeds();
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
-      r.classList.toggle('active', !this.feedFilter && r.dataset.view === this.view));
+      r.classList.toggle('active', !this.feedFilter && !this.route && r.dataset.view === this.view));
     if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
     const shown = feeds.slice(0, RAIL_CAP);
     this.sources.innerHTML = shown.map((f) => {
@@ -250,12 +264,17 @@ export class App {
     row.querySelector('[data-act="images"]')?.remove();
   }
 
-  setView(view) { this.view = view; this.feedFilter = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setView(view) { this.view = view; this.feedFilter = null; this.route = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
 
   onKey(e) {
     const tag = e.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') {
-      if (e.key === 'Escape') { e.target.value = ''; if (e.target === this.searchEl) { this.searchText = ''; this.renderStream(); } e.target.blur(); }
+      if (e.key === 'Escape') {
+        if (e.target === this.searchEl) { e.target.value = ''; this.searchText = ''; this.renderStream(); }
+        else if (e.target.id === 'rules-text') { this.closeRules(); }
+        e.target.blur();
+      }
       return;
     }
     if (this._g) {
@@ -329,6 +348,44 @@ export class App {
     const a = document.createElement('a');
     a.href = url; a.download = 'weir-feeds.opml'; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  renderRoutes() {
+    const el = document.getElementById('routes'); const sec = document.getElementById('routes-section');
+    if (!el || !sec) return;
+    const routes = this.store.counts().routes;
+    const names = Object.keys(routes).sort();
+    sec.style.display = names.length ? '' : 'none';
+    el.innerHTML = names.map((n) =>
+      `<div class="navrow${this.route === n ? ' active' : ''}" data-route="${escapeHtml(n)}"><span class="lbl"><span class="ico">#</span> ${escapeHtml(n)}</span><span class="count">${routes[n]}</span></div>`).join('');
+  }
+
+  renderNotify() {
+    const el = document.getElementById('notify-status'); if (!el) return;
+    const n = this.store.notifications.length;
+    el.textContent = n ? `🔔 ${n}` : '';
+  }
+
+  // ── routing rules editor ──
+  async openRules() {
+    const cur = await this.store.getRouting();
+    document.getElementById('rules-text').value = cur && cur.trim() ? cur : DEFAULT_ROUTING;
+    document.getElementById('rules-error').textContent = this.router?.error ? `error: ${this.router.error}` : '';
+    document.getElementById('rules-overlay').hidden = false;
+    document.getElementById('rules-text').focus();
+  }
+  closeRules() { document.getElementById('rules-overlay').hidden = true; }
+  async saveRules() {
+    const text = document.getElementById('rules-text').value;
+    await this.store.setRouting(text);
+    const err = this.router.load(text);
+    document.getElementById('rules-error').textContent = err ? `error: ${err}` : 'saved ✓ (applies to new items)';
+    if (!err) setTimeout(() => this.closeRules(), 700);
+  }
+  uiRerunRules() {
+    const r = this.store.rerunRules();
+    document.getElementById('rules-error').textContent = `re-ran over history — ${r.matched} item${r.matched === 1 ? '' : 's'} matched`;
+    this.renderAll();
   }
 
   renderPollStatus() {

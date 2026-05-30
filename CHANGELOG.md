@@ -6,6 +6,25 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### routing rules (router) — 2026-05-31
+
+The fourth core subsystem. weir's v0.1 reader is feature-complete.
+
+- `src/js/router.js`: `Router` compiles `routing.js` (plain-JS rules, `export
+  default [...]`) and applies them to each NEW item at insert — `tag` (accumulate),
+  `mark` (read/saved), `retain` (override expiry), `route` (move out of Inbox into
+  a named view), `notify`. First match wins for scalars; a throwing rule is logged
+  and skipped, never breaking the pipeline. `DEFAULT_ROUTING` template included.
+- Store integration: `_route` applies rules + re-derives expiry on insert;
+  `route` handling in `query`/`counts`; `rerunRules()` re-evaluates the ruleset
+  over history (explicit, additive — rules aren't retroactive otherwise).
+- UI: a `routing.js →` rail link opens a rules editor overlay (textarea, Save with
+  compile-error surfacing, Re-run over history); a "Routed" rail section lists
+  named routes with counts; an in-app notifications indicator in the status bar.
+- Tests: `tools/smoke-router.mjs` (compile, tag/mark/retain/route/notify, error
+  tolerance, store integration, rerun). Validated in headless Chromium (rule tags
+  + routes an item out of the inbox, Routed section, notifications; no errors).
+
 ### OPML import/export — 2026-05-31
 
 - `src/js/opml.js`: `parseOpml` (reuses the feed XML parser) flattens nested

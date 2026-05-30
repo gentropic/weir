@@ -30,6 +30,8 @@ export class Store {
     this.tombstones = [];            // ArchiveRecord[]
     this.tags = {};                  // name → Tag
     this.settings = { ...DEFAULT_SETTINGS };
+    this.router = null;              // optional Router; applied to new items on insert
+    this.notifications = [];         // items a rule flagged notify:true (ephemeral)
     this._dirtyFeeds = new Set();
     this._archivedDirty = false;
     this._ensured = new Set();       // dirs already mkdir'd
@@ -159,6 +161,7 @@ export class Store {
         res.updated++;
       } else {
         const rec = makeItem(raw, feed);
+        if (this.router) this._route(rec, feed);
         if (raw.content !== undefined && String(raw.content).length) await this._writeContent(feed.id, id, raw.content);
         this.items.set(id, rec);
         this._feedSet(feed.id).add(id);
@@ -169,6 +172,34 @@ export class Store {
     for (const fid of touched) this._markFeedDirty(fid);
     if (res.inserted || res.updated) this.emit('items', { ...res });
     return res;
+  }
+
+  // Apply routing rules to a brand-new record (mutates tags/read/saved, sets
+  // route/expiry, collects notifications). Re-derives expires_at since a rule
+  // may have changed `saved` or asked for a retain override.
+  _route(rec, feed) {
+    const fx = this.router.apply(rec);
+    if (fx.retain !== undefined) rec.expires_at = fx.retain === 'forever' ? null : rec.published_at + fx.retain * 86_400_000;
+    else rec.expires_at = computeExpiry(rec, feed);
+    if (fx.route) rec.route = fx.route;
+    if (fx.notify) { this.notifications.push({ id: rec.id, at: now() }); this.emit('notify', { id: rec.id }); }
+    return fx;
+  }
+
+  // Re-evaluate the current ruleset over all stored items (explicit verb — rules
+  // are not retroactive otherwise, SPEC §6). Additive: tags accumulate, marks
+  // apply. Returns the number of items that matched at least one rule.
+  rerunRules() {
+    if (!this.router) return { matched: 0 };
+    let matched = 0;
+    const touched = new Set();
+    for (const rec of this.items.values()) {
+      const fx = this._route(rec, this.feeds.get(rec.feed_id) || { id: rec.feed_id });
+      if (fx.matched.length) { matched++; touched.add(rec.feed_id); }
+    }
+    for (const fid of touched) this._markFeedDirty(fid);
+    if (matched) this.emit('items', { inserted: 0, updated: matched, skipped: 0 });
+    return { matched };
   }
 
   getItem(id) { return this.items.get(String(id)) || null; }
@@ -189,14 +220,15 @@ export class Store {
 
   // view: 'inbox' | 'saved' | 'archived' | undefined(=inbox-ish, excludes archived)
   query(opts = {}) {
-    const { view, feed_id, type, read, saved, archived, tag, text, limit, sort = '-published_at' } = opts;
+    const { view, feed_id, type, read, saved, archived, tag, text, route, limit, sort = '-published_at' } = opts;
     const needle = text ? String(text).toLowerCase() : null;
     const out = [];
     for (const r of this.items.values()) {
-      if (view === 'inbox' && r.archived) continue;
+      if (view === 'inbox' && (r.archived || r.route)) continue;   // routed items leave the inbox
       if (view === 'saved' && !r.saved) continue;
       if (view === 'archived' && !r.archived) continue;
-      if (!view && r.archived) continue;
+      if (!view && !route && (r.archived || r.route)) continue;
+      if (route && r.route !== route) continue;
       if (feed_id && r.feed_id !== feed_id) continue;
       if (type && r.type !== type) continue;
       if (read !== undefined && r.read !== read) continue;
@@ -217,13 +249,14 @@ export class Store {
 
   counts() {
     let inbox = 0, unread = 0, saved = 0, archived = 0;
-    const byFeed = {};
+    const byFeed = {}, routes = {};
     for (const r of this.items.values()) {
       if (r.archived) archived++;
+      else if (r.route) routes[r.route] = (routes[r.route] || 0) + 1;
       else { inbox++; if (!r.read) unread++; byFeed[r.feed_id] = (byFeed[r.feed_id] || 0) + 1; }
       if (r.saved) saved++;
     }
-    return { inbox, unread, saved, archived, byFeed, feeds: this.feeds.size, total: this.items.size };
+    return { inbox, unread, saved, archived, byFeed, routes, feeds: this.feeds.size, total: this.items.size };
   }
 
   setState(id, patch) {

@@ -3,6 +3,7 @@
 
 import { Store } from './store/store.js';
 import { Poller } from './poller.js';
+import { Router } from './router.js';
 import { App } from './ui/app.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { fmtBytes } from './ui/format.js';
@@ -46,12 +47,16 @@ async function boot() {
     const d = $('vfs-dot'); if (d) d.dataset.state = 'fault';
   }
 
+  const router = new Router();
+  router.load(await store.getRouting());
+  store.router = router;
+
   const poller = new Poller(store, { adapters: [feedAdapter], fetch: gcuFetch });
-  const app = new App({ store, poller });
+  const app = new App({ store, poller, router });
   app.mount();
   poller.start();
 
-  window.__weir = { store, poller, app, addFeed: (u) => app.addFeed(u), parseFeed, feedAdapter, gcuFetch };
+  window.__weir = { store, poller, router, app, addFeed: (u) => app.addFeed(u), parseFeed, feedAdapter, gcuFetch };
 
   try {
     let persisted = false;
