@@ -28,9 +28,10 @@ const BUILD_DATE = new Date().toISOString().slice(0, 10);
 // ── Module inliner ────────────────────────────────────────────────────────
 
 function stripModuleSyntax(src) {
-  // import … from '…';   and   import '…';   (side-effect)
-  src = src.replace(/^import\b[\s\S]*?from\s+['"][^'"]*['"];?\s*$/gm, '');
-  src = src.replace(/^import\s+['"][^'"]*['"];?\s*$/gm, '');
+  // import … from '…';   and   import '…';   (side-effect) — tolerate a
+  // trailing // line comment after the statement (main.js annotates its imports).
+  src = src.replace(/^import\b[\s\S]*?from\s+['"][^'"]*['"];?[ \t]*(?:\/\/[^\n]*)?$/gm, '');
+  src = src.replace(/^import\s+['"][^'"]*['"];?[ \t]*(?:\/\/[^\n]*)?$/gm, '');
   // export <decl> → <decl>
   src = src.replace(/^export function /gm, 'function ');
   src = src.replace(/^export async function /gm, 'async function ');
