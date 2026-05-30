@@ -1,0 +1,26 @@
+{
+  "vendored": {
+    "@gcu/vfs": {
+      "spdx": "MIT",
+      "version": "0.1.0",
+      "homepage": "https://github.com/endarthur/auditable/tree/main/ext/vfs",
+      "note": "storage backbone"
+    },
+    "Switchboard tokens": {
+      "spdx": "MIT",
+      "version": "1.0",
+      "homepage": "https://github.com/endarthur/auditable/tree/main/ext/switchboard",
+      "note": "design system"
+    },
+    "Barlow": {
+      "spdx": "OFL-1.1",
+      "homepage": "https://github.com/jpt/barlow",
+      "note": "UI typeface; OFL.txt in vendor/switchboard/fonts"
+    },
+    "Space Mono": {
+      "spdx": "OFL-1.1",
+      "homepage": "https://github.com/googlefonts/spacemono",
+      "note": "mono typeface; OFL.txt in vendor/switchboard/fonts"
+    }
+  }
+}

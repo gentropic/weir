@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>@gcu/weir — mockup</title>
+<style>
+  /* ─── Switchboard tokens ─── */
+  :root {
+    --basalt-0: #0c0f14;   /* deepest */
+    --basalt-1: #11151c;   /* app bg */
+    --basalt-2: #161b24;   /* panel */
+    --basalt-3: #1d2430;   /* raised */
+    --basalt-4: #28313f;   /* hover */
+    --line:     #2b3340;
+    --line-2:   #3a4452;
+    --ink:      #dfe5ee;   /* primary text */
+    --ink-2:    #97a1b2;   /* secondary */
+    --ink-3:    #5e6877;   /* tertiary / muted */
+
+    /* six semantic accents */
+    --a-amber:  #f2a93b;   /* primary accent / inbox */
+    --a-cyan:   #4cc2d6;   /* video / info */
+    --a-green:  #5bcf89;   /* release / ok */
+    --a-violet: #a98be0;   /* paper */
+    --a-rose:   #e2607a;   /* track / alert */
+    --a-slate:  #8fa3bd;   /* article / neutral */
+
+    --mono: 'Space Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace;
+    --sans: 'Barlow', ui-sans-serif, system-ui, sans-serif;
+
+    --r-sm: 4px; --r-md: 6px; --r-lg: 10px;
+  }
+
+  @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--sans);
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(242,169,59,0.04), transparent 60%),
+      var(--basalt-1);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  .app {
+    display: grid;
+    grid-template-columns: 232px 1fr;
+    grid-template-rows: 1fr;
+    height: 100vh;
+  }
+
+  /* ─── Left rail ─── */
+  .rail {
+    background: var(--basalt-2);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .rail::-webkit-scrollbar { width: 8px; }
+  .rail::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+  .brand {
+    display: flex; align-items: center; gap: 9px;
+    padding: 15px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand .glyph {
+    width: 22px; height: 22px; border-radius: 5px;
+    background: linear-gradient(135deg, var(--a-amber), var(--a-rose));
+    position: relative; flex-shrink: 0;
+  }
+  .brand .glyph::after {
+    content: ''; position: absolute; inset: 5px 4px;
+    border-left: 2px solid var(--basalt-1);
+    border-right: 2px solid var(--basalt-1);
+    opacity: 0.85;
+  }
+  .brand .name { font-family: var(--mono); font-size: 13px; color: var(--ink-2); letter-spacing: -0.02em; }
+  .brand .name b { color: var(--ink); font-weight: 700; }
+
+  .rail-section { padding: 14px 12px 4px; }
+  .rail-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;
+    color: var(--ink-3); padding: 0 6px 8px; font-weight: 600;
+  }
+
+  .navrow {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 8px; border-radius: var(--r-md);
+    cursor: pointer; user-select: none;
+    transition: background 0.12s;
+  }
+  .navrow:hover { background: var(--basalt-3); }
+  .navrow.active { background: var(--basalt-3); box-shadow: inset 2px 0 0 var(--a-amber); }
+  .navrow .lbl { display: flex; align-items: center; gap: 9px; }
+  .navrow .ico { width: 15px; text-align: center; color: var(--ink-2); font-size: 13px; }
+  .navrow.active .ico { color: var(--a-amber); }
+  .navrow .count { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .navrow.active .count { color: var(--ink-2); }
+
+  /* sources with sparklines */
+  .source {
+    display: grid; grid-template-columns: 46px 1fr auto;
+    align-items: center; gap: 9px;
+    padding: 5px 8px; border-radius: var(--r-md);
+    cursor: pointer; transition: background 0.12s;
+  }
+  .source:hover { background: var(--basalt-3); }
+  .source .spark { color: var(--ink-3); }
+  .source.up .spark   { color: var(--a-green); }
+  .source.slow .spark { color: var(--a-amber); }
+  .source.dead .spark { color: var(--ink-3); opacity: 0.5; }
+  .source .sname {
+    font-size: 13px; color: var(--ink-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .source.dead .sname { color: var(--ink-3); }
+  .source .scount { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+  .source .warn { color: var(--a-rose); font-size: 11px; }
+
+  .moremark { padding: 5px 14px; font-family: var(--mono); font-size: 11px; color: var(--ink-3); cursor: pointer; }
+  .moremark:hover { color: var(--ink-2); }
+
+  .view-ref { padding: 5px 8px; font-family: var(--mono); font-size: 12px; color: var(--ink-2); cursor: pointer; border-radius: var(--r-md); }
+  .view-ref:hover { background: var(--basalt-3); color: var(--ink); }
+  .view-ref .hash { color: var(--ink-3); }
+
+  /* ─── Main ─── */
+  .main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 22px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(var(--basalt-1), var(--basalt-1));
+  }
+  .topbar .title { display: flex; align-items: baseline; gap: 12px; }
+  .topbar .title h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+  .topbar .title .sub { font-size: 12px; color: var(--ink-3); font-family: var(--mono); }
+  .topbar .actions { display: flex; align-items: center; gap: 14px; }
+  .keyhint { font-family: var(--mono); font-size: 11px; color: var(--ink-3); display: flex; gap: 8px; }
+  .keyhint kbd {
+    background: var(--basalt-3); border: 1px solid var(--line-2);
+    border-radius: 3px; padding: 1px 5px; font-size: 10px; color: var(--ink-2);
+  }
+  .btn {
+    font-family: var(--sans); font-size: 12px; font-weight: 500;
+    background: var(--basalt-3); color: var(--ink-2);
+    border: 1px solid var(--line-2); border-radius: var(--r-sm);
+    padding: 5px 11px; cursor: pointer; transition: all 0.12s;
+  }
+  .btn:hover { border-color: var(--a-amber); color: var(--a-amber); }
+
+  .stream { flex: 1; overflow-y: auto; padding: 8px 0 40px; }
+  .stream::-webkit-scrollbar { width: 10px; }
+  .stream::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
+  .stream::-webkit-scrollbar-thumb:hover { background: var(--line-2); }
+
+  /* item */
+  .item {
+    display: grid; grid-template-columns: 96px 1fr;
+    gap: 14px; padding: 15px 22px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer; transition: background 0.1s;
+    position: relative;
+  }
+  .item:hover { background: var(--basalt-2); }
+  .item.sel { background: var(--basalt-2); }
+  .item.sel::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 2px; background: var(--a-amber);
+  }
+  .item.read .ititle { color: var(--ink-2); font-weight: 400; }
+  .item.read .pill { opacity: 0.55; }
+
+  .pill {
+    display: inline-block; font-family: var(--mono);
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+    padding: 2px 7px; border-radius: var(--r-sm); font-weight: 700;
+    white-space: nowrap;
+  }
+  .pill.article { background: rgba(143,163,189,0.14); color: var(--a-slate); }
+  .pill.video   { background: rgba(76,194,214,0.14);  color: var(--a-cyan); }
+  .pill.release { background: rgba(91,207,137,0.14);  color: var(--a-green); }
+  .pill.paper   { background: rgba(169,139,224,0.14); color: var(--a-violet); }
+  .pill.track   { background: rgba(226,96,122,0.14);  color: var(--a-rose); }
+
+  .pillcol { padding-top: 1px; }
+  .ibody { min-width: 0; }
+  .ititle { font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--ink); }
+  .ititle .ver { font-family: var(--mono); font-weight: 400; color: var(--ink-2); font-size: 13px; }
+  .iexcerpt { font-size: 13px; color: var(--ink-2); margin-top: 5px; line-height: 1.5; max-width: 68ch; }
+  .imeta {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+  }
+  .imeta .dot { opacity: 0.5; }
+  .imeta .diff { color: var(--a-rose); }
+  .imeta .tag {
+    background: var(--basalt-3); border: 1px solid var(--line);
+    border-radius: 3px; padding: 0 6px; color: var(--ink-2);
+  }
+  .imeta .expiry { color: var(--ink-3); margin-left: auto; opacity: 0; transition: opacity 0.12s; }
+  .item:hover .imeta .expiry { opacity: 0.75; }
+
+  .ivideo { display: flex; gap: 12px; }
+  .thumb {
+    width: 120px; height: 68px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--basalt-3), var(--basalt-4));
+    border-radius: var(--r-sm); border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink-3); position: relative; overflow: hidden;
+  }
+  .thumb svg { width: 26px; height: 26px; opacity: 0.6; }
+  .thumb .dur {
+    position: absolute; bottom: 4px; right: 4px;
+    background: rgba(12,15,20,0.85); color: var(--ink);
+    font-family: var(--mono); font-size: 10px; padding: 1px 4px; border-radius: 3px;
+  }
+  .imgblock {
+    margin-top: 6px; padding: 7px 10px; border: 1px dashed var(--line-2);
+    border-radius: var(--r-sm); font-family: var(--mono); font-size: 11px;
+    color: var(--ink-3); display: inline-flex; align-items: center; gap: 7px;
+    cursor: pointer;
+  }
+  .imgblock:hover { color: var(--ink-2); border-color: var(--ink-3); }
+
+  /* status bar */
+  .statusbar {
+    position: absolute; bottom: 0; left: 232px; right: 0;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 22px; font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+    background: linear-gradient(transparent, var(--basalt-1) 35%);
+    border-top: 1px solid var(--line);
+    pointer-events: none;
+  }
+  .statusbar .left, .statusbar .right { display: flex; gap: 16px; }
+  .statusbar .live { color: var(--a-green); }
+
+  .banner {
+    margin: 14px 22px 0; padding: 9px 13px;
+    background: rgba(242,169,59,0.08); border: 1px solid rgba(242,169,59,0.3);
+    border-radius: var(--r-md); font-size: 12.5px; color: var(--a-amber);
+    display: flex; align-items: center; gap: 9px;
+  }
+  .banner code { font-family: var(--mono); font-size: 11px; }
+  .banner .x { margin-left: auto; cursor: pointer; opacity: 0.7; }
+  .banner .x:hover { opacity: 1; }
+
+  .note { padding: 11px 22px; font-size: 11px; color: var(--ink-3); font-family: var(--mono); border-top: 1px dashed var(--line); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ─── RAIL ─── -->
+  <aside class="rail">
+    <div class="brand">
+      <div class="glyph"></div>
+      <span class="name">@gcu/<b>weir</b></span>
+    </div>
+
+    <div class="rail-section">
+      <div class="rail-label">Views</div>
+      <div class="navrow active" data-view="inbox">
+        <span class="lbl"><span class="ico">⬓</span> Inbox</span>
+        <span class="count">117</span>
+      </div>
+      <div class="navrow" data-view="work">
+        <span class="lbl"><span class="ico">◆</span> work</span>
+        <span class="count">14</span>
+      </div>
+      <div class="navrow" data-view="later">
+        <span class="lbl"><span class="ico">◷</span> later</span>
+        <span class="count">8</span>
+      </div>
+      <div class="navrow" data-view="saved">
+        <span class="lbl"><span class="ico">★</span> saved</span>
+        <span class="count">41</span>
+      </div>
+      <div class="navrow" data-view="archived">
+        <span class="lbl"><span class="ico">▤</span> archived</span>
+        <span class="count">3.2k</span>
+      </div>
+    </div>
+
+    <div class="rail-section">
+      <div class="rail-label">Sources</div>
+      <div class="source up">
+        <span class="spark" data-spark="2,9,4,7,3,8,5,9,6,9"></span>
+        <span class="sname">arxiv-geo</span>
+        <span class="scount">6</span>
+      </div>
+      <div class="source">
+        <span class="spark" data-spark="5,6,5,7,5,6,4,6,5,5"></span>
+        <span class="sname">jeff-geerling</span>
+        <span class="scount">2</span>
+      </div>
+      <div class="source up">
+        <span class="spark" data-spark="2,3,2,5,4,7,6,8,7,9"></span>
+        <span class="sname">gentropic/*</span>
+        <span class="scount">11</span>
+      </div>
+      <div class="source slow">
+        <span class="spark" data-spark="7,6,5,4,4,3,3,2,2,2"></span>
+        <span class="sname">filfre</span>
+        <span class="scount">1</span>
+      </div>
+      <div class="source">
+        <span class="spark" data-spark="4,5,3,6,4,5,3,4,5,4"></span>
+        <span class="sname">rock-paper-shotgun</span>
+        <span class="scount">9</span>
+      </div>
+      <div class="source dead">
+        <span class="spark" data-spark="1,1,1,1,1,1,1,1,1,1"></span>
+        <span class="sname">spoon-tamago</span>
+        <span class="warn">!</span>
+      </div>
+      <div class="moremark">+ 56 more</div>
+    </div>
+
+    <div class="rail-section">
+      <div class="rail-label">Saved views</div>
+      <div class="view-ref"><span class="hash">#</span>work-this-week</div>
+      <div class="view-ref"><span class="hash">#</span>videos-only</div>
+      <div class="view-ref" style="display:flex;align-items:center;gap:5px;">routing.js <span style="color:var(--ink-3)">→</span></div>
+    </div>
+  </aside>
+
+  <!-- ─── MAIN ─── -->
+  <main class="main">
+    <div class="topbar">
+      <div class="title">
+        <h1>Inbox</h1>
+        <span class="sub">117 unread · 12 sources active</span>
+      </div>
+      <div class="actions">
+        <button class="btn" id="markall">Mark all read</button>
+        <div class="keyhint">
+          <kbd>j</kbd><kbd>k</kbd><kbd>r</kbd><kbd>s</kbd><kbd>?</kbd>
+        </div>
+      </div>
+    </div>
+
+    <div class="stream" id="stream">
+      <div class="banner" id="banner">
+        <span>⬡</span>
+        <span>Bridge connected. Polling 62 sources through <code>@gcu/bridge v0.2.0</code>.</span>
+        <span class="x" onclick="this.parentElement.style.display='none'">✕</span>
+      </div>
+
+      <!-- items injected by JS -->
+      <div id="items"></div>
+
+      <div class="note">mockup · static data · keyboard nav live (j/k/r/s) · click items to select</div>
+    </div>
+
+    <div class="statusbar">
+      <div class="left">
+        <span class="live">● last poll 47s ago</span>
+        <span>next 19m</span>
+      </div>
+      <div class="right">
+        <span>bridge v0.2.0</span>
+        <span>117 / 4,310 cached</span>
+        <span>store 84 MB</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+  // ─── sparkline rendering ───
+  document.querySelectorAll('[data-spark]').forEach(el => {
+    const pts = el.dataset.spark.split(',').map(Number);
+    const w = 44, h = 13, max = Math.max(...pts, 1);
+    const step = w / (pts.length - 1);
+    const d = pts.map((v, i) => `${(i*step).toFixed(1)},${(h - (v/max)*(h-2) - 1).toFixed(1)}`).join(' ');
+    el.innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${d}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+  });
+
+  // ─── item data ───
+  const ITEMS = [
+    {
+      type: 'paper',
+      title: 'A spatial cross-validation approach to variogram parameter estimation in heterogeneous deposits',
+      excerpt: 'We propose a leave-one-block-out scheme that accounts for autocorrelation within geological domains, applied to a Quadrilátero Ferrífero iron ore case study with explicit anisotropy treatment across structural boundaries…',
+      meta: ['arxiv-physics.geo-ph', 'Marques, Silva et al.', '2h'],
+      tags: ['work'],
+      expiry: 'kept · forever'
+    },
+    {
+      type: 'video',
+      title: 'I replaced my whole homelab with one mini PC. Here\'s what broke.',
+      video: { dur: '18:42' },
+      meta: ['jeff-geerling', 'YouTube', '12m'],
+      expiry: 'expires in 14 days'
+    },
+    {
+      type: 'release',
+      title: '@gcu/bridge <span class="ver">v0.2.0</span> — ETag caching, binary bodies',
+      excerpt: '14 commits since v0.1.0. The service worker now caches responses keyed by URL + ETag; conditional-GET semantics are surfaced to consumers via a 304 fast-path…',
+      meta: ['gentropic/bridge', 'aendlein', '1h'],
+      tags: ['gcu'],
+      expiry: 'kept · forever'
+    },
+    {
+      type: 'track',
+      title: 'Page changed: AusIMM CP application requirements',
+      excerpt: 'Diff detected in section 4.2. The PD logbook now requires 3 entries per competency (previously 2). A new "competency narrative" subsection was added.',
+      meta: ['scrape:ausimm.com/cp', '1h', { diff: '+18 −4' }],
+      expiry: 'snapshot 12 / 50'
+    },
+    {
+      type: 'article',
+      title: 'Sierra On-Line in the desert years',
+      excerpt: 'After the 1999 collapse, Sierra spent four years passed between holding companies before the brand returned as something almost unrelated to what it had been…',
+      img: true,
+      meta: ['filfre', 'Jimmy Maher', '3h'],
+      expiry: 'expires in 57 days'
+    },
+    {
+      type: 'article',
+      title: 'Say goodbye to birds and hello to dragons in Wyrmspan',
+      excerpt: 'A scalier take on the beloved engine-builder. The new wing mechanics reward tableau adjacency in ways Wingspan never did, and the dragon guild track adds a tempo decision…',
+      img: true,
+      meta: ['rock-paper-shotgun', '2m'],
+      expiry: 'expires in 7 days'
+    },
+    {
+      type: 'release',
+      title: '@gcu/voxmesh <span class="ver">v0.4.1</span> — block model geometry fixes',
+      excerpt: 'Patch release. Corrects sub-block ordering when parent blocks straddle a domain boundary; adds a regression test for the Carajás reference model…',
+      meta: ['gentropic/voxmesh', 'aendlein', '5h'],
+      tags: ['gcu'],
+      expiry: 'kept · forever'
+    },
+    {
+      type: 'paper',
+      title: 'Uncertainty quantification in geometallurgical recovery prediction via Gaussian process regression',
+      excerpt: 'A GP framework propagating compositional uncertainty through a recovery model, validated against plant data with a focus on calibration of predictive intervals…',
+      meta: ['arxiv-physics.geo-ph', 'Tan, Rossi', '6h'],
+      tags: ['work'],
+      expiry: 'kept · forever'
+    },
+  ];
+
+  const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+
+  function renderItems() {
+    const root = document.getElementById('items');
+    root.innerHTML = '';
+    ITEMS.forEach((it, idx) => {
+      const el = document.createElement('article');
+      el.className = 'item' + (it.read ? ' read' : '') + (idx === 0 ? ' sel' : '');
+      el.dataset.idx = idx;
+
+      const metaHtml = it.meta.map(m => {
+        if (typeof m === 'object' && m.diff) return `<span class="diff">⬩ diff ${m.diff}</span>`;
+        return `<span>${m}</span>`;
+      }).join('<span class="dot">·</span>');
+      const tagsHtml = (it.tags || []).map(t => `<span class="tag">${t}</span>`).join(' ');
+
+      let bodyInner = '';
+      if (it.type === 'video') {
+        bodyInner = `
+          <div class="ivideo">
+            <div class="thumb">${PLAY_SVG}<span class="dur">${it.video.dur}</span></div>
+            <div style="flex:1;min-width:0;">
+              <div class="ititle">${it.title}</div>
+              <div class="imeta">${metaHtml} ${tagsHtml}<span class="expiry">${it.expiry||''}</span></div>
+            </div>
+          </div>`;
+      } else {
+        const imgBlock = it.img ? `<div class="imgblock">⊘ image suppressed — click to load</div>` : '';
+        bodyInner = `
+          <div class="ititle">${it.title}</div>
+          ${it.excerpt ? `<div class="iexcerpt">${it.excerpt}</div>` : ''}
+          ${imgBlock}
+          <div class="imeta">${metaHtml} ${tagsHtml}<span class="expiry">${it.expiry||''}</span></div>`;
+      }
+
+      el.innerHTML = `<div class="pillcol"><span class="pill ${it.type}">${it.type}</span></div><div class="ibody">${bodyInner}</div>`;
+      root.appendChild(el);
+    });
+    bindItems();
+  }
+
+  let selected = 0;
+  function bindItems() {
+    document.querySelectorAll('.item').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target.classList.contains('imgblock')) {
+          e.target.outerHTML = '<div style="margin-top:6px;height:120px;border-radius:4px;background:linear-gradient(135deg,var(--basalt-3),var(--basalt-4));border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-3);font-family:var(--mono);font-size:11px;">[ image loaded via bridge ]</div>';
+          return;
+        }
+        selectIdx(+el.dataset.idx);
+      });
+    });
+  }
+
+  function selectIdx(i) {
+    const items = document.querySelectorAll('.item');
+    if (i < 0 || i >= items.length) return;
+    items.forEach(el => el.classList.remove('sel'));
+    selected = i;
+    items[i].classList.add('sel');
+    items[i].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  function toggleClass(cls) {
+    const items = document.querySelectorAll('.item');
+    if (items[selected]) items[selected].classList.toggle(cls);
+  }
+
+  // ─── keyboard ───
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    switch (e.key) {
+      case 'j': selectIdx(selected + 1); e.preventDefault(); break;
+      case 'k': selectIdx(selected - 1); e.preventDefault(); break;
+      case 'r': toggleClass('read'); break;
+      case 's': {
+        const items = document.querySelectorAll('.item');
+        if (items[selected]) {
+          const m = items[selected].querySelector('.imeta');
+          // visual nudge only in mockup
+          items[selected].style.boxShadow = 'inset 2px 0 0 var(--a-amber), inset 0 0 0 1px rgba(242,169,59,0.25)';
+          setTimeout(() => items[selected].style.boxShadow = '', 400);
+        }
+        break;
+      }
+    }
+  });
+
+  // view switching (cosmetic)
+  document.querySelectorAll('.navrow').forEach(row => {
+    row.addEventListener('click', () => {
+      document.querySelectorAll('.navrow').forEach(r => r.classList.remove('active'));
+      row.classList.add('active');
+      const v = row.dataset.view;
+      const map = { inbox: ['Inbox','117 unread · 12 sources active'], work:['work','14 items'], later:['later','8 items'], saved:['saved','41 items'], archived:['archived','3,204 items'] };
+      document.querySelector('.topbar h1').textContent = map[v][0];
+      document.querySelector('.topbar .sub').textContent = map[v][1];
+    });
+  });
+
+  document.getElementById('markall').addEventListener('click', () => {
+    document.querySelectorAll('.item').forEach(el => el.classList.add('read'));
+  });
+
+  renderItems();
+</script>
+</body>
+</html>

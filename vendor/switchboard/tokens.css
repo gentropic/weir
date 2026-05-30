@@ -1,0 +1,123 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Switchboard design tokens — vendored from @gcu/auditable (src/style.css).
+   The canonical GCU design system. Three layers:
+     1. --sw-*  Switchboard swatches (raw palette; theme-switched)
+     2. --au-*  semantic tokens (component-facing API)
+     3. --ui-*  third-party adapter tokens (themes vendored menu/dialog)
+   Default register is light "equipment gray"; [data-theme="dark"] is "basalt".
+   weir runs basalt: set <html data-theme="dark">.
+   License: MIT (code). Fonts below are OFL — see PROVENANCE.md.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 400; font-display: swap; src: url('fonts/barlow-400.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 500; font-display: swap; src: url('fonts/barlow-500.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 600; font-display: swap; src: url('fonts/barlow-600.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 700; font-display: swap; src: url('fonts/barlow-700.woff2') format('woff2'); }
+@font-face { font-family: 'Space Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('fonts/space-mono-400.woff2') format('woff2'); }
+@font-face { font-family: 'Space Mono'; font-style: italic; font-weight: 400; font-display: swap; src: url('fonts/space-mono-400i.woff2') format('woff2'); }
+@font-face { font-family: 'Space Mono'; font-style: normal; font-weight: 700; font-display: swap; src: url('fonts/space-mono-700.woff2') format('woff2'); }
+
+:root {
+  /* ── Layer 1 — Switchboard swatches (default: light / equipment gray) ── */
+  --sw-bg-deep:     #C2C1BE;
+  --sw-bg:          #D2D1CE;
+  --sw-bg-raised:   #E4E3E1;
+  --sw-bg-bright:   #EDECEB;
+  --sw-text:        #232322;
+  --sw-text-mid:    #504F4C;
+  --sw-text-soft:   #7A7875;
+  --sw-border:      #B3B1AD;
+  --sw-border-soft: #C6C4C1;
+  --sw-rule:        #A5A3A0;
+  --sw-orange:      #B54E1A;  --sw-orange-soft: #E8D8CF;
+  --sw-teal:        #1B6B72;  --sw-teal-soft:   #CEE2E4;
+  --sw-green:       #3D7340;  --sw-green-soft:  #D2E4D4;
+  --sw-amber:       #8E6518;  --sw-amber-soft:  #E4DCCC;
+  --sw-red:         #A8312A;  --sw-red-soft:    #E8D6D4;
+  --sw-indigo:      #4E5580;  --sw-indigo-soft: #D8D9E2;
+  --sw-mono:        'Space Mono', 'JetBrains Mono', 'Consolas', monospace;
+  --sw-sans:        'Barlow', system-ui, sans-serif;
+  --sw-radius:      3px;
+  --sw-radius-lg:   4px;
+
+  /* ── Layer 2 — semantic tokens (the component-facing API) ── */
+  --au-surface-deep:   var(--sw-bg-deep);
+  --au-surface:        var(--sw-bg);
+  --au-surface-raised: var(--sw-bg-raised);
+  --au-surface-bright: var(--sw-bg-bright);
+
+  --au-fg:             var(--sw-text);
+  --au-fg-muted:       var(--sw-text-mid);
+  --au-fg-soft:        var(--sw-text-soft);
+
+  --au-border:         var(--sw-border);
+  --au-border-soft:    var(--sw-border-soft);
+  --au-rule:           var(--sw-rule);
+
+  --au-action:         var(--sw-orange);
+  --au-action-soft:    var(--sw-orange-soft);
+  --au-info:           var(--sw-teal);
+  --au-info-soft:      var(--sw-teal-soft);
+  --au-success:        var(--sw-green);
+  --au-success-soft:   var(--sw-green-soft);
+  --au-warn:           var(--sw-amber);
+  --au-warn-soft:      var(--sw-amber-soft);
+  --au-error:          var(--sw-red);
+  --au-error-soft:     var(--sw-red-soft);
+  --au-selected:       var(--sw-indigo);
+  --au-selected-soft:  var(--sw-indigo-soft);
+
+  --au-font-mono:      var(--sw-mono);
+  --au-font-sans:      var(--sw-sans);
+  --au-font-size:      13px;
+
+  --au-radius:         var(--sw-radius);
+  --au-radius-lg:      var(--sw-radius-lg);
+
+  /* ── Layer 3 — third-party library adapters (vendored menu/dialog) ── */
+  --ui-bg:            var(--au-surface);
+  --ui-bg-raised:     var(--au-surface-raised);
+  --ui-bg-hover:      var(--au-surface-bright);
+  --ui-bg-selected:   var(--au-selected-soft);
+  --ui-fg:            var(--au-fg);
+  --ui-fg-muted:      var(--au-fg-soft);
+  --ui-fg-error:      var(--au-error);
+  --ui-fg-accent:     var(--au-action);
+  --ui-border:        var(--au-border);
+  --ui-border-focus:  var(--au-action);
+  --ui-border-radius: var(--au-radius);
+  --ui-shadow:        0 4px 16px rgba(0, 0, 0, 0.6);
+  --ui-z-dropdown:    9000;
+  --ui-z-dialog:      9100;
+  --ui-font:          var(--au-font-mono);
+  --ui-font-size:     12px;
+  --ui-padding:       16px;
+  --ui-padding-sm:    8px;
+  --ui-duration:      120ms;
+  --ui-easing:        ease-out;
+  --ui-backdrop:      rgba(0, 0, 0, 0.4);
+  --ui-dialog-max-w:  90vw;
+  --ui-dialog-max-h:  80vh;
+  --ui-accent:        var(--au-action);
+}
+
+[data-theme="dark"] {
+  /* Switchboard dark theme (basalt) — overrides --sw-* swatches only;
+     --au-* / --ui-* auto-resolve through the reassigned values. */
+  --sw-bg-deep:     #0E1012;
+  --sw-bg:          #15171A;
+  --sw-bg-raised:   #1D2024;
+  --sw-bg-bright:   #25282D;
+  --sw-text:        #DDDCDA;
+  --sw-text-mid:    #9E9C98;
+  --sw-text-soft:   #6E6C68;
+  --sw-border:      #2F3338;
+  --sw-border-soft: #24272B;
+  --sw-rule:        #3A3E44;
+  --sw-orange:      #D4672E;  --sw-orange-soft: #2E1F18;
+  --sw-teal:        #3A9BA3;  --sw-teal-soft:   #16272A;
+  --sw-green:       #5A9B5E;  --sw-green-soft:  #18261A;
+  --sw-amber:       #C49540;  --sw-amber-soft:  #2A2316;
+  --sw-red:         #D05048;  --sw-red-soft:    #2C1A18;
+  --sw-indigo:      #7E86B8;  --sw-indigo-soft: #1E2030;
+}

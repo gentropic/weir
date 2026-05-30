@@ -1,0 +1,144 @@
+/* weir shell styles. Colours come exclusively from the canonical Switchboard
+   tokens (vendor/switchboard/tokens.css): --sw-* swatches → --au-* semantic.
+   This supersedes the mockup's --basalt-*/--a-* palette (reconciliation noted
+   in CLAUDE.md). Item-type pills map onto the six Switchboard accents. */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+body {
+  font-family: var(--au-font-sans);
+  background: var(--sw-bg);
+  color: var(--au-fg);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  height: 100vh;
+}
+
+/* ── Source rail ── */
+.rail {
+  background: var(--sw-bg-raised);
+  border-right: 1px solid var(--au-border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.brand {
+  display: flex; align-items: center; gap: 9px;
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--au-border);
+}
+.brand .glyph {
+  width: 22px; height: 22px; border-radius: 5px;
+  background: linear-gradient(135deg, var(--au-action), var(--au-error));
+  position: relative; flex-shrink: 0;
+}
+.brand .glyph::after {
+  content: ''; position: absolute; inset: 5px 4px;
+  border-left: 2px solid var(--sw-bg); border-right: 2px solid var(--sw-bg);
+  opacity: 0.85;
+}
+.brand .name {
+  font-family: var(--au-font-mono); font-size: 13px;
+  color: var(--au-fg-muted); letter-spacing: -0.02em;
+}
+.brand .name b { color: var(--au-fg); font-weight: 700; }
+
+.rail-section { padding: 14px 12px 4px; }
+.rail-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;
+  color: var(--au-fg-soft); padding: 0 6px 8px; font-weight: 600;
+}
+.rail-empty {
+  padding: 6px 8px; font-family: var(--au-font-mono);
+  font-size: 11px; color: var(--au-fg-soft);
+}
+
+.navrow {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px; border-radius: var(--au-radius-lg);
+  cursor: pointer; user-select: none; transition: background 0.12s;
+}
+.navrow:hover { background: var(--sw-bg-bright); }
+.navrow.active { background: var(--sw-bg-bright); box-shadow: inset 2px 0 0 var(--au-action); }
+.navrow .lbl { display: flex; align-items: center; gap: 9px; }
+.navrow .ico { width: 15px; text-align: center; color: var(--au-fg-muted); font-size: 13px; }
+.navrow.active .ico-inbox { color: var(--au-action); }
+.navrow .count { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); }
+
+/* ── Main ── */
+.main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; position: relative; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 22px; border-bottom: 1px solid var(--au-border);
+  background: var(--sw-bg);
+}
+.topbar .title { display: flex; align-items: baseline; gap: 12px; }
+.topbar .title h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.topbar .title .sub { font-size: 12px; color: var(--au-fg-soft); font-family: var(--au-font-mono); }
+.keyhint { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); display: flex; gap: 8px; }
+.keyhint kbd {
+  background: var(--sw-bg-bright); border: 1px solid var(--au-rule);
+  border-radius: 3px; padding: 1px 5px; font-size: 10px; color: var(--au-fg-muted);
+}
+
+.stream { flex: 1; overflow-y: auto; padding: 8px 0 48px; }
+
+/* ── First-run onboarding ── */
+.onboard {
+  max-width: 56ch; margin: 8vh auto 0; padding: 0 22px; text-align: center;
+}
+.onboard-glyph {
+  font-size: 40px; line-height: 1; color: var(--au-action);
+  opacity: 0.8; margin-bottom: 14px;
+}
+.onboard h2 { font-size: 20px; font-weight: 600; margin-bottom: 10px; }
+.onboard p { color: var(--au-fg-muted); font-size: 13.5px; line-height: 1.6; }
+.onboard-status {
+  margin-top: 22px; display: inline-flex; flex-wrap: wrap; gap: 8px 18px;
+  justify-content: center; font-family: var(--au-font-mono);
+  font-size: 11px; color: var(--au-fg-soft);
+}
+.onboard-status .stat { display: inline-flex; align-items: center; gap: 7px; }
+
+.dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--au-fg-soft); flex-shrink: 0;
+  box-shadow: 0 0 0 2px transparent;
+}
+.dot[data-state="pending"] { background: var(--au-warn); box-shadow: 0 0 0 2px var(--au-warn-soft); }
+.dot[data-state="ok"]      { background: var(--au-success); box-shadow: 0 0 0 2px var(--au-success-soft); }
+.dot[data-state="fault"]   { background: var(--au-error); box-shadow: 0 0 0 2px var(--au-error-soft); }
+
+/* ── Status bar ── */
+.statusbar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 7px 22px; font-family: var(--au-font-mono);
+  font-size: 11px; color: var(--au-fg-soft);
+  background: var(--sw-bg); border-top: 1px solid var(--au-border);
+}
+.statusbar .left, .statusbar .right { display: flex; gap: 16px; }
+
+/* ── Item-type pill accents (for when the stream renders real items) ── */
+.pill {
+  display: inline-block; font-family: var(--au-font-mono);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+  padding: 2px 7px; border-radius: var(--au-radius); font-weight: 700; white-space: nowrap;
+}
+.pill.article { background: var(--sw-bg-bright);    color: var(--au-fg-muted); }
+.pill.video   { background: var(--au-info-soft);    color: var(--au-info); }
+.pill.release { background: var(--au-success-soft); color: var(--au-success); }
+.pill.paper   { background: var(--au-selected-soft);color: var(--au-selected); }
+.pill.track   { background: var(--au-error-soft);   color: var(--au-error); }
+.pill.status  { background: var(--au-warn-soft);    color: var(--au-warn); }
+.pill.podcast { background: var(--au-action-soft);  color: var(--au-action); }

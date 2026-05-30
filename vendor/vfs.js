@@ -1,0 +1,3062 @@
+// ⚠ GENERATED FILE — DO NOT EDIT. Source: ext/vfs/src/  Build: node ext/vfs/build.js
+// @gcu/vfs — Virtual filesystem with pluggable backends and mount table
+
+// -- error.js --
+
+const VFS_ERROR_MESSAGES = {
+  ENOENT: 'no such file or directory',
+  EEXIST: 'file already exists',
+  EISDIR: 'is a directory',
+  ENOTDIR: 'not a directory',
+  ENOTEMPTY: 'directory not empty',
+  ENOSPC: 'no space left on device',
+  EACCES: 'permission denied',
+  EXDEV: 'cross-device link',
+  ENOTSUP: 'operation not supported',
+};
+
+class VFSError extends Error {
+  constructor(code, path, message) {
+    const msg = message || `${VFS_ERROR_MESSAGES[code] || code}: ${path}`;
+    super(msg);
+    this.code = code;
+    this.path = path;
+    this.name = 'VFSError';
+  }
+}
+
+function vfsError(code, path, detail) {
+  const base = VFS_ERROR_MESSAGES[code] || code;
+  const msg = detail ? `${base}: ${path} (${detail})` : `${base}: ${path}`;
+  return new VFSError(code, path, msg);
+}
+
+// -- path.js --
+
+const MIME_TABLE = {
+  csv: 'text/csv',
+  json: 'application/json',
+  geojson: 'application/geo+json',
+  txt: 'text/plain',
+  html: 'text/html',
+  htm: 'text/html',
+  js: 'text/javascript',
+  mjs: 'text/javascript',
+  css: 'text/css',
+  md: 'text/markdown',
+  xml: 'application/xml',
+  svg: 'image/svg+xml',
+  wasm: 'application/wasm',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  tiff: 'image/tiff',
+  tif: 'image/tiff',
+  pdf: 'application/pdf',
+  zip: 'application/zip',
+  gz: 'application/gzip',
+  bin: 'application/octet-stream',
+  geotiff: 'image/tiff',
+  shp: 'application/x-shapefile',
+  dbf: 'application/x-dbf',
+  prj: 'text/plain',
+  yaml: 'text/yaml',
+  yml: 'text/yaml',
+};
+
+function normalize(p) {
+  if (!p || p === '/') return '/';
+  // Collapse multiple slashes, resolve . and ..
+  const parts = p.split('/');
+  const resolved = [];
+  const isAbs = parts[0] === '';
+  for (let i = isAbs ? 1 : 0; i < parts.length; i++) {
+    const seg = parts[i];
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      if (isAbs) {
+        // Root clamp: /../foo -> /foo
+        resolved.pop();
+      } else if (resolved.length && resolved[resolved.length - 1] !== '..') {
+        resolved.pop();
+      } else {
+        resolved.push('..');
+      }
+    } else {
+      resolved.push(seg);
+    }
+  }
+  const result = (isAbs ? '/' : '') + resolved.join('/');
+  return result || (isAbs ? '/' : '.');
+}
+
+function join(...parts) {
+  return normalize(parts.filter(Boolean).join('/'));
+}
+
+function dirname(p) {
+  const n = normalize(p);
+  if (n === '/') return '/';
+  const last = n.lastIndexOf('/');
+  if (last <= 0) return '/';
+  return n.slice(0, last);
+}
+
+function basename(p) {
+  const n = normalize(p);
+  if (n === '/') return '/';
+  const last = n.lastIndexOf('/');
+  return last === -1 ? n : n.slice(last + 1);
+}
+
+function extname(p) {
+  const b = basename(p);
+  const dot = b.lastIndexOf('.');
+  if (dot <= 0) return '';
+  return b.slice(dot);
+}
+
+function isAbsolute(p) {
+  return typeof p === 'string' && p.length > 0 && p[0] === '/';
+}
+
+function resolve(...parts) {
+  let result = '';
+  for (const p of parts) {
+    if (!p) continue;
+    if (p[0] === '/') {
+      result = p;
+    } else {
+      result = result ? result + '/' + p : p;
+    }
+  }
+  return normalize(result || '/');
+}
+
+function relative(from, to) {
+  const f = normalize(from).split('/').filter(Boolean);
+  const t = normalize(to).split('/').filter(Boolean);
+  let common = 0;
+  while (common < f.length && common < t.length && f[common] === t[common]) {
+    common++;
+  }
+  const ups = f.length - common;
+  const downs = t.slice(common);
+  const parts = [];
+  for (let i = 0; i < ups; i++) parts.push('..');
+  parts.push(...downs);
+  return parts.join('/') || '.';
+}
+
+function mime(p) {
+  const ext = extname(p).slice(1).toLowerCase();
+  return MIME_TABLE[ext] || 'application/octet-stream';
+}
+
+const path = { join, dirname, basename, extname, normalize, resolve, isAbsolute, relative, mime };
+
+// -- emitter.js --
+
+class EventEmitter {
+  constructor() {
+    this._handlers = new Map();
+  }
+  on(event, handler) {
+    if (!this._handlers.has(event)) this._handlers.set(event, new Set());
+    this._handlers.get(event).add(handler);
+    return this;
+  }
+  off(event, handler) {
+    const set = this._handlers.get(event);
+    if (set) set.delete(handler);
+    return this;
+  }
+  emit(event, data) {
+    const set = this._handlers.get(event);
+    if (set) for (const fn of set) fn(data);
+  }
+}
+
+// -- backend.js --
+
+class Backend {
+  static type = 'base';
+
+  async init() {}
+  async destroy() {}
+
+  async exists(p) {
+    try { await this.stat(p); return true; }
+    catch (e) { if (e.code === 'ENOENT') return false; throw e; }
+  }
+
+  async cp(src, dst, opts) {
+    const info = await this.stat(src);
+    if (info.type === 'directory') {
+      if (!opts || !opts.recursive) throw vfsError('EISDIR', src);
+      await this._cpRecursive(src, dst);
+    } else {
+      const isBytes = info._binary;
+      const content = await this.readFile(src, isBytes ? 'bytes' : 'utf8');
+      try { await this.mkdir(dst.split('/').slice(0, -1).join('/') || '/'); } catch {}
+      await this.writeFile(dst, content);
+    }
+  }
+
+  async _cpRecursive(src, dst) {
+    try { await this.mkdir(dst); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    const entries = await this.readdir(src);
+    for (const name of entries) {
+      const srcChild = src === '/' ? '/' + name : src + '/' + name;
+      const dstChild = dst === '/' ? '/' + name : dst + '/' + name;
+      const info = await this.stat(srcChild);
+      if (info.type === 'directory') {
+        await this._cpRecursive(srcChild, dstChild);
+      } else {
+        const content = await this.readFile(srcChild, info._binary ? 'bytes' : 'utf8');
+        await this.writeFile(dstChild, content);
+      }
+    }
+  }
+
+  async touch(p) {
+    try {
+      const info = await this.stat(p);
+      if (info.type === 'file') {
+        // Update mtime — re-read and re-write
+        const content = await this.readFile(p, 'bytes');
+        await this.writeFile(p, content);
+      }
+    } catch (e) {
+      if (e.code === 'ENOENT') {
+        await this.writeFile(p, '');
+      } else throw e;
+    }
+  }
+
+  async lstat(p) {
+    return this.stat(p);
+  }
+
+  async export(basePath) {
+    const result = {};
+    const _walk = async (dir, prefix) => {
+      const entries = await this.readdir(dir);
+      for (const name of entries) {
+        const full = dir === '/' ? '/' + name : dir + '/' + name;
+        const rel = prefix ? prefix + '/' + name : name;
+        const info = await this.stat(full);
+        if (info.type === 'directory') {
+          await _walk(full, rel);
+        } else {
+          const content = await this.readFile(full);
+          result[rel] = content;
+        }
+      }
+    };
+    await _walk(basePath, '');
+    return result;
+  }
+
+  async import(basePath, data) {
+    // Collect and sort paths so directories come first
+    const paths = Object.keys(data).sort();
+    const createdDirs = new Set();
+    for (const rel of paths) {
+      const full = basePath === '/' ? '/' + rel : basePath + '/' + rel;
+      // Ensure parent directories exist
+      const parts = rel.split('/');
+      for (let i = 1; i < parts.length; i++) {
+        const dir = basePath === '/'
+          ? '/' + parts.slice(0, i).join('/')
+          : basePath + '/' + parts.slice(0, i).join('/');
+        if (!createdDirs.has(dir)) {
+          try { await this.mkdir(dir); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+          createdDirs.add(dir);
+        }
+      }
+      await this.writeFile(full, data[rel]);
+    }
+  }
+
+  createReadStream() { return null; }
+  createWriter() { return null; }
+
+  // Worker-replication: return a structured-cloneable config that a worker
+  // can pass back to the constructor (alongside the type string from
+  // BACKEND_TYPES) to instantiate a peer backend that talks to the same
+  // underlying storage. Return null (the default) to indicate this backend
+  // CANNOT be replicated in a worker — @gcu/proc will fall back to RPC.
+  //
+  // Backends that override should restrict themselves to JSON-cloneable
+  // config (no closures, no DOM handles, no callbacks). E.g. IDBBackend
+  // returns { type: 'idb', name }; MemoryBackend / CommentBackend /
+  // FSAABackend / AbusBackend all keep the null default because their state
+  // either lives on the main thread (Memory) or requires DOM (Comment) or
+  // requires a single permission-bound handle (FSAA) or is broker-bound
+  // (Abus). FetchBackend / RESTBackend override only when their headers
+  // config is a plain object — function-typed headers are non-serializable.
+  toConfig() { return null; }
+
+  get readonly() { return false; }
+  get persistent() { return false; }
+  get streamable() { return false; }
+  get estimatable() { return false; }
+  get exportable() { return true; }
+  get portable() { return false; }
+  get symlinks() { return false; }
+}
+
+// -- memory.js --
+
+const MAX_SYMLINK_DEPTH = 40;
+
+function _makeNode(type, content) {
+  const now = new Date();
+  const node = {
+    _meta: {
+      type,
+      size: 0,
+      created: now,
+      modified: now,
+      mode: type === 'directory' ? 0o755 : 0o644,
+      owner: 'user',
+      group: 'staff',
+    },
+  };
+  if (type === 'directory') {
+    node._children = new Map();
+  } else if (type === 'file') {
+    node._content = content !== undefined ? content : '';
+    node._meta.size = typeof node._content === 'string'
+      ? new TextEncoder().encode(node._content).byteLength
+      : node._content.byteLength;
+  } else if (type === 'symlink') {
+    node._target = content || '';
+  }
+  return node;
+}
+
+class MemoryBackend extends Backend {
+  static type = 'memory';
+
+  constructor() {
+    super();
+    this._root = _makeNode('directory');
+  }
+
+  _segments(p) {
+    const n = path.normalize(p);
+    if (n === '/') return [];
+    return n.split('/').filter(Boolean);
+  }
+
+  _resolve(p, followSymlinks = true) {
+    const segs = this._segments(p);
+    let node = this._root;
+    let depth = 0;
+
+    for (let i = 0; i < segs.length; i++) {
+      // Follow symlink if current node is a symlink
+      if (followSymlinks && node._meta.type === 'symlink') {
+        const target = node._target;
+        node = this._resolve(target, true);
+        depth++;
+        if (depth > MAX_SYMLINK_DEPTH) throw vfsError('ENOENT', p, 'too many symlinks');
+      }
+
+      if (node._meta.type !== 'directory') {
+        throw vfsError('ENOTDIR', p);
+      }
+
+      const child = node._children.get(segs[i]);
+      if (!child) throw vfsError('ENOENT', p);
+      node = child;
+    }
+
+    // Follow final symlink
+    if (followSymlinks && node._meta.type === 'symlink') {
+      depth++;
+      if (depth > MAX_SYMLINK_DEPTH) throw vfsError('ENOENT', p, 'too many symlinks');
+      node = this._resolve(node._target, true);
+    }
+
+    return node;
+  }
+
+  _resolveParent(p) {
+    const segs = this._segments(p);
+    if (segs.length === 0) throw vfsError('EEXIST', '/');
+    const name = segs.pop();
+    let node = this._root;
+    for (const seg of segs) {
+      if (node._meta.type === 'symlink') {
+        node = this._resolve(node._target, true);
+      }
+      if (node._meta.type !== 'directory') throw vfsError('ENOTDIR', p);
+      const child = node._children.get(seg);
+      if (!child) throw vfsError('ENOENT', p);
+      node = child;
+    }
+    if (node._meta.type === 'symlink') {
+      node = this._resolve(node._target, true);
+    }
+    if (node._meta.type !== 'directory') throw vfsError('ENOTDIR', p);
+    return [node, name];
+  }
+
+  async readFile(p, encoding) {
+    const node = this._resolve(p);
+    if (node._meta.type === 'directory') throw vfsError('EISDIR', p);
+    if (node._meta.type === 'symlink') throw vfsError('ENOENT', p);
+    const content = node._content;
+    if (encoding === 'bytes') {
+      if (content instanceof Uint8Array) return new Uint8Array(content);
+      return new TextEncoder().encode(content);
+    }
+    if (content instanceof Uint8Array) return new TextDecoder().decode(content);
+    return content;
+  }
+
+  async writeFile(p, content) {
+    const [parent, name] = this._resolveParent(p);
+    const existing = parent._children.get(name);
+    if (existing && existing._meta.type === 'directory') throw vfsError('EISDIR', p);
+
+    const node = existing || _makeNode('file');
+    node._content = content;
+    node._meta.type = 'file';
+    node._meta.modified = new Date();
+    node._meta.size = typeof content === 'string'
+      ? new TextEncoder().encode(content).byteLength
+      : (content instanceof Uint8Array ? content.byteLength : 0);
+    if (!existing) {
+      node._meta.created = new Date();
+    }
+    parent._children.set(name, node);
+  }
+
+  async unlink(p) {
+    const [parent, name] = this._resolveParent(p);
+    const child = parent._children.get(name);
+    if (!child) throw vfsError('ENOENT', p);
+    if (child._meta.type === 'directory') throw vfsError('EISDIR', p);
+    parent._children.delete(name);
+  }
+
+  async rename(oldP, newP) {
+    const [oldParent, oldName] = this._resolveParent(oldP);
+    const child = oldParent._children.get(oldName);
+    if (!child) throw vfsError('ENOENT', oldP);
+
+    const [newParent, newName] = this._resolveParent(newP);
+    const existingNew = newParent._children.get(newName);
+
+    // Can't overwrite a non-empty directory
+    if (existingNew && existingNew._meta.type === 'directory' && existingNew._children.size > 0) {
+      throw vfsError('ENOTEMPTY', newP);
+    }
+    // Can't overwrite a directory with a file
+    if (existingNew && existingNew._meta.type === 'directory' && child._meta.type !== 'directory') {
+      throw vfsError('EISDIR', newP);
+    }
+
+    oldParent._children.delete(oldName);
+    child._meta.modified = new Date();
+    newParent._children.set(newName, child);
+  }
+
+  async stat(p) {
+    const node = this._resolve(p);
+    const m = node._meta;
+    return {
+      type: m.type,
+      size: m.size,
+      created: m.created,
+      modified: m.modified,
+      mode: m.mode,
+      owner: m.owner,
+      group: m.group,
+    };
+  }
+
+  async lstat(p) {
+    const node = this._resolve(p, false);
+    const m = node._meta;
+    const result = {
+      type: m.type,
+      size: m.size,
+      created: m.created,
+      modified: m.modified,
+      mode: m.mode,
+      owner: m.owner,
+      group: m.group,
+    };
+    if (m.type === 'symlink') result.target = node._target;
+    return result;
+  }
+
+  async mkdir(p, opts) {
+    if (opts && opts.recursive) return this._mkdirRecursive(p);
+    const [parent, name] = this._resolveParent(p);
+    if (parent._children.has(name)) throw vfsError('EEXIST', p);
+    parent._children.set(name, _makeNode('directory'));
+  }
+
+  async _mkdirRecursive(p) {
+    const segs = this._segments(p);
+    let node = this._root;
+    for (const seg of segs) {
+      if (node._meta.type !== 'directory') throw vfsError('ENOTDIR', p);
+      if (!node._children.has(seg)) {
+        node._children.set(seg, _makeNode('directory'));
+      }
+      node = node._children.get(seg);
+    }
+  }
+
+  async readdir(p) {
+    const node = this._resolve(p);
+    if (node._meta.type !== 'directory') throw vfsError('ENOTDIR', p);
+    return [...node._children.keys()].sort();
+  }
+
+  async rmdir(p) {
+    const [parent, name] = this._resolveParent(p);
+    const child = parent._children.get(name);
+    if (!child) throw vfsError('ENOENT', p);
+    if (child._meta.type !== 'directory') throw vfsError('ENOTDIR', p);
+    if (child._children.size > 0) throw vfsError('ENOTEMPTY', p);
+    parent._children.delete(name);
+  }
+
+  async symlink(target, p) {
+    const [parent, name] = this._resolveParent(p);
+    if (parent._children.has(name)) throw vfsError('EEXIST', p);
+    const node = _makeNode('symlink', target);
+    parent._children.set(name, node);
+  }
+
+  async readlink(p) {
+    const node = this._resolve(p, false);
+    if (node._meta.type !== 'symlink') throw vfsError('ENOENT', p, 'not a symlink');
+    return node._target;
+  }
+
+  async chmod(p, mode) {
+    const node = this._resolve(p);
+    node._meta.mode = mode;
+  }
+
+  async chown(p, owner, group) {
+    const node = this._resolve(p);
+    if (owner !== undefined) node._meta.owner = owner;
+    if (group !== undefined) node._meta.group = group;
+  }
+
+  async estimate() {
+    return { used: this._calcSize(this._root), available: Infinity };
+  }
+
+  _calcSize(node) {
+    if (node._meta.type === 'file') return node._meta.size;
+    if (node._meta.type !== 'directory') return 0;
+    let total = 0;
+    for (const child of node._children.values()) {
+      total += this._calcSize(child);
+    }
+    return total;
+  }
+
+  get symlinks() { return true; }
+}
+
+// -- idb.js --
+
+class IDBBackend extends Backend {
+  static type = 'idb';
+
+  constructor(config) {
+    super();
+    this._dbName = (config && config.name) || 'gcu-vfs';
+    this._db = null;
+  }
+
+  toConfig() {
+    return { type: 'idb', name: this._dbName };
+  }
+
+  async init() {
+    this._db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open(this._dbName, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('files')) {
+          db.createObjectStore('files', { keyPath: 'path' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    // Ensure root directory exists
+    const root = await this._get('/');
+    if (!root) {
+      const now = new Date();
+      await this._put({
+        path: '/', type: 'directory', content: null,
+        size: 0, created: now, modified: now,
+        mode: 0o755, owner: 'user', group: 'staff',
+      });
+    }
+  }
+
+  async destroy() {
+    if (this._db) {
+      this._db.close();
+      this._db = null;
+    }
+  }
+
+  _tx(mode) {
+    const tx = this._db.transaction('files', mode);
+    return tx.objectStore('files');
+  }
+
+  _get(p) {
+    return new Promise((resolve, reject) => {
+      const req = this._tx('readonly').get(p);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  _put(record) {
+    return new Promise((resolve, reject) => {
+      const req = this._tx('readwrite').put(record);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  _del(p) {
+    return new Promise((resolve, reject) => {
+      const req = this._tx('readwrite').delete(p);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  _cursorRange(prefix) {
+    // All paths that start with prefix
+    const lower = prefix === '/' ? '/' : prefix + '/';
+    const upper = prefix === '/' ? '/\uffff' : prefix + '/\uffff';
+    return { lower, upper };
+  }
+
+  _scan(prefix) {
+    return new Promise((resolve, reject) => {
+      const store = this._tx('readonly');
+      const { lower, upper } = this._cursorRange(prefix);
+      const range = IDBKeyRange.bound(lower, upper, false, true);
+      const results = [];
+      const req = store.openCursor(range);
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (cursor) {
+          results.push(cursor.value);
+          cursor.continue();
+        } else {
+          resolve(results);
+        }
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async readFile(p, encoding) {
+    const np = path.normalize(p);
+    const rec = await this._get(np);
+    if (!rec) throw vfsError('ENOENT', np);
+    if (rec.type === 'directory') throw vfsError('EISDIR', np);
+    if (encoding === 'bytes') {
+      if (rec.content instanceof Uint8Array) return new Uint8Array(rec.content);
+      return new TextEncoder().encode(rec.content || '');
+    }
+    if (rec.content instanceof Uint8Array) return new TextDecoder().decode(rec.content);
+    return rec.content || '';
+  }
+
+  async writeFile(p, content) {
+    const np = path.normalize(p);
+    const parentPath = path.dirname(np);
+    if (parentPath !== np) {
+      const parent = await this._get(parentPath);
+      if (!parent) throw vfsError('ENOENT', np);
+      if (parent.type !== 'directory') throw vfsError('ENOTDIR', np);
+    }
+    const existing = await this._get(np);
+    if (existing && existing.type === 'directory') throw vfsError('EISDIR', np);
+    const now = new Date();
+    const isBinary = content instanceof Uint8Array;
+    const size = typeof content === 'string'
+      ? new TextEncoder().encode(content).byteLength
+      : (isBinary ? content.byteLength : 0);
+    await this._put({
+      path: np, type: 'file', content,
+      size, created: existing ? existing.created : now, modified: now,
+      mode: existing ? existing.mode : 0o644,
+      owner: existing ? existing.owner : 'user',
+      group: existing ? existing.group : 'staff',
+      _binary: isBinary,
+    });
+  }
+
+  async stat(p) {
+    const np = path.normalize(p);
+    const rec = await this._get(np);
+    if (!rec) throw vfsError('ENOENT', np);
+    return {
+      type: rec.type,
+      size: rec.size || 0,
+      created: rec.created instanceof Date ? rec.created : new Date(rec.created),
+      modified: rec.modified instanceof Date ? rec.modified : new Date(rec.modified),
+      mode: rec.mode != null ? rec.mode : (rec.type === 'directory' ? 0o755 : 0o644),
+      owner: rec.owner || 'user',
+      group: rec.group || 'staff',
+    };
+  }
+
+  async mkdir(p, opts) {
+    const np = path.normalize(p);
+    if (opts && opts.recursive) return this._mkdirRecursive(np);
+    const parentPath = path.dirname(np);
+    if (parentPath !== np) {
+      const parent = await this._get(parentPath);
+      if (!parent) throw vfsError('ENOENT', np);
+    }
+    const existing = await this._get(np);
+    if (existing) throw vfsError('EEXIST', np);
+    const now = new Date();
+    await this._put({
+      path: np, type: 'directory', content: null,
+      size: 0, created: now, modified: now,
+      mode: 0o755, owner: 'user', group: 'staff',
+    });
+  }
+
+  async _mkdirRecursive(np) {
+    const segs = np.split('/').filter(Boolean);
+    let current = '';
+    for (const seg of segs) {
+      current += '/' + seg;
+      const existing = await this._get(current);
+      if (!existing) {
+        const now = new Date();
+        await this._put({
+          path: current, type: 'directory', content: null,
+          size: 0, created: now, modified: now,
+          mode: 0o755, owner: 'user', group: 'staff',
+        });
+      }
+    }
+  }
+
+  async readdir(p) {
+    const np = path.normalize(p);
+    const rec = await this._get(np);
+    if (!rec) throw vfsError('ENOENT', np);
+    if (rec.type !== 'directory') throw vfsError('ENOTDIR', np);
+
+    const all = await this._scan(np);
+    const prefix = np === '/' ? '/' : np + '/';
+    const names = new Set();
+    for (const entry of all) {
+      const rel = entry.path.slice(prefix.length);
+      if (!rel) continue;
+      // Direct children only: no '/' in the remaining path
+      const slashIdx = rel.indexOf('/');
+      names.add(slashIdx === -1 ? rel : rel.slice(0, slashIdx));
+    }
+    return [...names].sort();
+  }
+
+  async rmdir(p) {
+    const np = path.normalize(p);
+    const rec = await this._get(np);
+    if (!rec) throw vfsError('ENOENT', np);
+    if (rec.type !== 'directory') throw vfsError('ENOTDIR', np);
+    const children = await this.readdir(np);
+    if (children.length > 0) throw vfsError('ENOTEMPTY', np);
+    await this._del(np);
+  }
+
+  async unlink(p) {
+    const np = path.normalize(p);
+    const rec = await this._get(np);
+    if (!rec) throw vfsError('ENOENT', np);
+    if (rec.type === 'directory') throw vfsError('EISDIR', np);
+    await this._del(np);
+  }
+
+  async rename(oldP, newP) {
+    const oldNp = path.normalize(oldP);
+    const newNp = path.normalize(newP);
+    const rec = await this._get(oldNp);
+    if (!rec) throw vfsError('ENOENT', oldNp);
+
+    if (rec.type === 'directory') {
+      // Move directory and all children
+      const all = await this._scan(oldNp);
+      const oldPrefix = oldNp === '/' ? '/' : oldNp + '/';
+      const newPrefix = newNp === '/' ? '/' : newNp + '/';
+      // Re-key all children
+      for (const entry of all) {
+        const newPath = newPrefix + entry.path.slice(oldPrefix.length);
+        await this._del(entry.path);
+        entry.path = newPath;
+        await this._put(entry);
+      }
+      // Move the directory record itself
+      await this._del(oldNp);
+      rec.path = newNp;
+      rec.modified = new Date();
+      await this._put(rec);
+    } else {
+      await this._del(oldNp);
+      rec.path = newNp;
+      rec.modified = new Date();
+      await this._put(rec);
+    }
+  }
+
+  async touch(p) {
+    const np = path.normalize(p);
+    const rec = await this._get(np);
+    if (rec) {
+      if (rec.type === 'file') {
+        rec.modified = new Date();
+        await this._put(rec);
+      }
+    } else {
+      await this.writeFile(np, '');
+    }
+  }
+
+  async chmod(p, mode) {
+    const np = path.normalize(p);
+    const rec = await this._get(np);
+    if (!rec) throw vfsError('ENOENT', np);
+    rec.mode = mode;
+    await this._put(rec);
+  }
+
+  async chown(p, owner, group) {
+    const np = path.normalize(p);
+    const rec = await this._get(np);
+    if (!rec) throw vfsError('ENOENT', np);
+    if (owner !== undefined) rec.owner = owner;
+    if (group !== undefined) rec.group = group;
+    await this._put(rec);
+  }
+
+  async estimate() {
+    if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      return { used: est.usage || 0, available: (est.quota || 0) - (est.usage || 0) };
+    }
+    // Fallback: sum record sizes
+    const all = await this._scan('/');
+    let used = 0;
+    for (const entry of all) used += entry.size || 0;
+    return { used, available: Infinity };
+  }
+
+  get persistent() { return true; }
+  get estimatable() { return true; }
+}
+
+// -- comment.js --
+
+class CommentBackend extends Backend {
+  static type = 'comment';
+
+  constructor(config) {
+    super();
+    this._map = new Map();
+    this._commentNode = null;
+    this._dataMode = !!(config && config.data);
+    this._initData = (config && config.data) || null;
+  }
+
+  async init() {
+    if (this._initData) {
+      // Data mode: load from provided object
+      for (const [key, entry] of Object.entries(this._initData)) {
+        this._map.set(key, { ...entry });
+      }
+    } else if (typeof document !== 'undefined') {
+      // DOM mode: find existing AUDITABLE-FS comment
+      this._commentNode = this._findComment();
+      if (this._commentNode) {
+        const raw = this._commentNode.nodeValue.replace(/^AUDITABLE-FS\n/, '').replace(/\nAUDITABLE-FS$/, '');
+        const obj = this._decode(raw);
+        for (const [key, entry] of Object.entries(obj)) {
+          this._map.set(key, entry);
+        }
+      }
+    }
+  }
+
+  _findComment() {
+    if (typeof document === 'undefined') return null;
+    const walker = document.createTreeWalker(document, 128 /* NodeFilter.SHOW_COMMENT */);
+    while (walker.nextNode()) {
+      if (walker.currentNode.nodeValue.startsWith('AUDITABLE-FS\n')) {
+        return walker.currentNode;
+      }
+    }
+    return null;
+  }
+
+  _toRel(p) {
+    // Strip leading / for internal storage
+    const np = path.normalize(p);
+    return np === '/' ? '' : np.slice(1);
+  }
+
+  _toAbs(rel) {
+    return rel ? '/' + rel : '/';
+  }
+
+  _encode(obj) {
+    const json = JSON.stringify(obj);
+    const b64 = btoa(unescape(encodeURIComponent(json)));
+    // Split into 76-char lines
+    const lines = [];
+    for (let i = 0; i < b64.length; i += 76) {
+      lines.push(b64.slice(i, i + 76));
+    }
+    return lines.join('\n');
+  }
+
+  _decode(raw) {
+    const stripped = raw.replace(/\s/g, '');
+    // Legacy raw JSON detection
+    if (stripped.startsWith('{')) {
+      return JSON.parse(stripped);
+    }
+    const json = decodeURIComponent(escape(atob(stripped)));
+    return JSON.parse(json);
+  }
+
+  _syncComment() {
+    if (!this._commentNode) return;
+    const obj = Object.fromEntries(this._map);
+    this._commentNode.nodeValue = 'AUDITABLE-FS\n' + this._encode(obj) + '\nAUDITABLE-FS';
+  }
+
+  async readFile(p, encoding) {
+    const rel = this._toRel(p);
+    const entry = this._map.get(rel);
+    if (!entry) throw vfsError('ENOENT', p);
+
+    let raw;
+    if (entry.compressed && typeof DecompressionStream !== 'undefined') {
+      // Decompress gzip base64
+      const bytes = Uint8Array.from(atob(entry.data), c => c.charCodeAt(0));
+      const ds = new DecompressionStream('gzip');
+      const writer = ds.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
+      const reader = ds.readable.getReader();
+      const chunks = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+      const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+      const result = new Uint8Array(total);
+      let offset = 0;
+      for (const c of chunks) { result.set(c, offset); offset += c.byteLength; }
+      raw = result;
+    } else if (entry.data) {
+      // Uncompressed base64
+      const binary = atob(entry.data);
+      raw = Uint8Array.from(binary, c => c.charCodeAt(0));
+    } else {
+      raw = new Uint8Array(0);
+    }
+
+    if (encoding === 'bytes') return raw;
+    return new TextDecoder().decode(raw);
+  }
+
+  async writeFile(p, content) {
+    const rel = this._toRel(p);
+    // Verify parent directory exists (implicitly — check that we're not writing under a file)
+    const parentRel = this._toRel(path.dirname(path.normalize(p)));
+    if (parentRel) {
+      // Check parent isn't a file
+      if (this._map.has(parentRel)) throw vfsError('ENOTDIR', p);
+    }
+
+    let data, compressed = false, mimeType, size;
+
+    if (content instanceof Uint8Array) {
+      mimeType = path.mime(p);
+      size = content.byteLength;
+      // Try gzip compression in browser
+      if (typeof CompressionStream !== 'undefined') {
+        const cs = new CompressionStream('gzip');
+        const writer = cs.writable.getWriter();
+        writer.write(content);
+        writer.close();
+        const reader = cs.readable.getReader();
+        const chunks = [];
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+        const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+        const result = new Uint8Array(total);
+        let offset = 0;
+        for (const c of chunks) { result.set(c, offset); offset += c.byteLength; }
+        if (result.byteLength < content.byteLength) {
+          data = btoa(String.fromCharCode(...result));
+          compressed = true;
+        } else {
+          data = btoa(String.fromCharCode(...content));
+        }
+      } else {
+        data = btoa(String.fromCharCode(...content));
+      }
+    } else {
+      const str = content || '';
+      mimeType = path.mime(p);
+      const bytes = new TextEncoder().encode(str);
+      size = bytes.byteLength;
+      if (typeof CompressionStream !== 'undefined') {
+        const cs = new CompressionStream('gzip');
+        const writer = cs.writable.getWriter();
+        writer.write(bytes);
+        writer.close();
+        const reader = cs.readable.getReader();
+        const chunks = [];
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+        const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+        const result = new Uint8Array(total);
+        let offset = 0;
+        for (const c of chunks) { result.set(c, offset); offset += c.byteLength; }
+        if (result.byteLength < bytes.byteLength) {
+          data = btoa(String.fromCharCode(...result));
+          compressed = true;
+        } else {
+          data = btoa(String.fromCharCode(...bytes));
+        }
+      } else {
+        data = btoa(String.fromCharCode(...bytes));
+      }
+    }
+
+    this._map.set(rel, { type: mimeType, compressed, size, data });
+    this._syncComment();
+  }
+
+  async stat(p) {
+    const np = path.normalize(p);
+    const rel = this._toRel(np);
+
+    // Root always exists
+    if (rel === '') {
+      return {
+        type: 'directory', size: 0,
+        created: new Date(0), modified: new Date(0),
+        mode: 0o755, owner: 'user', group: 'staff',
+      };
+    }
+
+    // Check if it's a file
+    const entry = this._map.get(rel);
+    if (entry) {
+      return {
+        type: 'file', size: entry.size || 0,
+        created: new Date(0), modified: new Date(0),
+        mode: 0o644, owner: 'user', group: 'staff',
+      };
+    }
+
+    // Check if it's an implicit directory
+    const prefix = rel + '/';
+    for (const key of this._map.keys()) {
+      if (key.startsWith(prefix)) {
+        return {
+          type: 'directory', size: 0,
+          created: new Date(0), modified: new Date(0),
+          mode: 0o755, owner: 'user', group: 'staff',
+        };
+      }
+    }
+
+    throw vfsError('ENOENT', np);
+  }
+
+  async mkdir(/* p, opts */) {
+    // Implicit directories — mkdir is a no-op
+  }
+
+  async readdir(p) {
+    const np = path.normalize(p);
+    const rel = this._toRel(np);
+    const prefix = rel ? rel + '/' : '';
+    const names = new Set();
+
+    for (const key of this._map.keys()) {
+      if (rel === '') {
+        // Root: all top-level entries
+        const slashIdx = key.indexOf('/');
+        names.add(slashIdx === -1 ? key : key.slice(0, slashIdx));
+      } else if (key.startsWith(prefix)) {
+        const rest = key.slice(prefix.length);
+        if (!rest) continue;
+        const slashIdx = rest.indexOf('/');
+        names.add(slashIdx === -1 ? rest : rest.slice(0, slashIdx));
+      }
+    }
+
+    return [...names].sort();
+  }
+
+  async rmdir(p) {
+    const np = path.normalize(p);
+    const rel = this._toRel(np);
+    if (rel === '') throw vfsError('EACCES', np, 'cannot remove root');
+    const children = await this.readdir(np);
+    if (children.length > 0) throw vfsError('ENOTEMPTY', np);
+    // No-op if empty (implicit directories have no record to delete)
+  }
+
+  async unlink(p) {
+    const np = path.normalize(p);
+    const rel = this._toRel(np);
+    if (!this._map.has(rel)) throw vfsError('ENOENT', np);
+    this._map.delete(rel);
+    this._syncComment();
+  }
+
+  async rename(oldP, newP) {
+    const oldRel = this._toRel(oldP);
+    const newRel = this._toRel(newP);
+    const entry = this._map.get(oldRel);
+    if (!entry) throw vfsError('ENOENT', oldP);
+    this._map.delete(oldRel);
+    this._map.set(newRel, entry);
+    this._syncComment();
+  }
+
+  async touch(p) {
+    const np = path.normalize(p);
+    const rel = this._toRel(np);
+    if (!this._map.has(rel)) {
+      // Create empty file
+      this._map.set(rel, { type: path.mime(np), compressed: false, size: 0, data: '' });
+      this._syncComment();
+    }
+    // No mtime to update in this format
+  }
+
+  async chmod() {
+    // AUDITABLE-FS format doesn't store permissions — no-op
+  }
+
+  async chown() {
+    // AUDITABLE-FS format doesn't store ownership — no-op
+  }
+
+  async export(basePath) {
+    const np = path.normalize(basePath);
+    const rel = this._toRel(np);
+    const result = {};
+    const prefix = rel ? rel + '/' : '';
+
+    for (const [key, entry] of this._map) {
+      let exportKey;
+      if (rel === '') {
+        exportKey = key;
+      } else if (key.startsWith(prefix)) {
+        exportKey = key.slice(prefix.length);
+      } else if (key === rel) {
+        // Exporting a single file
+        const content = await this.readFile(np);
+        return { [path.basename(np)]: content };
+      } else {
+        continue;
+      }
+      if (!exportKey) continue;
+      result[exportKey] = entry;
+    }
+    return result;
+  }
+
+  async import(basePath, data) {
+    const np = path.normalize(basePath);
+    const rel = this._toRel(np);
+    const prefix = rel ? rel + '/' : '';
+
+    for (const [key, entry] of Object.entries(data)) {
+      this._map.set(prefix + key, { ...entry });
+    }
+    this._syncComment();
+  }
+
+  getData() {
+    return Object.fromEntries(this._map);
+  }
+
+  get persistent() { return true; }
+  get portable() { return true; }
+  get exportable() { return true; }
+}
+
+// -- handle.js --
+
+class HandleBackend extends Backend {
+  constructor(root) {
+    super();
+    this._root = root;
+  }
+
+  async _resolveDir(p) {
+    const n = path.normalize(p);
+    if (n === '/') return this._root;
+    const segs = n.split('/').filter(Boolean);
+    let dir = this._root;
+    for (const seg of segs) {
+      try {
+        dir = await dir.getDirectoryHandle(seg);
+      } catch {
+        throw vfsError('ENOENT', p);
+      }
+    }
+    return dir;
+  }
+
+  async _resolveFile(p, create) {
+    const n = path.normalize(p);
+    const parentPath = path.dirname(n);
+    const name = path.basename(n);
+    const dir = await this._resolveDir(parentPath);
+    try {
+      return await dir.getFileHandle(name, create ? { create: true } : undefined);
+    } catch {
+      throw vfsError('ENOENT', p);
+    }
+  }
+
+  _resolveParent(p) {
+    const n = path.normalize(p);
+    return { dir: path.dirname(n), name: path.basename(n) };
+  }
+
+  async readFile(p, encoding) {
+    const handle = await this._resolveFile(p);
+    const file = await handle.getFile();
+    if (encoding === 'bytes') {
+      const buf = await file.arrayBuffer();
+      return new Uint8Array(buf);
+    }
+    return await file.text();
+  }
+
+  async writeFile(p, content) {
+    // Ensure parent exists (will throw ENOENT if not)
+    const n = path.normalize(p);
+    const parentPath = path.dirname(n);
+    await this._resolveDir(parentPath);
+    const handle = await this._resolveFile(p, true);
+    const writable = await handle.createWritable();
+    await writable.write(content);
+    await writable.close();
+  }
+
+  async stat(p) {
+    const n = path.normalize(p);
+    if (n === '/') {
+      return { type: 'directory', size: 0, created: new Date(0), modified: new Date(0) };
+    }
+    // Try file first
+    try {
+      const parentPath = path.dirname(n);
+      const name = path.basename(n);
+      const dir = await this._resolveDir(parentPath);
+      const fh = await dir.getFileHandle(name);
+      const file = await fh.getFile();
+      return {
+        type: 'file',
+        size: file.size,
+        created: new Date(file.lastModified),
+        modified: new Date(file.lastModified),
+      };
+    } catch {
+      // Try directory
+      try {
+        await this._resolveDir(n);
+        return { type: 'directory', size: 0, created: new Date(0), modified: new Date(0) };
+      } catch {
+        throw vfsError('ENOENT', p);
+      }
+    }
+  }
+
+  async mkdir(p, opts) {
+    const n = path.normalize(p);
+    if (opts && opts.recursive) {
+      const segs = n.split('/').filter(Boolean);
+      let dir = this._root;
+      for (const seg of segs) {
+        dir = await dir.getDirectoryHandle(seg, { create: true });
+      }
+      return;
+    }
+    const parentPath = path.dirname(n);
+    const name = path.basename(n);
+    const parent = await this._resolveDir(parentPath);
+    // Check if exists
+    try {
+      await parent.getDirectoryHandle(name);
+      throw vfsError('EEXIST', p);
+    } catch (e) {
+      if (e.code === 'EEXIST') throw e;
+    }
+    await parent.getDirectoryHandle(name, { create: true });
+  }
+
+  async readdir(p) {
+    const dir = await this._resolveDir(p);
+    const names = [];
+    for await (const [name] of dir.entries()) {
+      names.push(name);
+    }
+    return names.sort();
+  }
+
+  async unlink(p) {
+    const n = path.normalize(p);
+    // Verify it's a file
+    const info = await this.stat(p);
+    if (info.type === 'directory') throw vfsError('EISDIR', p);
+    const parentPath = path.dirname(n);
+    const name = path.basename(n);
+    const parent = await this._resolveDir(parentPath);
+    await parent.removeEntry(name);
+  }
+
+  async rmdir(p) {
+    const n = path.normalize(p);
+    // Verify it's a directory
+    const info = await this.stat(p);
+    if (info.type !== 'directory') throw vfsError('ENOTDIR', p);
+    const parentPath = path.dirname(n);
+    const name = path.basename(n);
+    const parent = await this._resolveDir(parentPath);
+    await parent.removeEntry(name);
+  }
+
+  async rename(oldP, newP) {
+    // No native rename in handle APIs — read, write, delete
+    const info = await this.stat(oldP);
+    if (info.type === 'directory') {
+      // Recursive copy then delete
+      await this._cpDir(oldP, newP);
+      await this._rmDir(oldP);
+    } else {
+      const content = await this.readFile(oldP, 'bytes');
+      await this.writeFile(newP, content);
+      await this.unlink(oldP);
+    }
+  }
+
+  async _cpDir(src, dst) {
+    await this.mkdir(dst, { recursive: true });
+    const entries = await this.readdir(src);
+    for (const name of entries) {
+      const srcChild = path.join(src, name);
+      const dstChild = path.join(dst, name);
+      const info = await this.stat(srcChild);
+      if (info.type === 'directory') {
+        await this._cpDir(srcChild, dstChild);
+      } else {
+        const content = await this.readFile(srcChild, 'bytes');
+        await this.writeFile(dstChild, content);
+      }
+    }
+  }
+
+  async _rmDir(p) {
+    const entries = await this.readdir(p);
+    for (const name of entries) {
+      const child = path.join(p, name);
+      const info = await this.stat(child);
+      if (info.type === 'directory') {
+        await this._rmDir(child);
+      } else {
+        await this.unlink(child);
+      }
+    }
+    await this.rmdir(p);
+  }
+
+  createReadStream(p) {
+    // Return a thunk — caller must await the file handle resolution
+    // For HandleBackend, return null and let subclass or consumer use readFile
+    return null;
+  }
+
+  async createWriter(p) {
+    const handle = await this._resolveFile(p, true);
+    return handle.createWritable();
+  }
+
+  get persistent() { return true; }
+  get streamable() { return true; }
+  get estimatable() { return true; }
+
+  async estimate() {
+    if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.estimate) {
+      const est = await navigator.storage.estimate();
+      return { used: est.usage || 0, available: (est.quota || 0) - (est.usage || 0) };
+    }
+    return { used: 0, available: Infinity };
+  }
+}
+
+// -- opfs.js --
+
+class OPFSBackend extends HandleBackend {
+  static type = 'opfs';
+
+  constructor(config) {
+    super(null);
+    this._fallbackConfig = config && config.fallback;
+    this._fallback = null;
+  }
+
+  toConfig() {
+    // Real OPFS replicates fine: the worker gets its own origin-private
+    // directory from navigator.storage.getDirectory() — same handle as
+    // the main thread. When running in fallback mode (no OPFS available
+    // in this context), we can't replicate because the fallback could
+    // itself be non-replicable; let proc proxy instead.
+    if (this._fallback) return null;
+    return { type: 'opfs' };
+  }
+
+  async init() {
+    if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.getDirectory) {
+      this._root = await navigator.storage.getDirectory();
+    } else if (this._fallbackConfig) {
+      // Create fallback backend via the factory function set during build
+      if (typeof _createBackend === 'function') {
+        this._fallback = _createBackend(this._fallbackConfig);
+      } else {
+        // Standalone usage — try to construct directly
+        throw vfsError('ENOTSUP', '/', 'OPFS not available and no backend factory');
+      }
+      if (this._fallback.init) await this._fallback.init();
+    } else {
+      throw vfsError('ENOTSUP', '/', 'OPFS not available');
+    }
+  }
+
+  // Delegate all methods when in fallback mode
+  async readFile(p, encoding) {
+    if (this._fallback) return this._fallback.readFile(p, encoding);
+    return super.readFile(p, encoding);
+  }
+  async writeFile(p, content) {
+    if (this._fallback) return this._fallback.writeFile(p, content);
+    return super.writeFile(p, content);
+  }
+  async stat(p) {
+    if (this._fallback) return this._fallback.stat(p);
+    return super.stat(p);
+  }
+  async mkdir(p, opts) {
+    if (this._fallback) return this._fallback.mkdir(p, opts);
+    return super.mkdir(p, opts);
+  }
+  async readdir(p) {
+    if (this._fallback) return this._fallback.readdir(p);
+    return super.readdir(p);
+  }
+  async rmdir(p) {
+    if (this._fallback) return this._fallback.rmdir(p);
+    return super.rmdir(p);
+  }
+  async unlink(p) {
+    if (this._fallback) return this._fallback.unlink(p);
+    return super.unlink(p);
+  }
+  async rename(oldP, newP) {
+    if (this._fallback) return this._fallback.rename(oldP, newP);
+    return super.rename(oldP, newP);
+  }
+  async touch(p) {
+    if (this._fallback) return this._fallback.touch(p);
+    return super.touch(p);
+  }
+  async exists(p) {
+    if (this._fallback) return this._fallback.exists(p);
+    return super.exists(p);
+  }
+  createReadStream(p) {
+    if (this._fallback) return this._fallback.createReadStream(p);
+    return super.createReadStream(p);
+  }
+  async createWriter(p) {
+    if (this._fallback) return this._fallback.createWriter(p);
+    return super.createWriter(p);
+  }
+  async estimate() {
+    if (this._fallback) return this._fallback.estimate();
+    return super.estimate();
+  }
+  async chmod(p, mode) {
+    if (this._fallback && this._fallback.chmod) return this._fallback.chmod(p, mode);
+    return super.chmod(p, mode);
+  }
+  async chown(p, owner, group) {
+    if (this._fallback && this._fallback.chown) return this._fallback.chown(p, owner, group);
+    return super.chown(p, owner, group);
+  }
+  async destroy() {
+    if (this._fallback && this._fallback.destroy) return this._fallback.destroy();
+  }
+  async export(basePath) {
+    if (this._fallback && this._fallback.export) return this._fallback.export(basePath);
+    return super.export(basePath);
+  }
+  async import(basePath, data) {
+    if (this._fallback && this._fallback.import) return this._fallback.import(basePath, data);
+    return super.import(basePath, data);
+  }
+
+  // Capabilities delegate to fallback when active
+  get persistent() { return this._fallback ? !!this._fallback.persistent : true; }
+  get streamable() { return this._fallback ? !!this._fallback.streamable : true; }
+  get estimatable() { return this._fallback ? !!this._fallback.estimatable : true; }
+  get readonly() { return this._fallback ? !!this._fallback.readonly : false; }
+  get portable() { return this._fallback ? !!this._fallback.portable : false; }
+  get symlinks() { return this._fallback ? !!this._fallback.symlinks : false; }
+}
+
+// -- fsaa.js --
+
+class FSAABackend extends HandleBackend {
+  static type = 'fsaa';
+
+  constructor(config) {
+    super(config && config.handle);
+  }
+
+  async init() {
+    if (!this._root) {
+      throw vfsError('ENOTSUP', '/', 'no directory handle provided');
+    }
+  }
+
+  async queryPermission(mode) {
+    if (this._root.queryPermission) {
+      return this._root.queryPermission({ mode: mode || 'read' });
+    }
+    return 'granted';
+  }
+
+  async requestPermission(mode) {
+    if (this._root.requestPermission) {
+      return this._root.requestPermission({ mode: mode || 'read' });
+    }
+    return 'granted';
+  }
+}
+
+// -- fetch-backend.js --
+
+// -- Shared HTTP helpers (also used by rest.js via concatenation) --
+
+function _httpUrl(base, p) {
+  const normalized = path.normalize(p);
+  const stripped = normalized === '/' ? '' : normalized;
+  // Remove trailing slash from base, then join
+  const b = base.replace(/\/+$/, '');
+  // Preserve explicit trailing slash from caller (e.g. REST dir ops)
+  const trailingSlash = p.length > 1 && p.endsWith('/') && !stripped.endsWith('/');
+  return b + stripped + (trailingSlash ? '/' : '');
+}
+
+async function _httpHeaders(cfg) {
+  if (!cfg) return {};
+  if (typeof cfg === 'function') return await cfg();
+  return cfg;
+}
+
+function _httpError(resp, p) {
+  const status = resp.status;
+  if (status === 404) return vfsError('ENOENT', p);
+  if (status === 401 || status === 403) return vfsError('EACCES', p);
+  if (status === 409) return vfsError('EEXIST', p);
+  if (status === 413 || status === 507) return vfsError('ENOSPC', p);
+  return vfsError('ENOTSUP', p, `HTTP ${status}`);
+}
+
+// -- FetchBackend --
+
+class FetchBackend extends Backend {
+  static type = 'fetch';
+
+  constructor(config) {
+    super();
+    this._base = (config && config.base) || '';
+    this._index = config && config.index;
+    this._headersCfg = config && config.headers;
+    this._credentials = config && config.credentials;
+  }
+
+  toConfig() {
+    // Function-shaped headers (a callback that computes auth tokens
+    // dynamically) can't be cloned across the worker boundary; force the
+    // proxy path in that case so the main-thread callback still runs.
+    if (typeof this._headersCfg === 'function') return null;
+    const out = { type: 'fetch' };
+    if (this._base) out.base = this._base;
+    if (this._index !== undefined) out.index = this._index;
+    if (this._headersCfg) out.headers = this._headersCfg;
+    if (this._credentials) out.credentials = this._credentials;
+    return out;
+  }
+
+  async _fetch(p, opts) {
+    const url = _httpUrl(this._base, p);
+    const headers = await _httpHeaders(this._headersCfg);
+    const fetchOpts = { ...opts, headers: { ...headers, ...(opts && opts.headers) } };
+    if (this._credentials) fetchOpts.credentials = this._credentials;
+    const resp = await fetch(url, fetchOpts);
+    if (!resp.ok) throw _httpError(resp, p);
+    return resp;
+  }
+
+  async readFile(p, encoding) {
+    const resp = await this._fetch(p);
+    if (encoding === 'bytes') {
+      const buf = await resp.arrayBuffer();
+      return new Uint8Array(buf);
+    }
+    return await resp.text();
+  }
+
+  async stat(p) {
+    const url = _httpUrl(this._base, p);
+    const headers = await _httpHeaders(this._headersCfg);
+    const fetchOpts = { method: 'HEAD', headers };
+    if (this._credentials) fetchOpts.credentials = this._credentials;
+    const resp = await fetch(url, fetchOpts);
+    if (!resp.ok) throw _httpError(resp, p);
+    const size = parseInt(resp.headers.get('Content-Length') || '0', 10);
+    const lastMod = resp.headers.get('Last-Modified');
+    return {
+      type: 'file',
+      size: isNaN(size) ? 0 : size,
+      modified: lastMod ? new Date(lastMod) : new Date(),
+      created: lastMod ? new Date(lastMod) : new Date(),
+    };
+  }
+
+  async readdir(p) {
+    if (!this._index) throw vfsError('ENOENT', p, 'no index configured');
+    const n = path.normalize(p);
+    const indexPath = n === '/' ? '/' + this._index : n + '/' + this._index;
+    const resp = await this._fetch(indexPath);
+    return await resp.json();
+  }
+
+  createReadStream(p) {
+    // Return a promise-wrapped stream
+    const self = this;
+    return {
+      async getReader() {
+        const resp = await self._fetch(p);
+        return resp.body.getReader();
+      },
+      [Symbol.asyncIterator]() {
+        const streamPromise = self._fetch(p).then(r => r.body);
+        let reader;
+        return {
+          async next() {
+            if (!reader) {
+              const stream = await streamPromise;
+              reader = stream.getReader();
+            }
+            const { done, value } = await reader.read();
+            return { done, value };
+          }
+        };
+      }
+    };
+  }
+
+  // All write ops throw EACCES
+  async writeFile(p) { throw vfsError('EACCES', p, 'read-only backend'); }
+  async mkdir(p) { throw vfsError('EACCES', p, 'read-only backend'); }
+  async unlink(p) { throw vfsError('EACCES', p, 'read-only backend'); }
+  async rmdir(p) { throw vfsError('EACCES', p, 'read-only backend'); }
+  async rename(p) { throw vfsError('EACCES', p, 'read-only backend'); }
+  async touch(p) { throw vfsError('EACCES', p, 'read-only backend'); }
+
+  get readonly() { return true; }
+  get persistent() { return false; }
+  get streamable() { return true; }
+}
+
+// -- rest.js --
+
+class RESTBackend extends Backend {
+  static type = 'rest';
+
+  constructor(config) {
+    super();
+    this._base = (config && config.base) || '';
+    this._headersCfg = config && config.headers;
+    this._credentials = config && config.credentials;
+  }
+
+  toConfig() {
+    if (typeof this._headersCfg === 'function') return null;
+    const out = { type: 'rest' };
+    if (this._base) out.base = this._base;
+    if (this._headersCfg) out.headers = this._headersCfg;
+    if (this._credentials) out.credentials = this._credentials;
+    return out;
+  }
+
+  async _fetch(p, opts) {
+    const url = _httpUrl(this._base, p);
+    const headers = await _httpHeaders(this._headersCfg);
+    const fetchOpts = { ...opts, headers: { ...headers, ...(opts && opts.headers) } };
+    if (this._credentials) fetchOpts.credentials = this._credentials;
+    const resp = await fetch(url, fetchOpts);
+    if (!resp.ok) throw _httpError(resp, p);
+    return resp;
+  }
+
+  async readFile(p, encoding) {
+    const resp = await this._fetch(p, { method: 'GET' });
+    if (encoding === 'bytes') {
+      const buf = await resp.arrayBuffer();
+      return new Uint8Array(buf);
+    }
+    return await resp.text();
+  }
+
+  async writeFile(p, content) {
+    await this._fetch(p, {
+      method: 'PUT',
+      body: content,
+    });
+  }
+
+  async stat(p) {
+    const url = _httpUrl(this._base, p);
+    const headers = await _httpHeaders(this._headersCfg);
+    const fetchOpts = { method: 'HEAD', headers };
+    if (this._credentials) fetchOpts.credentials = this._credentials;
+    const resp = await fetch(url, fetchOpts);
+    if (!resp.ok) throw _httpError(resp, p);
+    const size = parseInt(resp.headers.get('Content-Length') || '0', 10);
+    const lastMod = resp.headers.get('Last-Modified');
+    return {
+      type: 'file',
+      size: isNaN(size) ? 0 : size,
+      modified: lastMod ? new Date(lastMod) : new Date(),
+      created: lastMod ? new Date(lastMod) : new Date(),
+    };
+  }
+
+  async mkdir(p) {
+    const n = path.normalize(p);
+    // Trailing slash signals directory creation
+    await this._fetch(n + '/', { method: 'PUT' });
+  }
+
+  async readdir(p) {
+    const n = path.normalize(p);
+    const resp = await this._fetch(n + '/', { method: 'GET' });
+    return await resp.json();
+  }
+
+  async unlink(p) {
+    await this._fetch(p, { method: 'DELETE' });
+  }
+
+  async rmdir(p) {
+    const n = path.normalize(p);
+    await this._fetch(n + '/', { method: 'DELETE' });
+  }
+
+  async rename(oldP, newP) {
+    // Not atomic: GET old → PUT new → DELETE old
+    const content = await this.readFile(oldP, 'bytes');
+    await this.writeFile(newP, content);
+    await this.unlink(oldP);
+  }
+
+  createReadStream(p) {
+    const self = this;
+    return {
+      [Symbol.asyncIterator]() {
+        const streamPromise = self._fetch(p, { method: 'GET' }).then(r => r.body);
+        let reader;
+        return {
+          async next() {
+            if (!reader) {
+              const stream = await streamPromise;
+              reader = stream.getReader();
+            }
+            const { done, value } = await reader.read();
+            return { done, value };
+          }
+        };
+      }
+    };
+  }
+
+  get persistent() { return true; }
+  get streamable() { return true; }
+}
+
+// -- abus.js --
+
+// An A-Bus-proxy VFS backend. Forwards every operation to a remote VFS
+// service (the Auditable Works `works` service) over an A-Bus connection.
+//
+// Duck-typed on the bus handle: it only ever calls `bus.call(address, args)`,
+// so @gcu/vfs takes no dependency on @gcu/abus — any object with a matching
+// `.call()` works.
+//
+//   new AbusBackend({ bus, service: 'works', root: '' })
+//
+// `root` is prepended to every path before the remote call, so the backend
+// can be mounted at one VFS path while addressing a different subtree of the
+// remote filesystem (mount at /projects/self, root '/projects/<realname>').
+class AbusBackend extends Backend {
+  static type = 'abus';
+
+  constructor(config) {
+    super();
+    this._bus = config.bus;
+    this._service = config.service || 'works';
+    this._root = config.root || '';
+  }
+
+  // Mount-relative path (leading slash) → remote workspace path.
+  _remote(p) {
+    return this._root + p;
+  }
+
+  _call(member, args) {
+    return this._bus.call(
+      { to: this._service, path: '/', interface: 'VFS', member },
+      args);
+  }
+
+  async readFile(p, encoding) {
+    return this._call('Read', [this._remote(p), encoding]);
+  }
+
+  async writeFile(p, content) {
+    await this._call('Write', [this._remote(p), content]);
+  }
+
+  async readdir(p) {
+    return this._call('List', [this._remote(p)]);
+  }
+
+  async stat(p) {
+    return this._call('Stat', [this._remote(p)]);
+  }
+
+  // Use the service's Exists directly — avoids depending on ENOENT error
+  // codes surviving the A-Bus round-trip (the base Backend.exists would).
+  async exists(p) {
+    return this._call('Exists', [this._remote(p)]);
+  }
+
+  async mkdir(p) {
+    await this._call('MkDir', [this._remote(p)]);
+  }
+
+  async unlink(p) {
+    await this._call('Delete', [this._remote(p)]);
+  }
+
+  async rmdir(p) {
+    await this._call('Delete', [this._remote(p)]);
+  }
+
+  async rename(oldP, newP) {
+    await this._call('Move', [this._remote(oldP), this._remote(newP)]);
+  }
+
+  get persistent() { return true; }
+}
+
+// -- overlay.js --
+
+const WHITEOUT_PATH = '/.vfs_whiteouts';
+
+class OverlayBackend extends Backend {
+  static type = 'overlay';
+
+  constructor(config) {
+    super();
+    this._lowerConfig = config && config.lower;
+    this._upperConfig = config && config.upper;
+    this._lower = null;
+    this._upper = null;
+    this._whiteouts = new Set();
+  }
+
+  async init() {
+    this._lower = _createBackend(this._lowerConfig);
+    this._upper = _createBackend(this._upperConfig);
+    if (this._lower.init) await this._lower.init();
+    if (this._upper.init) await this._upper.init();
+    // Load persisted whiteouts
+    try {
+      const data = await this._upper.readFile(WHITEOUT_PATH);
+      const arr = JSON.parse(data);
+      this._whiteouts = new Set(arr);
+    } catch {
+      // No whiteouts yet
+    }
+  }
+
+  async _persistWhiteouts() {
+    await this._upper.writeFile(WHITEOUT_PATH, JSON.stringify([...this._whiteouts]));
+  }
+
+  _isWhiteout(p) {
+    return this._whiteouts.has(path.normalize(p));
+  }
+
+  async readFile(p, encoding) {
+    const n = path.normalize(p);
+    if (this._isWhiteout(n)) throw vfsError('ENOENT', p);
+    try {
+      return await this._upper.readFile(n, encoding);
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e;
+      return await this._lower.readFile(n, encoding);
+    }
+  }
+
+  async writeFile(p, content) {
+    const n = path.normalize(p);
+    // Remove whiteout if present
+    if (this._whiteouts.delete(n)) {
+      await this._persistWhiteouts();
+    }
+    await this._upper.writeFile(n, content);
+  }
+
+  async stat(p) {
+    const n = path.normalize(p);
+    if (this._isWhiteout(n)) throw vfsError('ENOENT', p);
+    try {
+      const s = await this._upper.stat(n);
+      return { ...s, layer: 'upper' };
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e;
+      const s = await this._lower.stat(n);
+      return { ...s, layer: 'lower' };
+    }
+  }
+
+  async mkdir(p, opts) {
+    const n = path.normalize(p);
+    if (this._whiteouts.delete(n)) {
+      await this._persistWhiteouts();
+    }
+    await this._upper.mkdir(n, opts);
+  }
+
+  async readdir(p) {
+    const n = path.normalize(p);
+    if (this._isWhiteout(n)) throw vfsError('ENOENT', p);
+    const names = new Set();
+    // Collect from upper
+    try {
+      const upper = await this._upper.readdir(n);
+      for (const name of upper) {
+        if (name !== path.basename(WHITEOUT_PATH)) names.add(name);
+      }
+    } catch {
+      // upper may not have this dir
+    }
+    // Collect from lower
+    try {
+      const lower = await this._lower.readdir(n);
+      for (const name of lower) names.add(name);
+    } catch {
+      // lower may not have this dir
+    }
+    // Filter whiteouts
+    const prefix = n === '/' ? '/' : n + '/';
+    for (const name of names) {
+      if (this._whiteouts.has(prefix + name)) names.delete(name);
+    }
+    return [...names].sort();
+  }
+
+  async unlink(p) {
+    const n = path.normalize(p);
+    // Check if in lower
+    let inLower = false;
+    try { await this._lower.stat(n); inLower = true; } catch {}
+    // Try to delete from upper
+    try { await this._upper.unlink(n); } catch {}
+    // If in lower, add whiteout
+    if (inLower) {
+      this._whiteouts.add(n);
+      await this._persistWhiteouts();
+    }
+  }
+
+  async rmdir(p) {
+    const n = path.normalize(p);
+    let inLower = false;
+    try { await this._lower.stat(n); inLower = true; } catch {}
+    try { await this._upper.rmdir(n); } catch {}
+    if (inLower) {
+      this._whiteouts.add(n);
+      await this._persistWhiteouts();
+    }
+  }
+
+  async rename(oldP, newP) {
+    const content = await this.readFile(oldP, 'bytes');
+    await this.writeFile(newP, content);
+    await this.unlink(oldP);
+  }
+
+  async touch(p) {
+    const n = path.normalize(p);
+    try {
+      await this.stat(n);
+      // Exists — read and rewrite to upper to update mtime
+      const content = await this.readFile(n, 'bytes');
+      await this.writeFile(n, content);
+    } catch (e) {
+      if (e.code === 'ENOENT') {
+        await this.writeFile(n, '');
+      } else throw e;
+    }
+  }
+
+  async exists(p) {
+    const n = path.normalize(p);
+    if (this._isWhiteout(n)) return false;
+    try { await this.stat(n); return true; }
+    catch { return false; }
+  }
+
+  async reset(p) {
+    if (p) {
+      const n = path.normalize(p);
+      // Clear whiteouts under prefix
+      for (const w of this._whiteouts) {
+        if (w === n || w.startsWith(n === '/' ? '/' : n + '/')) {
+          this._whiteouts.delete(w);
+        }
+      }
+      // Delete from upper
+      try {
+        const info = await this._upper.stat(n);
+        if (info.type === 'directory') {
+          await this._rmUpperRecursive(n);
+        } else {
+          await this._upper.unlink(n);
+        }
+      } catch {}
+    } else {
+      this._whiteouts.clear();
+      // Clear all upper content (except whiteout file)
+      try {
+        const entries = await this._upper.readdir('/');
+        for (const name of entries) {
+          const child = '/' + name;
+          try {
+            const info = await this._upper.stat(child);
+            if (info.type === 'directory') {
+              await this._rmUpperRecursive(child);
+            } else {
+              await this._upper.unlink(child);
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+    await this._persistWhiteouts();
+  }
+
+  async _rmUpperRecursive(p) {
+    try {
+      const entries = await this._upper.readdir(p);
+      for (const name of entries) {
+        const child = p === '/' ? '/' + name : p + '/' + name;
+        const info = await this._upper.stat(child);
+        if (info.type === 'directory') {
+          await this._rmUpperRecursive(child);
+        } else {
+          await this._upper.unlink(child);
+        }
+      }
+      await this._upper.rmdir(p);
+    } catch {}
+  }
+
+  async destroy() {
+    if (this._lower && this._lower.destroy) await this._lower.destroy();
+    if (this._upper && this._upper.destroy) await this._upper.destroy();
+  }
+
+  get persistent() { return !!this._upper && !!this._upper.persistent; }
+  get readonly() { return !!this._upper && !!this._upper.readonly; }
+}
+
+// -- cache.js --
+
+const META_PREFIX = '/_cache_meta';
+const LISTING_PREFIX = '/_cache_listing';
+
+class CacheBackend extends Backend {
+  static type = 'cache';
+
+  constructor(config) {
+    super();
+    this._remoteConfig = config && config.backend;
+    this._storeConfig = config && config.store;
+    this._ttl = (config && config.ttl) || 60000; // default 1 minute
+    this._listingTtl = (config && config.listingTtl) || this._ttl;
+    this._remote = null;
+    this._store = null;
+  }
+
+  async init() {
+    this._remote = _createBackend(this._remoteConfig);
+    this._store = _createBackend(this._storeConfig || { type: 'memory' });
+    if (this._remote.init) await this._remote.init();
+    if (this._store.init) await this._store.init();
+  }
+
+  async _isFresh(metaPath, ttl) {
+    try {
+      const raw = await this._store.readFile(metaPath);
+      const meta = JSON.parse(raw);
+      return (Date.now() - meta.ts) < ttl;
+    } catch {
+      return false;
+    }
+  }
+
+  async _setMeta(metaPath, extra) {
+    const meta = { ts: Date.now(), ...extra };
+    // Ensure parent dirs exist
+    const dir = path.dirname(metaPath);
+    try { await this._store.mkdir(dir, { recursive: true }); } catch {}
+    await this._store.writeFile(metaPath, JSON.stringify(meta));
+  }
+
+  async readFile(p, encoding) {
+    const n = path.normalize(p);
+    const metaPath = META_PREFIX + n;
+    if (await this._isFresh(metaPath, this._ttl)) {
+      try {
+        return await this._store.readFile(n, encoding);
+      } catch {
+        // Cache entry missing, fall through to remote
+      }
+    }
+    // Fetch from remote
+    const content = await this._remote.readFile(n, encoding);
+    // Cache it
+    try {
+      const dir = path.dirname(n);
+      try { await this._store.mkdir(dir, { recursive: true }); } catch {}
+      await this._store.writeFile(n, content);
+      await this._setMeta(metaPath);
+    } catch {}
+    return content;
+  }
+
+  async writeFile(p, content) {
+    const n = path.normalize(p);
+    // Write-through: remote first
+    await this._remote.writeFile(n, content);
+    // Update cache
+    try {
+      const dir = path.dirname(n);
+      try { await this._store.mkdir(dir, { recursive: true }); } catch {}
+      await this._store.writeFile(n, content);
+      await this._setMeta(META_PREFIX + n);
+    } catch {}
+  }
+
+  async stat(p) {
+    const n = path.normalize(p);
+    const metaPath = META_PREFIX + n;
+    if (await this._isFresh(metaPath, this._ttl)) {
+      try {
+        const raw = await this._store.readFile(metaPath);
+        const meta = JSON.parse(raw);
+        if (meta.stat) return meta.stat;
+      } catch {}
+    }
+    const s = await this._remote.stat(n);
+    try { await this._setMeta(metaPath, { stat: s }); } catch {}
+    return s;
+  }
+
+  async readdir(p) {
+    const n = path.normalize(p);
+    const listPath = LISTING_PREFIX + n;
+    try {
+      const raw = await this._store.readFile(listPath);
+      const listing = JSON.parse(raw);
+      if ((Date.now() - listing.ts) < this._listingTtl) {
+        return listing.entries;
+      }
+    } catch {}
+    const entries = await this._remote.readdir(n);
+    try {
+      const dir = path.dirname(listPath);
+      try { await this._store.mkdir(dir, { recursive: true }); } catch {}
+      await this._store.writeFile(listPath, JSON.stringify({ ts: Date.now(), entries }));
+    } catch {}
+    return entries;
+  }
+
+  async mkdir(p, opts) {
+    return this._remote.mkdir(p, opts);
+  }
+
+  async unlink(p) {
+    const n = path.normalize(p);
+    await this._remote.unlink(n);
+    await this.invalidate(n);
+  }
+
+  async rmdir(p) {
+    const n = path.normalize(p);
+    await this._remote.rmdir(n);
+    await this.invalidate(n);
+  }
+
+  async rename(oldP, newP) {
+    await this._remote.rename(oldP, newP);
+    await this.invalidate(path.normalize(oldP));
+    await this.invalidate(path.normalize(newP));
+  }
+
+  async touch(p) {
+    return this._remote.touch(p);
+  }
+
+  async invalidate(p) {
+    if (p === '*') {
+      // Clear entire cache store
+      try {
+        const entries = await this._store.readdir('/');
+        for (const name of entries) {
+          const child = '/' + name;
+          try {
+            const info = await this._store.stat(child);
+            if (info.type === 'directory') {
+              await this._rmStoreRecursive(child);
+            } else {
+              await this._store.unlink(child);
+            }
+          } catch {}
+        }
+      } catch {}
+      return;
+    }
+    const n = path.normalize(p);
+    // Remove cached content
+    try { await this._store.unlink(n); } catch {}
+    // Remove meta
+    try { await this._store.unlink(META_PREFIX + n); } catch {}
+    // Remove listing
+    try { await this._store.unlink(LISTING_PREFIX + n); } catch {}
+  }
+
+  async _rmStoreRecursive(p) {
+    try {
+      const entries = await this._store.readdir(p);
+      for (const name of entries) {
+        const child = p === '/' ? '/' + name : p + '/' + name;
+        try {
+          const info = await this._store.stat(child);
+          if (info.type === 'directory') {
+            await this._rmStoreRecursive(child);
+          } else {
+            await this._store.unlink(child);
+          }
+        } catch {}
+      }
+      await this._store.rmdir(p);
+    } catch {}
+  }
+
+  async exists(p) {
+    try { await this.stat(p); return true; }
+    catch { return false; }
+  }
+
+  async destroy() {
+    if (this._remote && this._remote.destroy) await this._remote.destroy();
+    if (this._store && this._store.destroy) await this._store.destroy();
+  }
+
+  // Delegate capabilities to remote
+  get persistent() { return this._remote ? !!this._remote.persistent : false; }
+  get readonly() { return this._remote ? !!this._remote.readonly : false; }
+  get streamable() { return this._remote ? !!this._remote.streamable : false; }
+  get estimatable() { return this._remote ? !!this._remote.estimatable : false; }
+}
+
+// -- glob.js --
+
+function _globToRegex(pattern) {
+  // Split pattern into segments
+  const segments = pattern.split('/').filter(Boolean);
+  let regexParts = [];
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (seg === '**') {
+      regexParts.push('(?:.+/)?');
+    } else {
+      // Escape regex chars except * and ?
+      let part = '';
+      for (const ch of seg) {
+        if (ch === '*') part += '[^/]*';
+        else if (ch === '?') part += '[^/]';
+        else if ('.+^${}()|[]\\'.includes(ch)) part += '\\' + ch;
+        else part += ch;
+      }
+      regexParts.push(part + '/');
+    }
+  }
+
+  // Join and fix trailing slash
+  let regex = '/' + regexParts.join('');
+  // Remove trailing slash for the final match
+  if (regex.endsWith('/')) regex = regex.slice(0, -1);
+
+  return new RegExp('^' + regex + '$');
+}
+
+function _staticPrefix(pattern) {
+  const segments = pattern.split('/').filter(Boolean);
+  const prefix = [];
+  for (const seg of segments) {
+    if (seg === '**' || seg.includes('*') || seg.includes('?')) break;
+    prefix.push(seg);
+  }
+  return '/' + prefix.join('/');
+}
+
+async function vfsGlob(vfs, pattern) {
+  const normalized = path.normalize(pattern);
+  const regex = _globToRegex(normalized);
+  const prefix = _staticPrefix(normalized);
+
+  const results = [];
+
+  async function walk(dir) {
+    let entries;
+    try {
+      entries = await vfs.readdir(dir);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      const full = dir === '/' ? '/' + name : dir + '/' + name;
+      if (regex.test(full)) results.push(full);
+      // Recurse into directories if pattern has **
+      try {
+        const info = await vfs.stat(full);
+        if (info.type === 'directory') {
+          await walk(full);
+        }
+      } catch {
+        // stat failed, skip
+      }
+    }
+  }
+
+  await walk(prefix === '/' ? '/' : prefix);
+  return results.sort();
+}
+
+// -- permissions.js --
+
+const READ_OPS = new Set(['read', 'readFile', 'readdir', 'stat', 'lstat', 'exists',
+  'createReadStream', 'glob', 'du', 'export', 'readlink']);
+const WRITE_OPS = new Set(['write', 'writeFile', 'mkdir', 'rmdir', 'unlink', 'rename',
+  'cp', 'touch', 'chmod', 'chown', 'symlink', 'rm', 'import', 'createWriter', 'writeFrom']);
+
+function checkPermission(operation, p, principal, meta) {
+  // No principal → unrestricted
+  if (!principal) return;
+
+  const normalized = path.normalize(p);
+  const isRead = READ_OPS.has(operation) || operation === 'read';
+  const isWrite = WRITE_OPS.has(operation) || operation === 'write';
+
+  // Prefix check
+  if (principal.prefixes) {
+    const matched = principal.prefixes.some(prefix => {
+      const normPrefix = prefix.startsWith('/') ? prefix : '/' + prefix;
+      return normalized === normPrefix || normalized.startsWith(normPrefix.endsWith('/') ? normPrefix : normPrefix + '/');
+    });
+    const readOnlyMatch = principal.readOnlyPrefixes && principal.readOnlyPrefixes.some(prefix => {
+      const normPrefix = prefix.startsWith('/') ? prefix : '/' + prefix;
+      return normalized === normPrefix || normalized.startsWith(normPrefix.endsWith('/') ? normPrefix : normPrefix + '/');
+    });
+
+    if (!matched && !readOnlyMatch) {
+      throw vfsError('EACCES', p, 'path not in allowed prefixes');
+    }
+
+    // Read-only prefix check
+    if (readOnlyMatch && !matched && isWrite) {
+      throw vfsError('EACCES', p, 'read-only prefix');
+    }
+    // If only matched via readOnlyPrefixes, writes are denied
+    if (readOnlyMatch && matched) {
+      // Matched in both — regular prefix takes precedence (rw)
+    } else if (readOnlyMatch && isWrite) {
+      throw vfsError('EACCES', p, 'read-only prefix');
+    }
+  }
+
+  // Mode bit check — agent is always "other"
+  if (meta && meta.mode !== undefined) {
+    const otherBits = meta.mode & 0o7;
+    if (isRead && !(otherBits & 0o4)) {
+      throw vfsError('EACCES', p, 'mode bits deny read');
+    }
+    if (isWrite && !(otherBits & 0o2)) {
+      throw vfsError('EACCES', p, 'mode bits deny write');
+    }
+  }
+}
+
+// -- vfs.js --
+
+const BACKEND_TYPES = {
+  memory: MemoryBackend,
+  idb: IDBBackend,
+  comment: CommentBackend,
+  opfs: OPFSBackend,
+  fsaa: FSAABackend,
+  fetch: FetchBackend,
+  rest: RESTBackend,
+  overlay: OverlayBackend,
+  cache: CacheBackend,
+};
+
+function _createBackend(config) {
+  if (!config) return new MemoryBackend();
+  if (config instanceof Backend) return config;
+  // Plain object with methods — custom backend
+  if (typeof config.readFile === 'function' || typeof config.stat === 'function') {
+    return config;
+  }
+  const type = config.type || 'memory';
+  const Cls = BACKEND_TYPES[type];
+  if (!Cls) throw new Error(`Unknown backend type: ${type}`);
+  return new Cls(config);
+}
+
+class VFS extends EventEmitter {
+  constructor() {
+    super();
+    this._mounts = new Map();
+  }
+
+  static async create(config) {
+    const vfs = new VFS();
+    if (!config) {
+      // Default: memory at /
+      const backend = new MemoryBackend();
+      await backend.init();
+      vfs._mounts.set('/', backend);
+    } else if (config.type) {
+      // Single backend shorthand
+      const backend = _createBackend(config);
+      if (backend.init) await backend.init();
+      vfs._mounts.set('/', backend);
+    } else if (config.backends) {
+      for (const [mountPath, backendConfig] of Object.entries(config.backends)) {
+        const backend = _createBackend(backendConfig);
+        if (backend.init) await backend.init();
+        vfs._mounts.set(path.normalize(mountPath), backend);
+      }
+    }
+    return vfs;
+  }
+
+  resolve(p) {
+    const normalized = path.normalize(p);
+    let bestMount = '';
+    let bestBackend = null;
+    for (const [mount, backend] of this._mounts) {
+      if (normalized === mount || normalized.startsWith(mount === '/' ? '/' : mount + '/') || mount === '/') {
+        if (mount.length > bestMount.length) {
+          bestMount = mount;
+          bestBackend = backend;
+        }
+      }
+    }
+    if (!bestBackend) throw vfsError('ENOENT', p, 'no mount for path');
+    const subpath = bestMount === '/'
+      ? normalized
+      : normalized.slice(bestMount.length) || '/';
+    return { backend: bestBackend, subpath, mount: bestMount };
+  }
+
+  async mount(mountPath, config) {
+    const normalized = path.normalize(mountPath);
+    const backend = _createBackend(config);
+    if (backend.init) await backend.init();
+    this._mounts.set(normalized, backend);
+    this.emit('mount', { path: normalized, type: backend.constructor?.type || config?.type || 'custom' });
+  }
+
+  async unmount(mountPath) {
+    const normalized = path.normalize(mountPath);
+    const backend = this._mounts.get(normalized);
+    if (!backend) return;
+    if (backend.destroy) await backend.destroy();
+    this._mounts.delete(normalized);
+    this.emit('unmount', { path: normalized });
+  }
+
+  mounts() {
+    const result = [];
+    for (const [mp, backend] of this._mounts) {
+      result.push({ path: mp, type: backend.constructor?.type || 'custom' });
+    }
+    return result;
+  }
+
+  capabilities(p) {
+    const { backend } = this.resolve(p);
+    return {
+      type: backend.constructor?.type || 'custom',
+      persistent: !!backend.persistent,
+      writable: !backend.readonly,
+      streamable: !!backend.streamable,
+      estimatable: !!backend.estimatable,
+      exportable: backend.exportable !== false,
+      portable: !!backend.portable,
+      symlinks: !!backend.symlinks,
+    };
+  }
+
+  _checkWrite(backend, p) {
+    if (backend.readonly) throw vfsError('EACCES', p, 'read-only backend');
+  }
+
+  // --- Filesystem operations ---
+
+  async readFile(p, encodingOrOpts) {
+    const encoding = typeof encodingOrOpts === 'string' ? encodingOrOpts : undefined;
+    const opts = typeof encodingOrOpts === 'object' ? encodingOrOpts : {};
+    const principal = opts.principal;
+    checkPermission('readFile', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    if (principal) {
+      try {
+        const meta = await backend.stat(subpath);
+        checkPermission('readFile', p, principal, meta);
+      } catch (e) {
+        if (e.code !== 'ENOENT') throw e;
+      }
+    }
+    return backend.readFile(subpath, encoding || (opts.encoding));
+  }
+
+  async writeFile(p, content, opts) {
+    const principal = opts?.principal;
+    checkPermission('writeFile', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    if (principal) {
+      try {
+        const meta = await backend.stat(subpath);
+        checkPermission('writeFile', p, principal, meta);
+      } catch (e) {
+        if (e.code !== 'ENOENT') throw e;
+      }
+    }
+    await backend.writeFile(subpath, content);
+    this.emit('write', { path: path.normalize(p) });
+  }
+
+  async mkdir(p, opts) {
+    const principal = opts?.principal;
+    checkPermission('mkdir', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    await backend.mkdir(subpath, opts);
+    this.emit('mkdir', { path: path.normalize(p) });
+  }
+
+  async readdir(p, opts) {
+    const principal = opts?.principal;
+    checkPermission('readdir', p, principal);
+    const { backend, subpath } = this.resolve(p);
+
+    const entries = await backend.readdir(subpath);
+
+    // Check for child mounts — add their mount-point names
+    const normalized = path.normalize(p);
+    const childNames = new Set(entries);
+    for (const [mount] of this._mounts) {
+      if (mount === '/') continue;
+      const parent = path.dirname(mount);
+      if (parent === normalized) {
+        childNames.add(path.basename(mount));
+      }
+    }
+
+    const result = [...childNames].sort();
+
+    if (opts && opts.stat) {
+      const detailed = [];
+      for (const name of result) {
+        const childPath = normalized === '/' ? '/' + name : normalized + '/' + name;
+        try {
+          const info = await this.stat(childPath);
+          detailed.push({ name, ...info });
+        } catch {
+          detailed.push({ name, type: 'unknown' });
+        }
+      }
+      return detailed;
+    }
+    return result;
+  }
+
+  async stat(p, opts) {
+    const principal = opts?.principal;
+    checkPermission('stat', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    return backend.stat(subpath);
+  }
+
+  async lstat(p, opts) {
+    const principal = opts?.principal;
+    checkPermission('lstat', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    return backend.lstat(subpath);
+  }
+
+  async unlink(p, opts) {
+    const principal = opts?.principal;
+    checkPermission('unlink', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    await backend.unlink(subpath);
+    this.emit('delete', { path: path.normalize(p) });
+  }
+
+  async rmdir(p, opts) {
+    const principal = opts?.principal;
+    checkPermission('rmdir', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    await backend.rmdir(subpath);
+    this.emit('delete', { path: path.normalize(p) });
+  }
+
+  async rm(p, opts) {
+    const principal = opts?.principal;
+    checkPermission('rm', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    if (opts && opts.recursive) {
+      await this._rmRecursive(p, backend, subpath);
+    } else {
+      const info = await backend.stat(subpath);
+      if (info.type === 'directory') throw vfsError('EISDIR', p);
+      await backend.unlink(subpath);
+      this.emit('delete', { path: path.normalize(p) });
+    }
+  }
+
+  async _rmRecursive(absPath, backend, subpath) {
+    const info = await backend.stat(subpath);
+    if (info.type === 'directory') {
+      const entries = await backend.readdir(subpath);
+      for (const name of entries) {
+        const childSub = subpath === '/' ? '/' + name : subpath + '/' + name;
+        const childAbs = absPath === '/' ? '/' + name : absPath + '/' + name;
+        await this._rmRecursive(childAbs, backend, childSub);
+      }
+      await backend.rmdir(subpath);
+    } else {
+      await backend.unlink(subpath);
+    }
+    this.emit('delete', { path: path.normalize(absPath) });
+  }
+
+  async rename(oldP, newP, opts) {
+    const principal = opts?.principal;
+    checkPermission('rename', oldP, principal);
+    checkPermission('rename', newP, principal);
+    const src = this.resolve(oldP);
+    const dst = this.resolve(newP);
+
+    if (src.backend === dst.backend) {
+      this._checkWrite(src.backend, oldP);
+      await src.backend.rename(src.subpath, dst.subpath);
+      this.emit('rename', { oldPath: path.normalize(oldP), newPath: path.normalize(newP) });
+    } else {
+      // Cross-mount: copy + delete (not atomic — emit write + delete, not rename)
+      this._checkWrite(dst.backend, newP);
+      this._checkWrite(src.backend, oldP);
+      const info = await src.backend.stat(src.subpath);
+      if (info.type === 'directory') {
+        await this._crossMountCpRecursive(src.backend, src.subpath, dst.backend, dst.subpath);
+        await this._rmRecursiveBackend(src.backend, src.subpath);
+      } else {
+        const content = await src.backend.readFile(src.subpath, 'bytes');
+        await dst.backend.writeFile(dst.subpath, content);
+        await src.backend.unlink(src.subpath);
+      }
+      this.emit('write', { path: path.normalize(newP) });
+      this.emit('delete', { path: path.normalize(oldP) });
+    }
+  }
+
+  async _crossMountCpRecursive(srcBackend, srcPath, dstBackend, dstPath) {
+    try { await dstBackend.mkdir(dstPath); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    const entries = await srcBackend.readdir(srcPath);
+    for (const name of entries) {
+      const srcChild = srcPath === '/' ? '/' + name : srcPath + '/' + name;
+      const dstChild = dstPath === '/' ? '/' + name : dstPath + '/' + name;
+      const info = await srcBackend.stat(srcChild);
+      if (info.type === 'directory') {
+        await this._crossMountCpRecursive(srcBackend, srcChild, dstBackend, dstChild);
+      } else {
+        const content = await srcBackend.readFile(srcChild, 'bytes');
+        await dstBackend.writeFile(dstChild, content);
+      }
+    }
+  }
+
+  async _rmRecursiveBackend(backend, subpath) {
+    const info = await backend.stat(subpath);
+    if (info.type === 'directory') {
+      const entries = await backend.readdir(subpath);
+      for (const name of entries) {
+        await this._rmRecursiveBackend(backend, subpath === '/' ? '/' + name : subpath + '/' + name);
+      }
+      await backend.rmdir(subpath);
+    } else {
+      await backend.unlink(subpath);
+    }
+  }
+
+  async exists(p, opts) {
+    try { await this.stat(p, opts); return true; }
+    catch { return false; }
+  }
+
+  async touch(p, opts) {
+    const principal = opts?.principal;
+    checkPermission('touch', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    await backend.touch(subpath);
+    this.emit('write', { path: path.normalize(p) });
+  }
+
+  async cp(src, dst, opts) {
+    const principal = opts?.principal;
+    checkPermission('readFile', src, principal);
+    checkPermission('writeFile', dst, principal);
+    const srcR = this.resolve(src);
+    const dstR = this.resolve(dst);
+    this._checkWrite(dstR.backend, dst);
+
+    if (srcR.backend === dstR.backend) {
+      await srcR.backend.cp(srcR.subpath, dstR.subpath, opts);
+    } else {
+      const info = await srcR.backend.stat(srcR.subpath);
+      if (info.type === 'directory') {
+        if (!opts || !opts.recursive) throw vfsError('EISDIR', src);
+        await this._crossMountCpRecursive(srcR.backend, srcR.subpath, dstR.backend, dstR.subpath);
+      } else {
+        const content = await srcR.backend.readFile(srcR.subpath, 'bytes');
+        await dstR.backend.writeFile(dstR.subpath, content);
+      }
+    }
+    this.emit('write', { path: path.normalize(dst) });
+  }
+
+  async symlink(target, p, opts) {
+    const principal = opts?.principal;
+    checkPermission('symlink', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    if (!backend.symlinks) throw vfsError('ENOTSUP', p, 'backend does not support symlinks');
+    await backend.symlink(target, subpath);
+    this.emit('write', { path: path.normalize(p) });
+  }
+
+  async readlink(p, opts) {
+    const principal = opts?.principal;
+    checkPermission('readlink', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    if (!backend.symlinks) throw vfsError('ENOTSUP', p, 'backend does not support symlinks');
+    return backend.readlink(subpath);
+  }
+
+  async chmod(p, mode, opts) {
+    const principal = opts?.principal;
+    checkPermission('chmod', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    if (!backend.chmod) throw vfsError('ENOTSUP', p);
+    await backend.chmod(subpath, mode);
+  }
+
+  async chown(p, owner, group, opts) {
+    const principal = opts?.principal;
+    checkPermission('chown', p, principal);
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    if (!backend.chown) throw vfsError('ENOTSUP', p);
+    await backend.chown(subpath, owner, group);
+  }
+
+  async glob(pattern, opts) {
+    return vfsGlob(this, pattern);
+  }
+
+  async du(p) {
+    let files = 0, directories = 0, bytes = 0;
+    const walk = async (dir) => {
+      const entries = await this.readdir(dir);
+      for (const name of entries) {
+        const full = dir === '/' ? '/' + name : dir + '/' + name;
+        const info = await this.stat(full);
+        if (info.type === 'directory') {
+          directories++;
+          await walk(full);
+        } else {
+          files++;
+          bytes += info.size || 0;
+        }
+      }
+    };
+    // Check if p is a directory
+    const info = await this.stat(p);
+    if (info.type === 'directory') {
+      directories++;
+      await walk(p);
+    } else {
+      files = 1;
+      bytes = info.size || 0;
+    }
+    return { files, directories, bytes };
+  }
+
+  async estimate(p) {
+    const { backend } = this.resolve(p);
+    if (backend.estimate) return backend.estimate();
+    return { used: 0, available: Infinity };
+  }
+
+  async export(p) {
+    const { backend, subpath } = this.resolve(p);
+    if (!backend.export) throw vfsError('ENOTSUP', p);
+    return backend.export(subpath);
+  }
+
+  async import(p, data) {
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    if (!backend.import) throw vfsError('ENOTSUP', p);
+    await backend.import(subpath, data);
+    this.emit('write', { path: path.normalize(p) });
+  }
+
+  createReadStream(p, opts) {
+    const { backend, subpath } = this.resolve(p);
+    return backend.createReadStream(subpath, opts);
+  }
+
+  async createWriter(p, opts) {
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    return backend.createWriter(subpath, opts);
+  }
+
+  async writeFrom(p, iterable) {
+    const { backend, subpath } = this.resolve(p);
+    this._checkWrite(backend, p);
+    const writer = backend.createWriter?.(subpath);
+    if (writer) {
+      for await (const chunk of iterable) writer.write(chunk);
+      await writer.close();
+    } else {
+      // Fallback: collect and writeFile
+      const chunks = [];
+      for await (const chunk of iterable) chunks.push(chunk);
+      if (chunks.length === 0) {
+        await backend.writeFile(subpath, '');
+      } else if (typeof chunks[0] === 'string') {
+        await backend.writeFile(subpath, chunks.join(''));
+      } else {
+        // Concatenate Uint8Arrays
+        const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+        const result = new Uint8Array(total);
+        let offset = 0;
+        for (const c of chunks) { result.set(c, offset); offset += c.byteLength; }
+        await backend.writeFile(subpath, result);
+      }
+    }
+    this.emit('write', { path: path.normalize(p) });
+  }
+}
+
+// -- dom.js --
+
+// DOM helpers for @gcu/vfs — blob URLs, drag-drop, file picker
+// Runtime guards: only functional in browser environments
+
+const _blobCache = (typeof Map !== 'undefined') ? new Map() : null;
+const _autoRevokeListeners = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+
+function toURL(vfs, p) {
+  if (typeof Blob === 'undefined' || typeof URL === 'undefined') {
+    throw new Error('toURL requires a browser environment');
+  }
+  const key = p;
+  if (_blobCache && _blobCache.has(key)) return _blobCache.get(key);
+
+  // Set up auto-revoke listener once per VFS instance
+  if (_autoRevokeListeners && !_autoRevokeListeners.has(vfs)) {
+    const handler = (e) => {
+      if (_blobCache && _blobCache.has(e.path)) {
+        URL.revokeObjectURL(_blobCache.get(e.path));
+        _blobCache.delete(e.path);
+      }
+    };
+    vfs.on('write', handler);
+    _autoRevokeListeners.set(vfs, handler);
+  }
+
+  return vfs.readFile(p, 'bytes').then(data => {
+    const mimeType = path.mime(p);
+    const blob = new Blob([data], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    if (_blobCache) _blobCache.set(key, url);
+    return url;
+  });
+}
+
+function revokeURL(url) {
+  if (typeof URL === 'undefined') return;
+  URL.revokeObjectURL(url);
+  if (_blobCache) {
+    for (const [k, v] of _blobCache) {
+      if (v === url) { _blobCache.delete(k); break; }
+    }
+  }
+}
+
+function revokeURLs(prefix) {
+  if (!_blobCache) return;
+  const toDelete = [];
+  for (const [k, v] of _blobCache) {
+    if (k.startsWith(prefix)) {
+      if (typeof URL !== 'undefined') URL.revokeObjectURL(v);
+      toDelete.push(k);
+    }
+  }
+  for (const k of toDelete) _blobCache.delete(k);
+}
+
+async function fromDrop(vfs, event, destPath) {
+  const files = event.dataTransfer ? event.dataTransfer.files : [];
+  const paths = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const filePath = path.join(destPath, file.name);
+    const buf = await file.arrayBuffer();
+    await vfs.writeFile(filePath, new Uint8Array(buf));
+    paths.push(filePath);
+  }
+  return paths;
+}
+
+function fromPicker(vfs, destPath, opts) {
+  if (typeof document === 'undefined') {
+    return Promise.reject(new Error('fromPicker requires a browser environment'));
+  }
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    if (opts && opts.multiple) input.multiple = true;
+    if (opts && opts.accept) input.accept = opts.accept;
+    if (opts && opts.directory) input.webkitdirectory = true;
+
+    input.onchange = async () => {
+      try {
+        const paths = [];
+        for (let i = 0; i < input.files.length; i++) {
+          const file = input.files[i];
+          const filePath = path.join(destPath, file.name);
+          const buf = await file.arrayBuffer();
+          await vfs.writeFile(filePath, new Uint8Array(buf));
+          paths.push(filePath);
+        }
+        resolve(paths);
+      } catch (e) {
+        reject(e);
+      }
+    };
+    input.click();
+  });
+}
+
+// -- api.js --
+
+// @gcu/vfs — integrated into the base image
+// No plugin registration needed — VFS is available as a builtin.
+
+export { VFS, VFSError, Backend, BACKEND_TYPES, CommentBackend, MemoryBackend, AbusBackend, FSAABackend, IDBBackend, OPFSBackend, FetchBackend, RESTBackend, OverlayBackend, CacheBackend, checkPermission, path };
