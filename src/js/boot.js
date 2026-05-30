@@ -56,7 +56,7 @@ async function boot() {
   app.mount();
   poller.start();
 
-  window.__weir = { store, poller, router, app, addFeed: (u) => app.addFeed(u), parseFeed, feedAdapter, gcuFetch };
+  window.__weir = { store, poller, router, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), parseFeed, feedAdapter, gcuFetch };
 
   try {
     let persisted = false;

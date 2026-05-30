@@ -6,6 +6,27 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### feed archaeology (Wayback recovery) — prototype — 2026-05-31
+
+Recover a feed's lost/dead history from the Internet Archive. Read-only and
+anonymous (no IA key required). Mirrors holocene's archive.org etiquette.
+
+- `src/js/wayback.js`: `cdxSnapshots` (CDX API, distinct-by-digest, bounded scan,
+  polite 429/503 single-retry-with-backoff) and `recoverFeed` (evenly samples the
+  timeline to a hard cap, walks snapshots sequentially at ≥5s spacing, parses each
+  with the feed adapter, unions items deduped by id; backs off / aborts on
+  repeated failures; respects an AbortSignal). fetch + parseFeed injected.
+- Settings: `wayback_min_interval_ms` (5000), `wayback_max_snapshots` (40), and
+  optional `ia_access_key`/`ia_secret_key` (NOT needed for recovery — reserved for
+  future Save-Page-Now).
+- UI: a `⏪ recover` button appears when a single feed is selected; progress shows
+  in the status bar. `__weir.recover(feedId)` from the console.
+- Tests: `tools/smoke-wayback.mjs` (mock fetch: CDX dedup, snapshot walk,
+  cross-snapshot dedup reconstructs history, cap honored). Live CDX confirmed
+  real snapshots (QC RSS, 2008→2019); a 503 during repeated testing validated the
+  need for the politeness/back-off built in. In-browser recovery routes through
+  the bridge (archive.org sends no CORS headers).
+
 ### routing rules (router) — 2026-05-31
 
 The fourth core subsystem. weir's v0.1 reader is feature-complete.

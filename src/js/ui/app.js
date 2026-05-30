@@ -6,6 +6,8 @@
 import { relativeTime, isoTitle, escapeHtml, fmtDuration, dailyCounts, sparkPoints } from './format.js';
 import { parseOpml, buildOpml } from '../opml.js';
 import { DEFAULT_ROUTING } from '../router.js';
+import { recoverFeed } from '../wayback.js';
+import { parseFeed } from '../adapters/feed.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
@@ -58,6 +60,7 @@ export class App {
     document.getElementById('btn-export')?.addEventListener('click', () => this.exportOpml());
 
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
+    document.getElementById('btn-recover')?.addEventListener('click', () => { if (this.feedFilter) this.recoverHistory(this.feedFilter); });
     document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
     document.getElementById('rules-save')?.addEventListener('click', () => this.saveRules());
     document.getElementById('rules-rerun')?.addEventListener('click', () => this.uiRerunRules());
@@ -87,6 +90,7 @@ export class App {
 
   renderTopbar() {
     const feed = this.feedFilter && this.store.getFeed(this.feedFilter);
+    const rb = document.getElementById('btn-recover'); if (rb) rb.hidden = !this.feedFilter;
     document.getElementById('view-title').textContent = this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
     const n = this.items.length;
     const feeds = this.store.listFeeds().length;
@@ -364,6 +368,32 @@ export class App {
     const el = document.getElementById('notify-status'); if (!el) return;
     const n = this.store.notifications.length;
     el.textContent = n ? `🔔 ${n}` : '';
+  }
+
+  // ── feed archaeology (Wayback recovery) ──
+  async recoverHistory(feedId) {
+    const feed = this.store.getFeed(feedId);
+    if (!feed) return;
+    const s = this.store.getSettings();
+    const btn = document.getElementById('btn-recover');
+    const setPoll = (t) => { const el = document.getElementById('poll-status'); if (el) el.textContent = t; };
+    if (btn) btn.disabled = true;
+    setPoll(`recovering ${feed.name} from the archive…`);
+    try {
+      const r = await recoverFeed(feed.url, {
+        fetch: this.poller.fetch, parseFeed, feed,
+        maxSnapshots: s.wayback_max_snapshots, minIntervalMs: s.wayback_min_interval_ms,
+        onProgress: (p) => setPoll(`recovering ${feed.name}: ${p.fetched}/${p.total} snapshots · ${p.items} items`),
+      });
+      const up = await this.store.upsertItems(r.items);
+      await this.store.flush();
+      setPoll(`recovered ${up.inserted} new from ${r.fetched}/${r.total} snapshots${r.failed ? ` (${r.failed} failed)` : ''}`);
+      this.renderAll();
+    } catch (e) {
+      setPoll(`recovery failed: ${e.message}`);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   // ── routing rules editor ──
