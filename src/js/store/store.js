@@ -1,0 +1,320 @@
+// The store — weir's only shared mutable surface (SPEC §1). Built on the
+// vendored VFS so the backend is swappable: IndexedDB by default, FSA when the
+// user mounts a directory, memory for tests. Everything is files; the queryable
+// index lives in memory, hydrated at startup from compact per-feed shards
+// (NOT IndexedDB-native compound indexes — see CLAUDE.md).
+//
+// On-disk layout (identical on every backend, so OPFS/FSA is a pure swap):
+//   /meta.json                         schema version
+//   /settings.json /tags.json /routing.js
+//   /archived_index.ndjson             tombstones (resurrection guard, SPEC §5)
+//   /feeds/<feedKey>.json              one Feed record per file
+//   /items/<feedKey>.ndjson            metadata shard: one Item (sans content) per line
+//   /content/<feedKey>/<itemKey>.html  sanitized body, lazy-loaded
+
+import { VFS } from '../../../vendor/vfs.js';
+import {
+  SCHEMA_VERSION, DEFAULT_SETTINGS, makeItem, makeFeed, makeTombstone,
+  fsKey, deriveExcerpt, deriveSearchText, computeExpiry, now,
+} from './schema.js';
+
+const FLUSH_DELAY_MS = 250;
+
+export class Store {
+  constructor(vfs) {
+    this.vfs = vfs;
+    this.feeds = new Map();          // id → Feed
+    this.items = new Map();          // id → Item metadata record (no content)
+    this.byFeed = new Map();         // feed_id → Set<item id>
+    this.archived = new Set();       // tombstoned item ids (pruned/expired)
+    this.tombstones = [];            // ArchiveRecord[]
+    this.tags = {};                  // name → Tag
+    this.settings = { ...DEFAULT_SETTINGS };
+    this._dirtyFeeds = new Set();
+    this._archivedDirty = false;
+    this._ensured = new Set();       // dirs already mkdir'd
+    this._listeners = new Map();
+    this._flushTimer = null;
+  }
+
+  static async open(opts = {}) {
+    const vfs = await VFS.create(opts.backend);   // undefined → memory; {type:'idb',name} → IDB
+    const store = new Store(vfs);
+    await store._hydrate();
+    return store;
+  }
+
+  // ── events ──
+  on(ev, fn) { (this._listeners.get(ev) || this._listeners.set(ev, new Set()).get(ev)).add(fn); return () => this.off(ev, fn); }
+  off(ev, fn) { this._listeners.get(ev)?.delete(fn); }
+  emit(ev, data) { this._listeners.get(ev)?.forEach((fn) => { try { fn(data); } catch (e) { console.error('listener error', e); } }); }
+
+  // ── path helpers ──
+  feedKey(feedId) { return fsKey(feedId); }
+  _shardPath(feedId) { return `/items/${this.feedKey(feedId)}.ndjson`; }
+  _feedPath(feedId) { return `/feeds/${this.feedKey(feedId)}.json`; }
+  _contentDir(feedId) { return `/content/${this.feedKey(feedId)}`; }
+  _contentPath(feedId, itemId) { return `${this._contentDir(feedId)}/${fsKey(itemId)}.html`; }
+  _feedSet(feedId) { let s = this.byFeed.get(feedId); if (!s) this.byFeed.set(feedId, s = new Set()); return s; }
+
+  // ── low-level fs ──
+  async _ensureDir(d) { if (this._ensured.has(d)) return; await this.vfs.mkdir(d, { recursive: true }); this._ensured.add(d); }
+  async _readText(p, fallback = '') {
+    try { return await this.vfs.readFile(p, 'utf8'); }
+    catch (e) { if (e && e.code === 'ENOENT') return fallback; throw e; }
+  }
+  async _readJSON(p, fallback) {
+    const t = await this._readText(p, null);
+    if (t == null || t === '') return fallback;
+    try { return JSON.parse(t); } catch { return fallback; }
+  }
+
+  // ── hydrate ──
+  async _hydrate() {
+    for (const d of ['/feeds', '/items', '/content']) await this._ensureDir(d);
+
+    if (!(await this._readJSON('/meta.json', null))) {
+      await this.vfs.writeFile('/meta.json', JSON.stringify({ schema: SCHEMA_VERSION, created: now() }, null, 2));
+    }
+    this.settings = { ...DEFAULT_SETTINGS, ...(await this._readJSON('/settings.json', {})) };
+    this.tags = await this._readJSON('/tags.json', {});
+
+    for (const line of (await this._readText('/archived_index.ndjson')).split('\n')) {
+      if (!line.trim()) continue;
+      try { const t = JSON.parse(line); this.tombstones.push(t); this.archived.add(String(t.id)); } catch { /* skip bad line */ }
+    }
+
+    let feedFiles = [];
+    try { feedFiles = await this.vfs.readdir('/feeds'); } catch { /* empty */ }
+    for (const f of feedFiles) {
+      if (!f.endsWith('.json')) continue;
+      const feed = await this._readJSON(`/feeds/${f}`, null);
+      if (feed && feed.id) { this.feeds.set(feed.id, makeFeed(feed)); this._feedSet(feed.id); }
+    }
+    for (const fid of this.feeds.keys()) await this._loadShard(fid);
+  }
+
+  async _loadShard(feedId) {
+    const text = await this._readText(this._shardPath(feedId));
+    const set = this._feedSet(feedId);
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try { const r = JSON.parse(line); this.items.set(String(r.id), r); set.add(String(r.id)); } catch { /* skip */ }
+    }
+  }
+
+  // ── feeds ──
+  listFeeds() { return [...this.feeds.values()]; }
+  getFeed(id) { return this.feeds.get(id) || null; }
+
+  async putFeed(raw) {
+    const feed = makeFeed(raw);
+    this.feeds.set(feed.id, feed);
+    this._feedSet(feed.id);
+    await this._ensureDir('/feeds');
+    await this.vfs.writeFile(this._feedPath(feed.id), JSON.stringify(feed, null, 2));
+    this.emit('feed', { id: feed.id });
+    return feed;
+  }
+
+  async removeFeed(id) {
+    const set = this.byFeed.get(id);
+    if (set) for (const itemId of set) this.items.delete(itemId);
+    this.byFeed.delete(id);
+    this.feeds.delete(id);
+    this._dirtyFeeds.delete(id);
+    for (const p of [this._feedPath(id), this._shardPath(id)]) {
+      try { await this.vfs.unlink(p); } catch { /* gone */ }
+    }
+    try { await this.vfs.rm(this._contentDir(id), { recursive: true }); } catch { /* gone */ }
+    this.emit('feed', { id, removed: true });
+  }
+
+  // ── items ──
+  // Dedup guards on insert (SPEC §5): a tombstoned id is never resurrected; an
+  // existing id updates mutable fields only — never read/saved/archived/tags.
+  async upsertItems(rawItems) {
+    const res = { inserted: 0, updated: 0, skipped: 0 };
+    const touched = new Set();
+    for (const raw of rawItems) {
+      const id = String(raw.id);
+      const feed = this.feeds.get(raw.feed_id);
+      if (!feed) { res.skipped++; continue; }
+      if (this.archived.has(id)) { res.skipped++; continue; }   // pruned-and-gone: do not resurface
+
+      const existing = this.items.get(id);
+      if (existing) {
+        if (raw.title != null) existing.title = raw.title;
+        if (raw.url != null) existing.url = raw.url;
+        if (raw.author !== undefined) existing.author = raw.author || undefined;
+        if (raw.media !== undefined) existing.media = raw.media;
+        if (raw.structured !== undefined) existing.structured = raw.structured;
+        if (raw.excerpt !== undefined) existing.excerpt = raw.excerpt;
+        else if (raw.content !== undefined) existing.excerpt = deriveExcerpt(raw.content);
+        existing.search_text = deriveSearchText(existing);
+        if (raw.content !== undefined) {
+          await this._writeContent(feed.id, id, raw.content);
+          existing.has_content = !!String(raw.content).length;
+        }
+        res.updated++;
+      } else {
+        const rec = makeItem(raw, feed);
+        if (raw.content !== undefined && String(raw.content).length) await this._writeContent(feed.id, id, raw.content);
+        this.items.set(id, rec);
+        this._feedSet(feed.id).add(id);
+        res.inserted++;
+      }
+      touched.add(feed.id);
+    }
+    for (const fid of touched) this._markFeedDirty(fid);
+    if (res.inserted || res.updated) this.emit('items', { ...res });
+    return res;
+  }
+
+  getItem(id) { return this.items.get(String(id)) || null; }
+
+  async getContent(id) {
+    const rec = this.items.get(String(id));
+    if (!rec || !rec.has_content) return null;
+    return this._readText(this._contentPath(rec.feed_id, rec.id), null);
+  }
+
+  async _writeContent(feedId, itemId, html) {
+    await this._ensureDir(this._contentDir(feedId));
+    await this.vfs.writeFile(this._contentPath(feedId, itemId), String(html));
+  }
+  async _deleteContent(rec) {
+    try { await this.vfs.unlink(this._contentPath(rec.feed_id, rec.id)); } catch { /* gone */ }
+  }
+
+  // view: 'inbox' | 'saved' | 'archived' | undefined(=inbox-ish, excludes archived)
+  query(opts = {}) {
+    const { view, feed_id, type, read, saved, archived, tag, text, limit, sort = '-published_at' } = opts;
+    const needle = text ? String(text).toLowerCase() : null;
+    const out = [];
+    for (const r of this.items.values()) {
+      if (view === 'inbox' && r.archived) continue;
+      if (view === 'saved' && !r.saved) continue;
+      if (view === 'archived' && !r.archived) continue;
+      if (!view && r.archived) continue;
+      if (feed_id && r.feed_id !== feed_id) continue;
+      if (type && r.type !== type) continue;
+      if (read !== undefined && r.read !== read) continue;
+      if (saved !== undefined && r.saved !== saved) continue;
+      if (archived !== undefined && r.archived !== archived) continue;
+      if (tag && !r.tags.includes(tag)) continue;
+      if (needle && !r.search_text.includes(needle)) continue;
+      out.push(r);
+    }
+    const desc = sort.startsWith('-'); const key = desc ? sort.slice(1) : sort;
+    out.sort((a, b) => { const av = a[key], bv = b[key]; const c = av < bv ? -1 : av > bv ? 1 : 0; return desc ? -c : c; });
+    return limit > 0 ? out.slice(0, limit) : out;
+  }
+
+  // Cursor-scan substring search over search_text (SPEC §6 v0.1). The in-memory
+  // index makes this an array scan; MiniSearch/librarian is the v0.2 swap.
+  search(queryText, opts = {}) { return this.query({ ...opts, text: queryText }); }
+
+  counts() {
+    let inbox = 0, unread = 0, saved = 0, archived = 0;
+    const byFeed = {};
+    for (const r of this.items.values()) {
+      if (r.archived) archived++;
+      else { inbox++; if (!r.read) unread++; byFeed[r.feed_id] = (byFeed[r.feed_id] || 0) + 1; }
+      if (r.saved) saved++;
+    }
+    return { inbox, unread, saved, archived, byFeed, feeds: this.feeds.size, total: this.items.size };
+  }
+
+  setState(id, patch) {
+    const r = this.items.get(String(id));
+    if (!r) return null;
+    if (patch.read !== undefined) r.read = !!patch.read;
+    if (patch.archived !== undefined) r.archived = !!patch.archived;
+    if (patch.tags !== undefined) r.tags = [...patch.tags];
+    if (patch.saved !== undefined) {
+      r.saved = !!patch.saved;
+      r.expires_at = computeExpiry(r, this.feeds.get(r.feed_id));
+    }
+    this._markFeedDirty(r.feed_id);
+    this.emit('item', { id: r.id, patch });
+    return r;
+  }
+
+  // Prune (retainer/manual): remove items + write tombstones so they never come
+  // back. Saved items are exempt. `target` is an id array or a predicate.
+  async prune(target, reason = 'pruned') {
+    let ids;
+    if (Array.isArray(target)) ids = target.map(String);
+    else if (typeof target === 'function') { ids = []; for (const r of this.items.values()) if (target(r)) ids.push(r.id); }
+    else return { pruned: 0 };
+
+    let pruned = 0;
+    for (const id of ids) {
+      const r = this.items.get(id);
+      if (!r || r.saved) continue;
+      this.tombstones.push(makeTombstone(id, r.feed_id, reason));
+      this.archived.add(id);
+      this.items.delete(id);
+      this._feedSet(r.feed_id).delete(id);
+      await this._deleteContent(r);
+      this._markFeedDirty(r.feed_id);
+      pruned++;
+    }
+    if (pruned) { this._archivedDirty = true; this.emit('prune', { count: pruned, reason }); }
+    return { pruned };
+  }
+
+  // ── settings / tags / routing ──
+  getSettings() { return { ...this.settings }; }
+  async setSettings(patch) {
+    this.settings = { ...this.settings, ...patch };
+    await this.vfs.writeFile('/settings.json', JSON.stringify(this.settings, null, 2));
+    this.emit('settings', this.settings);
+    return this.settings;
+  }
+  getTags() { return this.tags; }
+  async setTag(name, meta) {
+    this.tags[name] = { name, ...this.tags[name], ...meta };
+    await this.vfs.writeFile('/tags.json', JSON.stringify(this.tags, null, 2));
+    return this.tags[name];
+  }
+  async getRouting() { return this._readText('/routing.js', ''); }
+  async setRouting(src) { await this.vfs.writeFile('/routing.js', String(src)); this.emit('routing', {}); }
+
+  // ── persistence ──
+  _markFeedDirty(feedId) { this._dirtyFeeds.add(feedId); this._scheduleFlush(); }
+  _scheduleFlush() {
+    if (this._flushTimer) return;
+    this._flushTimer = setTimeout(() => { this._flushTimer = null; this.flush().catch((e) => console.error('flush failed', e)); }, FLUSH_DELAY_MS);
+    if (this._flushTimer && typeof this._flushTimer.unref === 'function') this._flushTimer.unref();
+  }
+
+  async flush() {
+    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
+    for (const fid of this._dirtyFeeds) await this._writeShard(fid);
+    this._dirtyFeeds.clear();
+    if (this._archivedDirty) {
+      await this.vfs.writeFile('/archived_index.ndjson', this.tombstones.map((t) => JSON.stringify(t)).join('\n'));
+      this._archivedDirty = false;
+    }
+  }
+
+  async _writeShard(feedId) {
+    const set = this.byFeed.get(feedId);
+    const lines = [];
+    if (set) for (const id of set) { const r = this.items.get(id); if (r) lines.push(JSON.stringify(r)); }
+    await this.vfs.writeFile(this._shardPath(feedId), lines.join('\n'));
+  }
+
+  async estimate() { try { return await this.vfs.estimate('/'); } catch { return null; } }
+
+  // Read/write round-trip health probe (proves the backend works end to end).
+  async ping() {
+    const stamp = String(now());
+    await this.vfs.writeFile('/.health', stamp);
+    return (await this.vfs.readFile('/.health', 'utf8')) === stamp;
+  }
+
+  async close() { await this.flush(); }
+}

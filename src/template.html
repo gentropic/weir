@@ -12,9 +12,9 @@
 
     <nav class="rail-section">
       <div class="rail-label">Views</div>
-      <div class="navrow active"><span class="lbl"><span class="ico ico-inbox">⬓</span> Inbox</span><span class="count">0</span></div>
-      <div class="navrow"><span class="lbl"><span class="ico">★</span> saved</span><span class="count">0</span></div>
-      <div class="navrow"><span class="lbl"><span class="ico">▤</span> archived</span><span class="count">0</span></div>
+      <div class="navrow active"><span class="lbl"><span class="ico ico-inbox">⬓</span> Inbox</span><span class="count" id="count-inbox">0</span></div>
+      <div class="navrow"><span class="lbl"><span class="ico">★</span> saved</span><span class="count" id="count-saved">0</span></div>
+      <div class="navrow"><span class="lbl"><span class="ico">▤</span> archived</span><span class="count" id="count-archived">0</span></div>
     </nav>
 
     <div class="rail-section">
@@ -45,9 +45,10 @@
           real inbox of timestamped streams.
         </p>
         <div class="onboard-status">
-          <span class="stat"><span class="dot" id="vfs-dot" data-state="pending"></span><span id="vfs-status">checking VFS…</span></span>
+          <span class="stat"><span class="dot" id="vfs-dot" data-state="pending"></span><span id="vfs-status">checking store…</span></span>
           <span class="stat" id="backend-status">store: …</span>
           <span class="stat">persistence: <span id="persist-status">—</span></span>
+          <span class="stat" id="bridge-status">bridge: probing…</span>
         </div>
       </section>
     </div>

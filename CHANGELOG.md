@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Storage layer + bridge probe — 2026-05-30
+
+- VFS-backed store (`src/js/store/`): `schema.js` (Item/Feed/Tag/Settings, retention
+  TTLs, `search_text`/`expires_at` derivation, fs-safe keys) and the `Store` class.
+  Single store, backend-swappable (IndexedDB default; FSA/OPFS/memory). Queryable
+  index lives in memory, hydrated at startup from compact per-feed NDJSON shards;
+  item HTML content is lazy per-item files. Dedup on insert updates mutable fields
+  only and an `archived_index` tombstone blocks resurrection (SPEC §5). Cursor-scan
+  substring search over `search_text` (SPEC §6 v0.1).
+- Vendored the `@gcu/bridge` page client (CC0); a non-blocking connectivity probe
+  reports bridge presence/version in the shell status bar.
+- Tooling: `tools/smoke-store.mjs` (insert/dedup/prune/rehydrate, run in node),
+  `tools/serve.mjs` dev server (`npm run serve`), `npm run smoke`.
+
 ### Foundation decisions — 2026-05-30
 
 Pre-implementation direction set while surveying the sibling `auditable` toolkit

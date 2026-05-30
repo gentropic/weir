@@ -9,6 +9,7 @@ Source snapshot: `auditable@bba50e15`, vendored 2026-05-30.
 | Path | Source in auditable | Version | License | Notes |
 |------|---------------------|---------|---------|-------|
 | `vfs.js` | `ext/vfs/index.js` | @gcu/vfs 0.1.0 | MIT | Built single-file ESM bundle. Exports `VFS`, `IDBBackend`, `OPFSBackend`, `FSAABackend`, `MemoryBackend`, `path`, … Storage backbone (backend-swappable IDB / OPFS / FSA). |
+| `bridge-client.js` | `../bridge` repo `client/bridge-client.js` | @gcu/bridge 0.3.1 | CC0-1.0 | Page-side fetch broker. Exports `gcuFetch`, `hasBridge`, `bridgeVersion`, `clearBridgeCache`. Probed non-blockingly for status; used by the poller later. |
 | `switchboard/tokens.css` | `src/style.css` (token layers 1–3) + `ext/switchboard` | Switchboard 1.0 | MIT | `--sw-*` / `--au-*` / `--ui-*` token system, basalt dark theme, plus `@font-face` for the fonts below. |
 | `switchboard/fonts/barlow-{400,500,600,700}.woff2` | `ext/switchboard/fonts/` | Barlow | OFL 1.1 | UI typeface. |
 | `switchboard/fonts/space-mono-{400,400i,700}.woff2` | `ext/switchboard/fonts/` | Space Mono | OFL 1.1 | Metadata / mono typeface. |

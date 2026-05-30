@@ -6,6 +6,12 @@
       "homepage": "https://github.com/endarthur/auditable/tree/main/ext/vfs",
       "note": "storage backbone"
     },
+    "@gcu/bridge (client)": {
+      "spdx": "CC0-1.0",
+      "version": "0.3.1",
+      "homepage": "https://github.com/gentropic/bridge",
+      "note": "page-side fetch broker client"
+    },
     "Switchboard tokens": {
       "spdx": "MIT",
       "version": "1.0",

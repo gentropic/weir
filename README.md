@@ -4,11 +4,13 @@ A unified reader for timestamped streams — RSS, Atom, JSON Feed, YouTube, GitH
 arXiv, scraped pages, anything that produces dated items on a schedule. Local-first,
 eviction-resistant, browser-native. Part of the Geoscientific Chaos Union toolkit.
 
-**Status: v0.1 — spec & mockup. No implementation yet.**
+**Status: v0.1 — early implementation.** Storage foundation built (VFS-backed
+store, dedup, retention fields, cursor-scan search) and wired into a single-file
+shell; adapters, the poller, and the UI stream are next.
 
-This repo currently holds the design specification and an interactive UI mockup.
-The reader itself hasn't been built. [SPEC.md](SPEC.md) is the canonical design
-intent; everything in §9's v0.1 list is the build target.
+[SPEC.md](SPEC.md) is the canonical design intent; everything in §9's v0.1 list
+is the build target. Build the app with `node build.js` (→ `weir.html`); run it
+over a local origin with `npm run serve` → `http://localhost:8017/weir.html`.
 
 ## Why "weir"?
 
@@ -69,10 +71,17 @@ ETag/If-Modified-Since caching, which makes polite per-feed polling possible.
 
 ## Building
 
-Not started. The spec is the build instruction. The v0.1 target (SPEC.md §9):
-`feed` + `youtube` + `scrape` adapters, IndexedDB storage with manual prune, the
-two-pane UI in the mockup, OPML import/export, keyboard navigation, JS routing
-rules, and cursor-scan search.
+`node build.js` inlines the `src/` ES modules, the vendored VFS, and the
+Switchboard tokens + base64 fonts into a single self-contained `weir.html`. No
+npm install, no dependencies. `npm run serve` hosts it over `http://localhost`
+(a stable origin, so IndexedDB/persistence work). `npm run smoke` runs the store
+and VFS round-trip tests in node.
+
+The v0.1 target (SPEC.md §9): `feed` + `youtube` + `scrape` adapters, local-first
+storage with manual prune, the two-pane UI in the mockup, OPML import/export,
+keyboard navigation, JS routing rules, and cursor-scan search. **Done so far:**
+the VFS-backed store (schema, dedup + tombstone resurrection guard, retention
+fields, cursor-scan search) and the buildable two-pane shell.
 
 ## License
 

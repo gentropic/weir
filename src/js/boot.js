@@ -1,15 +1,16 @@
-// Boot — wires the vendored VFS storage backbone and proves the pipeline
-// (tokens + fonts + VFS) end-to-end. This is the v0.1 shell's only logic; the
-// real store/adapters/poller/router/UI land on top of this.
+// Boot — brings up the store on the vendored VFS, probes the bridge, and wires
+// live counts into the shell. The real stream/adapters/poller render on top of
+// this; for now it proves storage + bridge connectivity end to end.
 
-import { VFS } from '../../vendor/vfs.js';
+import { Store } from './store/store.js';
+import { hasBridge, bridgeVersion } from '../../vendor/bridge-client.js';
 
 const VERSION = '__WEIR_VERSION__';        // replaced at build time
 const BUILD_DATE = '__WEIR_BUILD_DATE__';  // replaced at build time
-const DB_NAME = 'weir';
 
 const $ = (id) => document.getElementById(id);
-const setText = (id, text) => { const el = $(id); if (el) el.textContent = text; };
+const setText = (id, text) => { const el = $(id); if (el) el.textContent = String(text); };
+const setDot = (state) => { const d = $('vfs-dot'); if (d) d.dataset.state = state; };
 
 function fmtBytes(n) {
   if (n == null || Number.isNaN(n)) return '—';
@@ -19,41 +20,55 @@ function fmtBytes(n) {
   return `${v.toFixed(i > 0 && v < 10 ? 1 : 0)} ${u[i]}`;
 }
 
-function setDot(state) { const d = $('vfs-dot'); if (d) d.dataset.state = state; }
+function renderCounts(store) {
+  const c = store.counts();
+  setText('count-inbox', c.inbox);
+  setText('count-saved', c.saved);
+  setText('count-archived', c.archived);
+  const feeds = store.listFeeds().length;
+  setText('topbar-sub', feeds ? `${c.unread} unread · ${feeds} source${feeds === 1 ? '' : 's'}` : 'no feeds yet');
+}
+
+async function probeBridge() {
+  try {
+    if (!(await hasBridge())) { setText('bridge-status', 'bridge: not detected'); return; }
+    const v = await bridgeVersion();
+    setText('bridge-status', v ? `bridge: v${v}` : 'bridge: connected');
+  } catch {
+    setText('bridge-status', 'bridge: probe failed');
+  }
+}
 
 async function boot() {
   setText('weir-version', `weir ${VERSION}`);
   setText('build-date', BUILD_DATE);
+  probeBridge();   // non-blocking; independent of storage
 
-  // 1. Bring up VFS on IndexedDB (default backend; FSA-A is the opt-in swap).
-  let vfs;
+  let store;
   try {
-    vfs = await VFS.create({ type: 'idb', name: DB_NAME });
-    window.__weirVfs = vfs;   // for console poking during dev
+    store = await Store.open({ backend: { type: 'idb', name: 'weir' } });
+    window.__weirStore = store;   // for console poking during dev
   } catch (e) {
-    setText('vfs-status', `VFS init failed: ${e.message}`);
+    setText('vfs-status', `store init failed: ${e.message}`);
     setText('backend-status', 'store: unavailable');
     setDot('fault');
     return;
   }
 
-  const mount = vfs.mounts()[0];
-  setText('backend-status', `store: ${mount ? mount.type : '?'}`);
+  setText('backend-status', `store: ${store.vfs.mounts()[0]?.type || '?'}`);
 
-  // 2. Smoke test: round-trip a health file to confirm read/write works.
   try {
-    const stamp = new Date().toISOString();
-    await vfs.writeFile('/.weir-health', stamp);
-    const back = await vfs.readFile('/.weir-health', 'utf8');
-    const ok = back === stamp;
-    setText('vfs-status', ok ? 'VFS ok — read/write round-trip' : 'VFS mismatch');
+    const ok = await store.ping();
+    setText('vfs-status', ok ? 'store ok — read/write round-trip' : 'store mismatch');
     setDot(ok ? 'ok' : 'fault');
   } catch (e) {
-    setText('vfs-status', `VFS round-trip failed: ${e.message}`);
+    setText('vfs-status', `store round-trip failed: ${e.message}`);
     setDot('fault');
   }
 
-  // 3. Ask for persistent storage (eviction resistance).
+  renderCounts(store);
+  for (const ev of ['items', 'item', 'prune', 'feed']) store.on(ev, () => renderCounts(store));
+
   try {
     let persisted = false;
     if (navigator.storage?.persisted) persisted = await navigator.storage.persisted();
@@ -61,9 +76,8 @@ async function boot() {
     setText('persist-status', persisted ? 'persistent' : 'best-effort');
   } catch { /* storage manager unavailable */ }
 
-  // 4. Storage usage in the status bar (flight-deck instrumentation).
   try {
-    const est = await vfs.estimate('/');
+    const est = await store.estimate();
     if (est && (est.usage != null || est.quota != null)) {
       setText('storage-usage', `${fmtBytes(est.usage)} / ${fmtBytes(est.quota)}`);
     }

@@ -7,5 +7,8 @@
 //
 // Dev workflow: edit src/, run `node build.js`, open weir.html.
 
-import '../../vendor/vfs.js';   // → VFS, IDBBackend, OPFSBackend, FSAABackend, path, …
-import './boot.js';             // boots on DOMContentLoaded
+import '../../vendor/vfs.js';            // → VFS, IDBBackend, OPFSBackend, FSAABackend, path, …
+import '../../vendor/bridge-client.js';  // → gcuFetch, hasBridge, bridgeVersion, clearBridgeCache
+import './store/schema.js';              // data model + helpers (before store)
+import './store/store.js';               // → Store (uses VFS + schema globals)
+import './boot.js';                      // boots on DOMContentLoaded
