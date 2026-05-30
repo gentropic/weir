@@ -4,10 +4,12 @@
 // state, content is cached to avoid re-reading on every keystroke.
 
 import { relativeTime, isoTitle, escapeHtml, fmtDuration, dailyCounts, sparkPoints } from './format.js';
+import { parseOpml, buildOpml } from '../opml.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
 const RENDER_CAP = 300;
+const RAIL_CAP = 60;
 
 export class App {
   constructor({ store, poller }) {
@@ -21,6 +23,7 @@ export class App {
     this.items = [];
     this._content = new Map();   // id → sanitized html (cache)
     this._g = false;
+    this.pendingImport = null;   // { feeds, youtube } awaiting confirmation
   }
 
   mount() {
@@ -45,6 +48,11 @@ export class App {
     const form = document.getElementById('addfeed');
     form.addEventListener('submit', (e) => { e.preventDefault(); const v = form.querySelector('input').value.trim(); if (v) this.addFeed(v); });
     this.searchEl.addEventListener('input', () => { this.searchText = this.searchEl.value.trim(); this.renderStream(); this.renderTopbar(); });
+
+    const fileEl = document.getElementById('opml-file');
+    document.getElementById('btn-import')?.addEventListener('click', () => fileEl.click());
+    fileEl?.addEventListener('change', async () => { const f = fileEl.files[0]; if (f) this.importOpml(await f.text()); fileEl.value = ''; });
+    document.getElementById('btn-export')?.addEventListener('click', () => this.exportOpml());
 
     document.addEventListener('keydown', (e) => this.onKey(e));
     setInterval(() => this.renderPollStatus(), 30_000);
@@ -80,7 +88,8 @@ export class App {
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
       r.classList.toggle('active', !this.feedFilter && r.dataset.view === this.view));
     if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
-    this.sources.innerHTML = feeds.map((f) => {
+    const shown = feeds.slice(0, RAIL_CAP);
+    this.sources.innerHTML = shown.map((f) => {
       const ids = this.store.byFeed.get(f.id) || new Set();
       const times = []; let unread = 0;
       for (const id of ids) { const r = this.store.items.get(id); if (!r) continue; if (r.published_at) times.push(r.published_at); if (!r.read && !r.archived) unread++; }
@@ -90,10 +99,11 @@ export class App {
       const spark = pts ? `<svg width="44" height="13" viewBox="0 0 44 13"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>` : '';
       return `<div class="source ${cls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${f.feed_health?.last_error ? ' — ' + escapeHtml(f.feed_health.last_error) : ''}">`
         + `<span class="spark">${spark}</span><span class="sname">${escapeHtml(f.name)}</span><span class="scount">${unread || ''}</span></div>`;
-    }).join('');
+    }).join('') + (feeds.length > RAIL_CAP ? `<div class="rail-empty">+ ${feeds.length - RAIL_CAP} more sources</div>` : '');
   }
 
   renderStream() {
+    if (this.pendingImport) { this.stream.innerHTML = this.importReviewHtml(); return; }
     this.items = this.query();
     if (this.selectedId && !this.items.some((x) => x.id === this.selectedId)) this.selectedId = null;
     if (!this.selectedId && this.items.length) this.selectedId = this.items[0].id;
@@ -162,8 +172,25 @@ export class App {
     return inner;
   }
 
+  importReviewHtml() {
+    const { feeds, youtube } = this.pendingImport;
+    const total = feeds.length, feedsOnly = total - youtube;
+    return `<section class="onboard">
+      <div class="onboard-glyph">⬓</div>
+      <h2>Import ${total} feed${total === 1 ? '' : 's'}</h2>
+      <p>${youtube ? `${feedsOnly} feeds + ${youtube} YouTube subscriptions. YouTube subs are bulky — you can leave them out for now and add them later.` : 'Ready to import.'}</p>
+      <div class="onboard-actions">
+        <button class="btn" data-import="all">Import all (${total})</button>
+        ${youtube ? `<button class="btn" data-import="feeds">Feeds only (${feedsOnly})</button>` : ''}
+        <button class="btn" data-import="cancel">Cancel</button>
+      </div>
+    </section>`;
+  }
+
   // ── interaction ──
   onStreamClick(e) {
+    const imp = e.target.closest('[data-import]');
+    if (imp) { this.runImport(imp.dataset.import); return; }
     const sample = e.target.closest('[data-sample]');
     if (sample) { document.getElementById('addfeed-input').value = sample.dataset.sample; this.addFeed(sample.dataset.sample); return; }
     const btn = e.target.closest('[data-act]');
@@ -266,6 +293,42 @@ export class App {
       console.error('addFeed failed', e);
       document.getElementById('view-sub').textContent = `couldn't add feed: ${e.message}`;
     }
+  }
+
+  // ── OPML ──
+  importOpml(text) {
+    const feeds = parseOpml(text);
+    if (!feeds.length) { document.getElementById('view-sub').textContent = 'OPML had no feeds'; return; }
+    this.pendingImport = { feeds, youtube: feeds.filter((f) => f.kind === 'youtube').length };
+    this.renderStream();
+  }
+
+  async runImport(mode) {
+    const pending = this.pendingImport;
+    this.pendingImport = null;
+    if (mode === 'cancel' || !pending) { this.renderAll(); return; }
+    const list = pending.feeds.filter((f) => mode === 'all' || f.kind !== 'youtube');
+    // Spread next_poll_at so a big import doesn't hammer every source at once.
+    const t = Date.now();
+    let i = 0;
+    for (const f of list) {
+      await this.store.putFeed({
+        url: f.xmlUrl, name: f.title, site_url: f.htmlUrl,
+        adapter: f.kind === 'youtube' ? 'youtube' : 'feed',
+        category: f.category, next_poll_at: t + (i++ * 1500),
+      });
+    }
+    document.getElementById('view-sub').textContent = `imported ${list.length} feeds — polling…`;
+    this.setView('inbox');
+  }
+
+  exportOpml() {
+    const xml = buildOpml(this.store.listFeeds(), 'weir feeds');
+    const blob = new Blob([xml], { type: 'text/xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'weir-feeds.opml'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
   renderPollStatus() {

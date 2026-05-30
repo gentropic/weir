@@ -126,6 +126,7 @@ export function makeFeed(raw) {
     images_allowed: raw.images_allowed ?? DEFAULT_SETTINGS.images_default_allowed,
     fetch_full_content: raw.fetch_full_content ?? DEFAULT_SETTINGS.fetch_full_content_default,
     retention: raw.retention || undefined,
+    category: raw.category || undefined,
     feed_health: raw.feed_health || {
       last_successful_poll: undefined,
       consecutive_failures: 0,

@@ -14,6 +14,7 @@ import './store/store.js';               // → Store (uses VFS + schema globals
 import './parse/xml.js';                 // → parseXml (before feed)
 import './parse/sanitize.js';            // → sanitizeHtml (before feed)
 import './adapters/feed.js';             // → parseFeed, feedAdapter (uses xml/sanitize/schema)
+import './opml.js';                      // → parseOpml, buildOpml (uses parseXml)
 import './ui/format.js';                 // → relativeTime, sparkPoints, … (before app)
 import './poller.js';                    // → Poller
 import './ui/app.js';                    // → App (uses format)

@@ -65,6 +65,8 @@ body {
 .keyhint kbd { background: var(--sw-bg-bright); border: 1px solid var(--au-rule); border-radius: 3px; padding: 1px 5px; font-size: 10px; color: var(--au-fg-muted); }
 .btn { font-family: var(--au-font-sans); font-size: 12px; font-weight: 500; background: var(--sw-bg-bright); color: var(--au-fg-muted); border: 1px solid var(--au-rule); border-radius: var(--au-radius); padding: 6px 12px; cursor: pointer; transition: all 0.12s; }
 .btn:hover { border-color: var(--au-action); color: var(--au-action); }
+.btn-link { font-family: var(--au-font-mono); font-size: 11px; background: none; border: none; color: var(--au-fg-soft); cursor: pointer; padding: 4px 2px; }
+.btn-link:hover { color: var(--au-action); }
 
 .stream { flex: 1; overflow-y: auto; padding: 0 0 44px; }
 

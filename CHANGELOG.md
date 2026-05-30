@@ -6,6 +6,21 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### OPML import/export — 2026-05-31
+
+- `src/js/opml.js`: `parseOpml` (reuses the feed XML parser) flattens nested
+  outlines, captures folder names as a feed `category`, and flags YouTube
+  subscription feeds (`kind:'youtube'`); `buildOpml` writes a categorized export.
+- Import flow (app): topbar import/export buttons + hidden file input. Import
+  shows a review panel with the SPEC §10 separation choice — "Import all" vs
+  "Feeds only" (leave YouTube subs out) — then adds feeds with spread
+  `next_poll_at` so a large import polls politely. Export downloads
+  `weir-feeds.opml`. Rail capped at 60 sources with a "+N more" note.
+- `Feed.category` added to the schema (pass-through).
+- Verified against the real 1,249-entry Inoreader export (1,088 YouTube, 161
+  feeds, 6 categories) and in-browser (review → selective import → categorized
+  feeds in the rail). Tests: `tools/smoke-opml.mjs`.
+
 ### poller + stream renderer — 2026-05-30
 
 The data path now reaches the screen. weir is a usable reader.
