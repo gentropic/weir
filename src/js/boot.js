@@ -101,7 +101,7 @@ async function boot() {
   app.renderDripStatus(drip.status());
   if (drip.queue.length || drip.current) drip.start();
 
-  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o),
+  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();
       const provider = o.provider || s.catalog_provider || 'ollama';

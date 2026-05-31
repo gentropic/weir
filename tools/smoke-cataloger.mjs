@@ -80,4 +80,22 @@ assert.equal(u.providers.nanogpt.billed_input, 1200, 'billed input (kimi ×1)');
 await store.recordUsage('nanogpt', 'glm-5.1', { prompt_tokens: 1000 });
 assert.equal((await store.getUsage()).providers.nanogpt.billed_input, 1200 + 2000, 'glm-5.1 billed ×2');
 
-console.log('cataloger smoke ok:', JSON.stringify({ glass_id: res.glass_id, domain: card.facets.domain.length }));
+// ── regression: two un-cataloged items get DISTINCT cards (no seq-001 collision) ──
+// buildCard used to fabricate glass-…-001 for every item, so a second catalog
+// overwrote the first's card and cross-contaminated facets. Each must self-file.
+await store.upsertItems([{ id: 'p2', feed_id: 'f', type: 'paper', title: 'Variograms', tags: ['variogram'], content: '<p>full text</p>' }]);
+const res2 = await catalogStoreItem(store, 'p2', { provider: 'nanogpt', model: 'kimi-k2.6', key: 'x', fetch: llmFetch });
+assert.notEqual(res2.glass_id, res.glass_id, 'second item gets its OWN glass_id (no collision)');
+assert.equal(store.getItem('p2').glass_id, res2.glass_id, 'p2 stamped with its own id');
+assert.equal((await store.getCard(res2.glass_id)).glass.document_ref, 'p2', 'card2 → p2');
+assert.equal((await store.getCard(res.glass_id)).glass.document_ref, 'p1', 'p1 card intact after p2 cataloged');
+
+// ── clearCatalog: wipes cards + un-stamps items (corruption cleanup) ──
+const before = await store.catalogCount(); assert.ok(before >= 2, 'cards exist before clear');
+const cl = await store.clearCatalog();
+assert.equal(cl.cleared, before, 'all cards deleted');
+assert.equal(await store.catalogCount(), 0, 'catalog empty');
+assert.equal(store.getItem('p1').glass_id, undefined, 'p1 un-stamped');
+assert.equal(store.getItem('p2').glass_id, undefined, 'p2 un-stamped');
+
+console.log('cataloger smoke ok:', JSON.stringify({ glass_id: res.glass_id, second: res2.glass_id, domain: card.facets.domain.length }));

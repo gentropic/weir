@@ -6,6 +6,24 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Catalog: fix card-id collision + add cleanup — 2026-05-31
+
+- **Bug fix — cross-contaminated catalog cards.** `buildCard` fabricated a
+  default `glass_id` of `glass-YYYYMMDD-001` whenever none was passed, so *every*
+  item cataloged with the LLM on a given day collided on the same card file —
+  each catalog overwrote the last and items ended up sharing/merging facets (the
+  "Jack Daniel's article got the Applied Pokology facets" report). Fixed at the
+  root: `buildCard` no longer invents an id; `writeCard` assigns a unique daily
+  sequence (`_nextCatalogSeq`) at persist time. Each cataloged item now gets its
+  own card. Regression test catalogs two items → distinct ids, no facet bleed.
+- **Catalog cleanup.** **Settings → AI cataloger → clear catalog** (and
+  `__weir.clearCatalog()`) deletes every card and un-files every item so you can
+  re-catalog from a clean slate — items, content, reading state and the archive
+  are untouched. Use it once to clear the cards corrupted by the collision above.
+- **"Let it rip" safety.** Cataloging the whole corpus is the catalog view with
+  no facet filter → **catalog ▸**; that batch now confirms before a long run
+  (>30 items) and is cancelable mid-flight (click the button again to stop).
+
 ### Bridge-down banner — 2026-06-01
 
 - weir now **says it out loud** when the bridge isn't brokering, instead of

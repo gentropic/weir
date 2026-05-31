@@ -52,7 +52,10 @@ export function facetsOf(item, feed) {
 // Build the deterministic Stage-0 card for one item (+ its feed). No network.
 export function buildCard(item, feed, opts = {}) {
   const cataloged = opts.cataloged || new Date().toISOString().slice(0, 10);
-  const glass_id = opts.glass_id || nextGlassId(cataloged, 1);
+  // NO fabricated default id — an un-given glass_id stays undefined so the store
+  // assigns a UNIQUE one at write time. (Defaulting to seq-001 made every item
+  // cataloged in a day collide on one card file and cross-contaminate.)
+  const glass_id = opts.glass_id;
 
   const dublin_core = {
     title: item.title || '(untitled)',

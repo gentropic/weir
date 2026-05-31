@@ -531,6 +531,20 @@ export class Store {
   async getCard(glassId) { return this._readJSON(`/catalog/${String(glassId)}.json`, null); }
   async catalogCount() { try { return (await this.vfs.readdir('/catalog')).filter((f) => f.endsWith('.json')).length; } catch { return 0; } }
 
+  // Wipe the catalog: delete every card file and un-stamp every item, so a fresh
+  // catalog pass starts clean. (Cleanup for corruption like the seq-001 collision;
+  // safe to re-run.) Does NOT touch items, content, usage, or the archive.
+  async clearCatalog() {
+    let cleared = 0;
+    try { for (const f of await this.vfs.readdir('/catalog')) { if (f.endsWith('.json')) { await this.vfs.unlink(`/catalog/${f}`); cleared++; } } } catch { /* no dir */ }
+    const touched = new Set();
+    for (const it of this.items.values()) { if (it.glass_id) { delete it.glass_id; touched.add(it.feed_id); } }
+    for (const fid of touched) this._markFeedDirty(fid);
+    await this.flush();
+    this.emit('catalog', { cleared });
+    return { cleared };
+  }
+
   // Next free daily sequence for a glass_id (glass-YYYYMMDD-NNN), collision-safe.
   async _nextCatalogSeq(day) {
     const tag = `glass-${String(day).replace(/-/g, '')}-`;

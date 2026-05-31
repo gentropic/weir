@@ -115,6 +115,7 @@ export class App {
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
     document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
+    document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -397,6 +398,9 @@ export class App {
     if (this._cataloging) { this._cataloging.cancel = true; return; }
     const todo = this.items.filter((i) => !i.glass_id);
     if (!todo.length) { this._catStatus('nothing to catalog here'); return; }
+    // "Let it rip" can be the whole corpus (catalog mode, no filter) — one LLM
+    // call per item. Confirm before a long unattended run.
+    if (todo.length > 30 && !confirm(`Catalog ${todo.length} items? That's one LLM call each — it can take a while. Click the button again to stop mid-run.`)) return;
     const job = this._cataloging = { cancel: false };
     let n = 0;
     for (const it of todo) {
@@ -408,6 +412,19 @@ export class App {
     this._cataloging = null;
     this._catStatus(`cataloged ${n} item${n === 1 ? '' : 's'}${job.cancel ? ' (stopped)' : ''}`);
     if (this.catalog) this.renderAll();
+  }
+
+  // Wipe every catalog card and un-stamp items, then refresh the view. Cleanup
+  // for a corrupted catalog (e.g. the old seq-001 collision) before a fresh pass.
+  async clearCatalog() {
+    if (this._cataloging) { this._catStatus('stop the running catalog first'); return; }
+    const n = await this.store.catalogCount();
+    if (!confirm(`Clear the catalog? This deletes ${n} card${n === 1 ? '' : 's'} and un-files every item. Items, content and reading state are untouched. You can re-catalog after.`)) return;
+    const r = await this.store.clearCatalog();
+    this._cardFacets = new Map();
+    if (this.catalog) this.renderAll();
+    this.renderCatUsage();
+    this._catStatus(`catalog cleared (${r.cleared} card${r.cleared === 1 ? '' : 's'})`);
   }
 
   // In-memory inverted index over the live (Stage-0, deterministic) facets:

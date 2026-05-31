@@ -627,6 +627,7 @@ body {
         <label class="set-row">base URL<input type="text" id="set-cat-baseurl" class="field" autocomplete="off" spellcheck="false" placeholder="http://localhost:11434"></label>
         <label class="set-row">API key<input type="password" id="set-cat-key" class="field" autocomplete="off" placeholder="(none)"></label>
         <div class="set-row"><span id="cat-usage">no LLM usage yet</span><button class="btn-link" id="set-cat-gauge" type="button">check allowance</button></div>
+        <div class="set-row"><span>Catalog maintenance</span><button class="btn-link" id="set-cat-clear" type="button" title="Delete all catalog cards and un-file every item (items &amp; reading state kept)">clear catalog</button></div>
         <div class="hint">The librarian that fills the language facets. Ollama runs locally (free, nothing leaves your machine). Keys are stored encrypted-out-of-band (OPFS), never in backups or the mounted folder. Cloud providers need their origin added to the bridge allowlist once.</div>
       </section>
       <section class="set-group">
@@ -4263,7 +4264,10 @@ function facetsOf(item, feed) {
 // Build the deterministic Stage-0 card for one item (+ its feed). No network.
 function buildCard(item, feed, opts = {}) {
   const cataloged = opts.cataloged || new Date().toISOString().slice(0, 10);
-  const glass_id = opts.glass_id || nextGlassId(cataloged, 1);
+  // NO fabricated default id — an un-given glass_id stays undefined so the store
+  // assigns a UNIQUE one at write time. (Defaulting to seq-001 made every item
+  // cataloged in a day collide on one card file and cross-contaminate.)
+  const glass_id = opts.glass_id;
 
   const dublin_core = {
     title: item.title || '(untitled)',
@@ -5015,6 +5019,20 @@ class Store {
 
   async getCard(glassId) { return this._readJSON(`/catalog/${String(glassId)}.json`, null); }
   async catalogCount() { try { return (await this.vfs.readdir('/catalog')).filter((f) => f.endsWith('.json')).length; } catch { return 0; } }
+
+  // Wipe the catalog: delete every card file and un-stamp every item, so a fresh
+  // catalog pass starts clean. (Cleanup for corruption like the seq-001 collision;
+  // safe to re-run.) Does NOT touch items, content, usage, or the archive.
+  async clearCatalog() {
+    let cleared = 0;
+    try { for (const f of await this.vfs.readdir('/catalog')) { if (f.endsWith('.json')) { await this.vfs.unlink(`/catalog/${f}`); cleared++; } } } catch { /* no dir */ }
+    const touched = new Set();
+    for (const it of this.items.values()) { if (it.glass_id) { delete it.glass_id; touched.add(it.feed_id); } }
+    for (const fid of touched) this._markFeedDirty(fid);
+    await this.flush();
+    this.emit('catalog', { cleared });
+    return { cleared };
+  }
 
   // Next free daily sequence for a glass_id (glass-YYYYMMDD-NNN), collision-safe.
   async _nextCatalogSeq(day) {
@@ -6892,6 +6910,7 @@ class App {
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
     document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
+    document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -7174,6 +7193,9 @@ class App {
     if (this._cataloging) { this._cataloging.cancel = true; return; }
     const todo = this.items.filter((i) => !i.glass_id);
     if (!todo.length) { this._catStatus('nothing to catalog here'); return; }
+    // "Let it rip" can be the whole corpus (catalog mode, no filter) — one LLM
+    // call per item. Confirm before a long unattended run.
+    if (todo.length > 30 && !confirm(`Catalog ${todo.length} items? That's one LLM call each — it can take a while. Click the button again to stop mid-run.`)) return;
     const job = this._cataloging = { cancel: false };
     let n = 0;
     for (const it of todo) {
@@ -7185,6 +7207,19 @@ class App {
     this._cataloging = null;
     this._catStatus(`cataloged ${n} item${n === 1 ? '' : 's'}${job.cancel ? ' (stopped)' : ''}`);
     if (this.catalog) this.renderAll();
+  }
+
+  // Wipe every catalog card and un-stamp items, then refresh the view. Cleanup
+  // for a corrupted catalog (e.g. the old seq-001 collision) before a fresh pass.
+  async clearCatalog() {
+    if (this._cataloging) { this._catStatus('stop the running catalog first'); return; }
+    const n = await this.store.catalogCount();
+    if (!confirm(`Clear the catalog? This deletes ${n} card${n === 1 ? '' : 's'} and un-files every item. Items, content and reading state are untouched. You can re-catalog after.`)) return;
+    const r = await this.store.clearCatalog();
+    this._cardFacets = new Map();
+    if (this.catalog) this.renderAll();
+    this.renderCatUsage();
+    this._catStatus(`catalog cleared (${r.cleared} card${r.cleared === 1 ? '' : 's'})`);
   }
 
   // In-memory inverted index over the live (Stage-0, deterministic) facets:
@@ -8396,7 +8431,7 @@ async function boot() {
   app.renderDripStatus(drip.status());
   if (drip.queue.length || drip.current) drip.start();
 
-  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o),
+  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();
       const provider = o.provider || s.catalog_provider || 'ollama';
