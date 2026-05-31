@@ -172,7 +172,7 @@
       <section class="set-group">
         <h4>AI cataloger (glass)</h4>
         <label class="set-row">provider<select id="set-cat-provider" class="field"><option value="lemonade">Lemonade (Ryzen AI, local)</option><option value="ollama">Ollama (local)</option><option value="nanogpt">NanoGPT</option><option value="groq">Groq</option><option value="custom">Custom</option></select></label>
-        <label class="set-row">model<span><input type="text" id="set-cat-model" class="field" list="cat-model-list" autocomplete="off" spellcheck="false" placeholder="(provider default)"><datalist id="cat-model-list"></datalist> <button class="btn-link" id="set-cat-models" type="button" title="Fetch available models from the provider">↻ list</button></span></label>
+        <label class="set-row">model<span><select id="set-cat-model" class="field"></select> <input type="text" id="set-cat-model-custom" class="field" hidden autocomplete="off" spellcheck="false" placeholder="model id"> <button class="btn-link" id="set-cat-models" type="button" title="Fetch available models from the provider">↻ list</button></span></label>
         <label class="set-row">base URL<input type="text" id="set-cat-baseurl" class="field" autocomplete="off" spellcheck="false" placeholder="http://localhost:11434"></label>
         <label class="set-row">API key<input type="password" id="set-cat-key" class="field" autocomplete="off" placeholder="(none)"></label>
         <div class="set-row"><span id="cat-usage">no LLM usage yet</span><button class="btn-link" id="set-cat-gauge" type="button">check allowance</button></div>

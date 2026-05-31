@@ -138,7 +138,8 @@ export class App {
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('set-cat-gauge')?.addEventListener('click', () => this.checkCatGauge());
     document.getElementById('set-cat-models')?.addEventListener('click', () => this.loadCatModels());
-    document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } const dl = document.getElementById('cat-model-list'); if (dl) dl.innerHTML = ''; });
+    document.getElementById('set-cat-model')?.addEventListener('change', () => this._reflectCatCustom());
+    document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } this._renderCatModelSelect([], ''); });
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
@@ -1223,7 +1224,7 @@ export class App {
     chk('set-fullcontent', s.fetch_full_content_default);
     val('set-density', s.density || 'comfortable');
     val('set-cat-provider', s.catalog_provider || 'ollama');
-    val('set-cat-model', s.catalog_model || '');
+    this._renderCatModelSelect([], s.catalog_model || '');
     val('set-cat-baseurl', s.catalog_base_url || '');
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
@@ -1367,7 +1368,7 @@ export class App {
       fetch_full_content_default: chk('set-fullcontent'),
       density: document.getElementById('set-density')?.value === 'compact' ? 'compact' : 'comfortable',
       catalog_provider: document.getElementById('set-cat-provider')?.value || 'ollama',
-      catalog_model: document.getElementById('set-cat-model')?.value.trim() || '',
+      catalog_model: this._catModelValue(),
       catalog_base_url: document.getElementById('set-cat-baseurl')?.value.trim() || '',
       retention_enabled: chk('set-retention'),
       auto_check_updates: chk('set-autocheck'),
@@ -1398,6 +1399,30 @@ export class App {
     el.textContent = parts.length ? parts.join('  ·  ') : 'no LLM usage yet';
   }
 
+  // The chosen model id (from the dropdown, or the custom field if "custom").
+  _catModelValue() {
+    const sel = document.getElementById('set-cat-model');
+    if (sel && sel.value === '__custom__') return document.getElementById('set-cat-model-custom')?.value.trim() || '';
+    return sel?.value || '';
+  }
+
+  // Fill the model dropdown with `models` (+ keep `selected` even if not listed),
+  // plus a "custom id" escape. A real <select> shows every option (no datalist
+  // filter-by-typed-text confusion).
+  _renderCatModelSelect(models, selected) {
+    const sel = document.getElementById('set-cat-model'); if (!sel) return;
+    const opts = [...new Set([selected, ...models].filter(Boolean))];
+    sel.innerHTML = opts.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')
+      + '<option value="__custom__">+ custom id…</option>';
+    sel.value = selected && opts.includes(selected) ? selected : (models[0] || (opts[0] || '__custom__'));
+    this._reflectCatCustom();
+  }
+
+  _reflectCatCustom() {
+    const sel = document.getElementById('set-cat-model'); const c = document.getElementById('set-cat-model-custom');
+    if (sel && c) c.hidden = sel.value !== '__custom__';
+  }
+
   async loadCatModels() {
     const status = document.getElementById('cat-usage');
     const provider = document.getElementById('set-cat-provider')?.value || 'ollama';
@@ -1406,11 +1431,8 @@ export class App {
     if (status) status.textContent = 'fetching models…';
     try {
       const models = await listModels({ provider, key, baseUrl, fetch: this.poller.fetch });
-      const dl = document.getElementById('cat-model-list');
-      if (dl) dl.innerHTML = models.map((m) => `<option value="${escapeHtml(m)}"></option>`).join('');
-      const field = document.getElementById('set-cat-model');
-      if (field && !field.value && models.length) field.value = models[0];
-      if (status) status.textContent = `${models.length} model${models.length === 1 ? '' : 's'} — pick one in the box ↑`;
+      this._renderCatModelSelect(models, this._catModelValue());
+      if (status) status.textContent = `${models.length} model${models.length === 1 ? '' : 's'} — pick one ↑`;
     } catch (e) { if (status) status.textContent = `couldn't list models: ${e.message}`; }
   }
 
