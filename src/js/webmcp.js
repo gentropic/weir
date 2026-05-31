@@ -37,6 +37,17 @@ function projItem(store, it, full) {
   return o;
 }
 
+// Opaque keyset cursor over (published_at, id) — stable while weir keeps polling
+// (new items sort above the cursor and aren't re-served), unlike a numeric offset.
+function encCursor(pa, id) {
+  const json = JSON.stringify({ pa: pa || 0, id });
+  try { return btoa(unescape(encodeURIComponent(json))); } catch { return btoa(json); }
+}
+function decCursor(s) {
+  try { const o = JSON.parse(decodeURIComponent(escape(atob(String(s))))); if (o && typeof o.id === 'string') return { pa: o.pa || 0, id: o.id }; } catch { /* bad cursor */ }
+  return null;
+}
+
 // Tool implementations over a store. `cardFacets` (optional) returns the app's
 // live item→facets cache (enriched, when catalog cards are loaded); `ensureCards`
 // (optional) warms it. Without them, facets fall back to deterministic Stage-0.
@@ -47,15 +58,29 @@ export function buildWeirTools({ store, cardFacets, ensureCards } = {}) {
   };
 
   async function queryItems(input = {}) {
-    const { q, type, view, limit, unread, saved } = input;
-    const opts = { limit: Math.min(Math.max(1, Number(limit) || 30), 100) };
+    const { q, type, view, unread, saved, cursor } = input;
+    const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
+    const opts = {};   // no limit → full matching set; we page it here with a keyset cursor
     if (q) opts.text = String(q);
     if (type) opts.type = String(type);
     if (view) opts.view = String(view);
     if (unread === true) opts.read = false;
     if (saved !== undefined) opts.saved = !!saved;
-    const rows = store.query(opts);
-    return { count: rows.length, items: rows.map((r) => projItem(store, r, false)) };
+    // Stable total order: newest first, id as tie-breaker (so the cursor is exact
+    // even when timestamps collide). Re-sort explicitly — don't rely on Map order.
+    const pa = (r) => r.published_at || 0;
+    const cmp = (a, b) => (pa(b) - pa(a)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const rows = store.query(opts).sort(cmp);
+    let start = 0;
+    if (cursor) {
+      const c = decCursor(cursor);
+      if (c) { const i = rows.findIndex((r) => cmp({ published_at: c.pa, id: c.id }, r) < 0); start = i < 0 ? rows.length : i; }
+    }
+    const page = rows.slice(start, start + limit);
+    const hasMore = start + page.length < rows.length;
+    const out = { count: page.length, total: rows.length, hasMore, items: page.map((r) => projItem(store, r, false)) };
+    if (hasMore && page.length) { const last = page[page.length - 1]; out.nextCursor = encCursor(pa(last), last.id); }
+    return out;
   }
 
   async function getItem(input = {}) {
@@ -114,7 +139,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards } = {}) {
 const TOOLS = [
   {
     name: 'weir_queryItems', fn: 'queryItems',
-    description: 'Search/list weir feed items. Filters: q (substring over title/excerpt/text), type (article|video|release|paper|status|track|podcast|commit|issue|note), view (inbox|saved|archived), unread (bool), saved (bool), limit (default 30, max 100). Returns compact items (id, title, url, feed, published, tags, excerpt).',
+    description: 'Search/list weir feed items, newest first. Filters: q (substring over title/excerpt/text), type (article|video|release|paper|status|track|podcast|commit|issue|note), view (inbox|saved|archived), unread (bool), saved (bool), limit (default 30, max 100). Paginated: returns { count, total, hasMore, items, nextCursor }. To page, pass nextCursor back with the SAME filters. Items are compact (id, title, url, feed, published, tags, excerpt).',
     inputSchema: {
       type: 'object', properties: {
         q: { type: 'string', description: 'Substring search over title/excerpt/text' },
@@ -122,7 +147,8 @@ const TOOLS = [
         view: { type: 'string', enum: ['inbox', 'saved', 'archived'], description: 'Which view to scope to' },
         unread: { type: 'boolean', description: 'Only unread items' },
         saved: { type: 'boolean', description: 'Only saved (true) / only unsaved (false)' },
-        limit: { type: 'integer', description: 'Max items (default 30, cap 100)' },
+        limit: { type: 'integer', description: 'Max items per page (default 30, cap 100)' },
+        cursor: { type: 'string', description: 'Opaque pagination cursor from a previous call’s nextCursor — reuse the same filters' },
       },
     },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'Query weir items' },

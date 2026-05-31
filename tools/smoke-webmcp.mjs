@@ -29,6 +29,16 @@ assert.equal(vids.count, 1); assert.equal(vids.items[0].id, 'v1', 'type filter')
 const capped = await tools.queryItems({ limit: 999 });
 assert.equal(capped.count, 2, 'limit cap does not error');
 
+// ── pagination: keyset cursor, newest first (v1 2026-05-02 before a1 2026-05-01) ──
+const p1 = await tools.queryItems({ limit: 1 });
+assert.equal(p1.count, 1); assert.equal(p1.total, 2); assert.equal(p1.hasMore, true);
+assert.equal(p1.items[0].id, 'v1', 'page 1 = newest'); assert.ok(p1.nextCursor, 'nextCursor present');
+const p2 = await tools.queryItems({ limit: 1, cursor: p1.nextCursor });
+assert.equal(p2.items[0].id, 'a1', 'page 2 = next item, no overlap');
+assert.equal(p2.hasMore, false, 'no more after last'); assert.ok(!p2.nextCursor, 'no cursor at the end');
+const pBad = await tools.queryItems({ cursor: 'garbage!!' });
+assert.equal(pBad.count, 2, 'bad cursor → ignored, full set');
+
 // ── getItem ──
 const it = await tools.getItem({ id: 'a1', content: true });
 assert.equal(it.title, 'Jack Daniel preacher');
