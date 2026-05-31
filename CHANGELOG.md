@@ -6,6 +6,13 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Reorder feeds within a folder — 2026-05-31
+
+- Folder context menu → **Reorder feeds…** opens a move-up/down list. Saving
+  writes a manual `feed.order` that pins the folder's order ahead of the default
+  watch-affinity → name sort (feeds without an explicit order still fall back to
+  it). Persisted via `updateFeed`.
+
 ### Smart views (saved filters over items) — 2026-05-31
 
 - A **Views** area in the rail holds saved filters. Seeded on first run with

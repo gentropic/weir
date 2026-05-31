@@ -240,6 +240,16 @@ body {
 #health-status.clickable:hover { color: var(--au-fg-muted); }
 #health-status.alert { color: var(--au-error); }
 
+/* ── Reorder-folder dialog ── */
+.reorder-body { flex: 1; overflow-y: auto; padding: 8px 16px 16px; }
+.reorder-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 10px; border-radius: var(--au-radius); }
+.reorder-row:hover { background: var(--sw-bg-bright); }
+.ro-name { font-size: 13.5px; color: var(--au-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ro-btns { display: flex; gap: 4px; flex-shrink: 0; }
+.ro-btns button { font-family: var(--au-font-mono); font-size: 12px; width: 26px; height: 24px; color: var(--au-fg-muted); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius); cursor: pointer; }
+.ro-btns button:hover:not(:disabled) { color: var(--au-action); border-color: var(--au-action); }
+.ro-btns button:disabled { opacity: 0.3; cursor: default; }
+
 /* ── Feed-health overlay ── */
 .health-body { flex: 1; overflow-y: auto; padding: 8px 16px 16px; }
 .health-row { padding: 12px 0; border-bottom: 1px solid var(--au-border); }

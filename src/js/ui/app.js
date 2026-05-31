@@ -117,6 +117,9 @@ export class App {
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
     document.getElementById('health-close')?.addEventListener('click', () => this.closeHealth());
     document.getElementById('health-body')?.addEventListener('click', (e) => this.onHealthClick(e));
+    document.getElementById('reorder-list')?.addEventListener('click', (e) => this.onReorderClick(e));
+    document.getElementById('reorder-save')?.addEventListener('click', () => this.saveReorder());
+    document.getElementById('reorder-close')?.addEventListener('click', () => this.closeReorder());
     const affFile = document.getElementById('affinity-file');
     document.getElementById('set-import-affinity')?.addEventListener('click', () => affFile.click());
     affFile?.addEventListener('change', async () => { const f = affFile.files[0]; if (f) await this.importWatchData(await f.text()); affFile.value = ''; });
@@ -263,7 +266,10 @@ export class App {
     let html = '';
     for (const c of cats) {
       // Most-watched first within a folder (affinity), then alphabetical.
-      const list = groups.get(c).sort((x, y) => (y.affinity || 0) - (x.affinity || 0) || x.name.localeCompare(y.name));
+      // Manual order pins feeds first (by order index); the rest fall back to
+      // watch-affinity then name.
+      const ord = (f) => (f.order == null ? Infinity : f.order);
+      const list = groups.get(c).sort((x, y) => ord(x) - ord(y) || (y.affinity || 0) - (x.affinity || 0) || x.name.localeCompare(y.name));
       const collapsed = this.collapsedCats.has(c);
       const unread = list.reduce((n, f) => n + this.feedUnread(f.id), 0);
       const activeCat = this.catFilter === c ? ' active' : '';
@@ -637,8 +643,58 @@ export class App {
       { label: 'View this folder', onClick: () => this.setCategory(cat) },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ category: cat }) },
       { label: this.collapsedCats.has(cat) ? 'Expand' : 'Collapse', onClick: () => this.toggleCat(cat) },
+      { sep: true },
+      { label: 'Reorder feeds…', onClick: () => this.openReorder(cat) },
     ]);
   }
+
+  // Reorder the feeds within a folder — a move up/down list that writes a manual
+  // feed.order (overriding the affinity/name sort). _reorder holds the working
+  // id list so the dialog can shuffle without touching the store until Save.
+  openReorder(cat) {
+    const ord = (f) => (f.order == null ? Infinity : f.order);
+    const feeds = this.store.listFeeds().filter((f) => (f.category || '') === cat)
+      .sort((x, y) => ord(x) - ord(y) || (y.affinity || 0) - (x.affinity || 0) || x.name.localeCompare(y.name));
+    if (!feeds.length) return;
+    this._reorder = { cat, ids: feeds.map((f) => f.id) };
+    document.getElementById('reorder-title').textContent = `Reorder “${cat || 'ungrouped'}”`;
+    this.renderReorderList();
+    document.getElementById('reorder-overlay').hidden = false;
+  }
+
+  renderReorderList() {
+    const el = document.getElementById('reorder-list'); if (!el || !this._reorder) return;
+    el.innerHTML = this._reorder.ids.map((id, i) => {
+      const f = this.store.getFeed(id); if (!f) return '';
+      return `<div class="reorder-row" data-id="${escapeHtml(id)}">`
+        + `<span class="ro-name">${escapeHtml(f.name)}</span>`
+        + `<span class="ro-btns"><button data-ro="up" ${i === 0 ? 'disabled' : ''} title="Move up">▲</button>`
+        + `<button data-ro="down" ${i === this._reorder.ids.length - 1 ? 'disabled' : ''} title="Move down">▼</button></span></div>`;
+    }).join('');
+  }
+
+  onReorderClick(e) {
+    const btn = e.target.closest('[data-ro]'); if (!btn || !this._reorder) return;
+    const row = e.target.closest('.reorder-row'); const id = row?.dataset.id; if (!id) return;
+    const ids = this._reorder.ids; const i = ids.indexOf(id);
+    const j = btn.dataset.ro === 'up' ? i - 1 : i + 1;
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    this.renderReorderList();
+  }
+
+  async saveReorder() {
+    if (!this._reorder) return this.closeReorder();
+    const { ids } = this._reorder;
+    for (let i = 0; i < ids.length; i++) {
+      const f = this.store.getFeed(ids[i]);
+      if (f && f.order !== i) await this.store.updateFeed(ids[i], { order: i });
+    }
+    this.closeReorder();
+    this.renderRail();
+  }
+
+  closeReorder() { document.getElementById('reorder-overlay').hidden = true; this._reorder = null; }
 
   viewMenu(view, x, y) {
     showMenu(x, y, [{ label: 'Mark all read', onClick: () => this.store.markAllRead({ view }) }]);
@@ -652,7 +708,7 @@ export class App {
   onKey(e) {
     // Esc closes any open overlay first, from anywhere.
     if (e.key === 'Escape') {
-      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay']) {
+      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; return; }
       }

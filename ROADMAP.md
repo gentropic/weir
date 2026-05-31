@@ -32,9 +32,9 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
   no tombstone). Motivated by a real hijack: the abandoned FeedBurner proxy
   `feeds.feedburner.com/PythonSoftwareFoundationNews` now serves SEO spam instead
   of `pyfound.blogspot.com` — now a one-dialog fix.
-- **Manual reorder within a folder.** Regroup (move-to-folder) + rename already
-  exist via the feed context menu; this adds a manual `feed.order` to override the
-  affinity/name sort. (Drag deferred — context-menu "move up/down" likely enough.)
+- ~~**Manual reorder within a folder.**~~ ✅ Shipped 2026-05-31 — folder menu
+  "Reorder feeds…" → move up/down dialog writing `feed.order` (pins ahead of the
+  affinity/name fallback). Drag-to-reorder still deferred.
 - **Manual prune control.** Retention is archive-only and off by default; add a
   "prune/archive expired now" action for when you do want a sweep.
 
