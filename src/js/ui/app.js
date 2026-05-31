@@ -43,8 +43,11 @@ export class App {
     this.sources = document.getElementById('sources');
     this.searchEl = document.getElementById('search-input');
 
-    for (const ev of ['items', 'item', 'prune']) this.store.on(ev, () => this.renderAll());
-    this.store.on('feed', () => { this.renderRail(); this.renderTopbar(); });
+    // Counts update live (cheap, no flicker); the rail+stream rebuild is debounced
+    // so a burst of poll inserts doesn't tear the rows out from under the cursor.
+    for (const ev of ['items', 'prune']) this.store.on(ev, () => { this.renderCounts(); this._scheduleRender(); });
+    this.store.on('item', () => this.renderCounts());   // single state changes refresh their row in-place via doAct
+    this.store.on('feed', () => this._scheduleRender());
     this.poller.on('polled', () => this.renderPollStatus());
     this.poller.on('cycle', () => this.renderPollStatus());
 
@@ -65,6 +68,7 @@ export class App {
       this.renderAll();
     });
     this.stream.addEventListener('click', (e) => this.onStreamClick(e));
+    this.stream.addEventListener('auxclick', (e) => { if (e.button !== 1) return; const row = e.target.closest('.item'); if (!row) return; const it = this.store.getItem(row.dataset.id); if (it?.url) { e.preventDefault(); window.open(it.url, '_blank', 'noopener'); } });
     this.stream.addEventListener('contextmenu', (e) => { const row = e.target.closest('.item'); if (!row) return; e.preventDefault(); this.select(row.dataset.id); this.itemMenu(row.dataset.id, e.clientX, e.clientY); });
     this.sources.addEventListener('contextmenu', (e) => {
       const s = e.target.closest('.source'); const h = e.target.closest('.cat-head');
@@ -93,6 +97,8 @@ export class App {
     document.getElementById('settings-save')?.addEventListener('click', () => this.saveSettings());
     document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
     document.getElementById('set-request-persist')?.addEventListener('click', () => this.requestPersist());
+    document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
+    document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     const affFile = document.getElementById('affinity-file');
     document.getElementById('set-import-affinity')?.addEventListener('click', () => affFile.click());
     affFile?.addEventListener('change', async () => { const f = affFile.files[0]; if (f) await this.importWatchData(await f.text()); affFile.value = ''; });
@@ -117,6 +123,22 @@ export class App {
   }
 
   renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderTopbar(); this.renderStream(); }
+
+  // Debounced rail+stream rebuild for store-driven changes (polling), so rows
+  // aren't recreated under the cursor on every insert.
+  _scheduleRender() {
+    if (this._renderTimer) return;
+    this._renderTimer = setTimeout(() => { this._renderTimer = null; this.renderRail(); this.renderRoutes(); this.renderStream(); }, 250);
+  }
+
+  // Replace a single row in place — instant feedback for a click action, no
+  // full-stream rebuild (so no flicker).
+  _refreshRow(id) {
+    const row = this.rowEl(id); const it = this.store.getItem(id);
+    if (!row || !it) return;
+    const wrap = document.createElement('div'); wrap.innerHTML = this.rowHtml(it);
+    const fresh = wrap.firstElementChild; if (fresh) row.replaceWith(fresh);
+  }
 
   renderCounts() {
     const c = this.store.counts();
@@ -197,6 +219,7 @@ export class App {
 
   renderStream() {
     if (this.pendingImport) { this.stream.innerHTML = this.importReviewHtml(); return; }
+    const scrollTop = this.stream.scrollTop;   // preserve scroll across rebuild
     this.items = this.query();
     if (this.selectedId && !this.items.some((x) => x.id === this.selectedId)) this.selectedId = null;
     if (!this.selectedId && this.items.length) this.selectedId = this.items[0].id;
@@ -206,6 +229,7 @@ export class App {
     let html = shown.map((it) => this.rowHtml(it)).join('');
     if (this.items.length > RENDER_CAP) html += `<div class="more">+ ${this.items.length - RENDER_CAP} more not shown</div>`;
     this.stream.innerHTML = html;
+    this.stream.scrollTop = scrollTop;
     this.renderTopbar();
   }
 
@@ -312,6 +336,7 @@ export class App {
     if (!row) return;
     const id = row.dataset.id;
     if (btn) { e.stopPropagation(); this.doAct(btn.dataset.act, id); return; }
+    if (e.metaKey || e.ctrlKey) { const it = this.store.getItem(id); if (it?.url) window.open(it.url, '_blank', 'noopener'); return; }
     if (e.target.closest('.iexpand')) return;   // clicks inside the open article (links, text) — leave alone
     this.select(id);
     this.toggleExpand(id);   // click the row to open/close the inline reader
@@ -330,8 +355,8 @@ export class App {
   expand(id) {
     this.expandedId = id; this.selectedId = id;
     const it = this.store.getItem(id);
-    if (it && !it.read) this.store.setState(id, { read: true });   // emits → renderAll
-    else this.renderStream();
+    if (it && !it.read) this.store.setState(id, { read: true });   // counts update via 'item'
+    this.renderStream();
     const row = this.rowEl(id); if (row) row.scrollIntoView({ block: 'nearest' });
   }
   collapse() { this.expandedId = null; this.renderStream(); }
@@ -348,11 +373,29 @@ export class App {
   doAct(act, id) {
     const it = this.store.getItem(id);
     if (!it) return;
-    if (act === 'open') { if (it.url) window.open(it.url, '_blank', 'noopener'); }
-    else if (act === 'save') this.store.setState(id, { saved: !it.saved });
-    else if (act === 'read') this.store.setState(id, { read: !it.read });
-    else if (act === 'archive') { this.store.setState(id, { archived: true }); if (this.expandedId === id) this.expandedId = null; }
-    else if (act === 'images') this.loadImages(id);
+    if (act === 'open') { if (it.url) window.open(it.url, '_blank', 'noopener'); return; }
+    if (act === 'images') { this.loadImages(id); return; }
+    if (act === 'save') { this.store.setState(id, { saved: !it.saved }); this._refreshRow(id); return; }
+    if (act === 'read') { this.store.setState(id, { read: !it.read }); this._refreshRow(id); return; }
+    if (act === 'archive') {
+      this.store.setState(id, { archived: true });
+      if (this.expandedId === id) this.expandedId = null;
+      // Drop it from the current view instantly (unless we're in Archived), with an undo.
+      if (this.view !== 'archived') { const row = this.rowEl(id); if (row) row.remove(); this.showUndo(`Archived “${it.title}”`, () => this.store.setState(id, { archived: false })); }
+      else this._refreshRow(id);
+    }
+  }
+
+  // Brief undo toast for forgiving one-key/one-click actions.
+  showUndo(message, onUndo) {
+    const el = document.getElementById('undo-toast'); if (!el) return;
+    el.querySelector('.undo-msg').textContent = message;
+    const btn = el.querySelector('#undo-btn');
+    const fresh = btn.cloneNode(true); btn.replaceWith(fresh);   // drop old listeners
+    fresh.addEventListener('click', () => { el.classList.remove('on'); clearTimeout(this._undoTimer); try { onUndo(); } catch {} this.renderAll(); });
+    el.classList.add('on');
+    clearTimeout(this._undoTimer);
+    this._undoTimer = setTimeout(() => el.classList.remove('on'), 6000);
   }
 
   loadImages(id) {
@@ -386,11 +429,35 @@ export class App {
       (feed.site_url || feed.url) && { label: 'Open site ↗', onClick: () => window.open(feed.site_url || feed.url, '_blank', 'noopener') },
       { sep: true },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
+      { label: 'Move to folder…', onClick: () => this.moveFeedToFolder(feedId) },
+      { label: 'Rename…', onClick: () => this.renameFeed(feedId) },
+      { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: async () => { feed.images_allowed = !feed.images_allowed; await this.store.putFeed(feed); } },
       { label: 'Recover history…', onClick: () => this.recoverHistory(feedId) },
       { sep: true },
       { label: 'Remove feed', danger: true, onClick: () => { if (confirm(`Remove "${feed.name}" and its items?`)) { this.store.removeFeed(feedId); if (this.feedFilter === feedId) this.feedFilter = null; this.renderAll(); } } },
     ].filter(Boolean));
   }
+
+  async moveFeedToFolder(feedId) {
+    const feed = this.store.getFeed(feedId); if (!feed) return;
+    const cat = prompt('Move to folder (leave blank for none):', feed.category || '');
+    if (cat === null) return;
+    feed.category = cat.trim() || undefined;
+    await this.store.putFeed(feed);
+    this.renderRail();
+  }
+
+  async renameFeed(feedId) {
+    const feed = this.store.getFeed(feedId); if (!feed) return;
+    const name = prompt('Rename feed:', feed.name);
+    if (name === null || !name.trim()) return;
+    feed.name = name.trim();
+    await this.store.putFeed(feed);
+    this.renderRail();
+  }
+
+  openHelp() { document.getElementById('help-overlay').hidden = false; }
+  closeHelp() { document.getElementById('help-overlay').hidden = true; }
 
   catMenu(cat, x, y) {
     showMenu(x, y, [
@@ -408,6 +475,13 @@ export class App {
   setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
 
   onKey(e) {
+    // Esc closes any open overlay first, from anywhere.
+    if (e.key === 'Escape') {
+      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay']) {
+        const ov = document.getElementById(id);
+        if (ov && !ov.hidden) { ov.hidden = true; return; }
+      }
+    }
     const tag = e.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') {
       if (e.key === 'Escape') {
@@ -430,6 +504,7 @@ export class App {
       case 'k': e.preventDefault(); this.moveSelection(-1); break;
       case 'Enter': if (this.selectedId) { e.preventDefault(); this.toggleExpand(this.selectedId); } break;
       case 'Escape': if (this.expandedId) this.collapse(); break;
+      case '?': e.preventDefault(); this.openHelp(); break;
       case 'r': if (this.selectedId) this.doAct('read', this.selectedId); break;
       case 's': if (this.selectedId) this.doAct('save', this.selectedId); break;
       case 'e': if (this.selectedId) { const cur = this.selectedId; this.moveSelection(1); this.doAct('archive', cur); } break;

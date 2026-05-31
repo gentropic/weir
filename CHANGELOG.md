@@ -6,6 +6,22 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### UX batch — no-flicker rendering, hoisted controls, help, undo, feed management — 2026-05-31
+
+- **Fixed hover flicker during polling:** poll inserts no longer tear the whole
+  stream out from under the cursor. Counts update live; the rail+stream rebuild is
+  debounced; click actions refresh just their row in place; scroll position is
+  preserved across rebuilds.
+- **Settings, routing.js, and ? help are now in the top bar** (no more scrolling
+  the rail to the bottom to find them).
+- **`?` help overlay** — keyboard cheatsheet + a note on the mouse interactions.
+- **Undo toast** — archiving an item (key or button) drops it instantly with a 6s
+  "Undo".
+- **Middle-click / ⌘-click an item → open original** in a new tab.
+- **Feed context menu** gains **Move to folder…**, **Rename…**, and an
+  **Always load images / Block images** toggle — the simple, non-flaky way to
+  regroup feeds (instead of drag).
+
 ### Mouse interactivity — actions + context menus — 2026-05-31
 
 - **Per-item hover actions:** each row reveals save / read-toggle / archive /
