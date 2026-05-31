@@ -13,6 +13,8 @@ const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
 const RENDER_CAP = 300;
 const RAIL_CAP = 60;
+// Default folder order in the rail (active-first; dead-heavy topics like geo sink).
+const CAT_ORDER = ['dev', 'hardware', 'ideas', 'tech', 'games', 'comics-art', 'fiction', 'data', 'cloud', 'news', 'geo', 'personal'];
 
 export class App {
   constructor({ store, poller, router, adapters }) {
@@ -23,6 +25,8 @@ export class App {
     this.view = 'inbox';
     this.feedFilter = null;
     this.route = null;          // active routed view (#name), or null
+    this.catFilter = null;      // active folder/category view, or null
+    this.collapsedCats = new Set();
     this.searchText = '';
     this.selectedId = null;
     this.expandedId = null;
@@ -45,7 +49,14 @@ export class App {
     document.querySelectorAll('.navrow[data-view]').forEach((row) =>
       row.addEventListener('click', () => this.setView(row.dataset.view)));
     this.sources.addEventListener('click', (e) => {
+      const head = e.target.closest('.cat-head');
+      if (head) {
+        if (e.target.closest('.cat-toggle')) this.toggleCat(head.dataset.cat);
+        else this.setCategory(head.dataset.cat || null);
+        return;
+      }
       const s = e.target.closest('.source'); if (!s) return;
+      this.catFilter = null;
       this.feedFilter = this.feedFilter === s.dataset.feed ? null : s.dataset.feed;
       this.renderAll();
     });
@@ -78,6 +89,7 @@ export class App {
 
   query() {
     if (this.route) return this.store.query({ route: this.route, text: this.searchText || undefined });
+    if (this.catFilter) return this.store.query({ category: this.catFilter, text: this.searchText || undefined });
     return this.store.query({ view: this.view, feed_id: this.feedFilter || undefined, text: this.searchText || undefined });
   }
 
@@ -92,7 +104,7 @@ export class App {
   renderTopbar() {
     const feed = this.feedFilter && this.store.getFeed(this.feedFilter);
     const rb = document.getElementById('btn-recover'); if (rb) rb.hidden = !this.feedFilter;
-    document.getElementById('view-title').textContent = this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
+    document.getElementById('view-title').textContent = this.catFilter ? this.catFilter : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
     const n = this.items.length;
     const feeds = this.store.listFeeds().length;
     let sub;
@@ -102,24 +114,60 @@ export class App {
     document.getElementById('view-sub').textContent = sub;
   }
 
+  feedUnread(id) {
+    let n = 0; const ids = this.store.byFeed.get(id) || new Set();
+    for (const i of ids) { const r = this.store.items.get(i); if (r && !r.read && !r.archived) n++; }
+    return n;
+  }
+
+  sourceRow(f) {
+    const ids = this.store.byFeed.get(f.id) || new Set();
+    const times = []; let unread = 0;
+    for (const id of ids) { const r = this.store.items.get(id); if (!r) continue; if (r.published_at) times.push(r.published_at); if (!r.read && !r.archived) unread++; }
+    const pts = sparkPoints(dailyCounts(times, 7));
+    const cls = f.state === 'failing' || f.state === 'archived' ? 'dead' : f.state === 'slow' ? 'slow' : 'up';
+    const active = this.feedFilter === f.id ? ' active' : '';
+    const spark = pts ? `<svg width="44" height="13" viewBox="0 0 44 13"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>` : '';
+    return `<div class="source ${cls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${f.feed_health?.last_error ? ' — ' + escapeHtml(f.feed_health.last_error) : ''}">`
+      + `<span class="spark">${spark}</span><span class="sname">${escapeHtml(f.name)}</span><span class="scount">${unread || ''}</span></div>`;
+  }
+
   renderRail() {
     const feeds = this.store.listFeeds();
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
-      r.classList.toggle('active', !this.feedFilter && !this.route && r.dataset.view === this.view));
+      r.classList.toggle('active', !this.feedFilter && !this.route && !this.catFilter && r.dataset.view === this.view));
     if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
-    const shown = feeds.slice(0, RAIL_CAP);
-    this.sources.innerHTML = shown.map((f) => {
-      const ids = this.store.byFeed.get(f.id) || new Set();
-      const times = []; let unread = 0;
-      for (const id of ids) { const r = this.store.items.get(id); if (!r) continue; if (r.published_at) times.push(r.published_at); if (!r.read && !r.archived) unread++; }
-      const pts = sparkPoints(dailyCounts(times, 7));
-      const cls = f.state === 'failing' ? 'dead' : f.state === 'slow' ? 'slow' : 'up';
-      const active = this.feedFilter === f.id ? ' active' : '';
-      const spark = pts ? `<svg width="44" height="13" viewBox="0 0 44 13"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>` : '';
-      return `<div class="source ${cls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${f.feed_health?.last_error ? ' — ' + escapeHtml(f.feed_health.last_error) : ''}">`
-        + `<span class="spark">${spark}</span><span class="sname">${escapeHtml(f.name)}</span><span class="scount">${unread || ''}</span></div>`;
-    }).join('') + (feeds.length > RAIL_CAP ? `<div class="rail-empty">+ ${feeds.length - RAIL_CAP} more sources</div>` : '');
+
+    const groups = new Map();
+    for (const f of feeds) { const c = f.category || ''; (groups.get(c) || groups.set(c, []).get(c)).push(f); }
+
+    // No folders → flat list (single-feed users); else grouped, ordered, collapsible.
+    if (![...groups.keys()].some((c) => c)) {
+      this.sources.innerHTML = feeds.slice(0, RAIL_CAP).map((f) => this.sourceRow(f)).join('')
+        + (feeds.length > RAIL_CAP ? `<div class="rail-empty">+ ${feeds.length - RAIL_CAP} more</div>` : '');
+      return;
+    }
+
+    const rank = (c) => { const i = CAT_ORDER.indexOf(c); return i < 0 ? 90 : i; };
+    const cats = [...groups.keys()].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : rank(a) - rank(b) || a.localeCompare(b)));
+
+    let html = '';
+    for (const c of cats) {
+      const list = groups.get(c).sort((x, y) => x.name.localeCompare(y.name));
+      const collapsed = this.collapsedCats.has(c);
+      const unread = list.reduce((n, f) => n + this.feedUnread(f.id), 0);
+      const activeCat = (this.catFilter || '') === c ? ' active' : '';
+      html += `<div class="cat-head${activeCat}" data-cat="${escapeHtml(c)}">`
+        + `<span class="cat-toggle">${collapsed ? '▸' : '▾'}</span>`
+        + `<span class="cat-name">${escapeHtml(c || 'ungrouped')}</span>`
+        + `<span class="cat-count">${unread || list.length}</span></div>`;
+      if (!collapsed) html += `<div class="cat-feeds">${list.map((f) => this.sourceRow(f)).join('')}</div>`;
+    }
+    this.sources.innerHTML = html;
   }
+
+  setCategory(cat) { this.catFilter = cat || null; this.view = null; this.feedFilter = null; this.route = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  toggleCat(c) { if (this.collapsedCats.has(c)) this.collapsedCats.delete(c); else this.collapsedCats.add(c); this.renderRail(); }
 
   renderStream() {
     if (this.pendingImport) { this.stream.innerHTML = this.importReviewHtml(); return; }
@@ -273,8 +321,8 @@ export class App {
     row.querySelector('[data-act="images"]')?.remove();
   }
 
-  setView(view) { this.view = view; this.feedFilter = null; this.route = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
-  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setView(view) { this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
 
   onKey(e) {
     const tag = e.target.tagName;

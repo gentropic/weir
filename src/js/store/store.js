@@ -220,7 +220,7 @@ export class Store {
 
   // view: 'inbox' | 'saved' | 'archived' | undefined(=inbox-ish, excludes archived)
   query(opts = {}) {
-    const { view, feed_id, type, read, saved, archived, tag, text, route, limit, sort = '-published_at' } = opts;
+    const { view, feed_id, type, read, saved, archived, tag, text, route, category, limit, sort = '-published_at' } = opts;
     const needle = text ? String(text).toLowerCase() : null;
     const out = [];
     for (const r of this.items.values()) {
@@ -229,6 +229,7 @@ export class Store {
       if (view === 'archived' && !r.archived) continue;
       if (!view && !route && (r.archived || r.route)) continue;
       if (route && r.route !== route) continue;
+      if (category) { const cf = this.feeds.get(r.feed_id); if (!cf || cf.category !== category) continue; }
       if (feed_id && r.feed_id !== feed_id) continue;
       if (type && r.type !== type) continue;
       if (read !== undefined && r.read !== read) continue;

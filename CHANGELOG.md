@@ -6,6 +6,16 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### rail folders + ordering — 2026-05-31
+
+- The source rail now groups feeds by `Feed.category` under collapsible folder
+  headers (with per-folder unread counts), ordered by a sensible default
+  (`CAT_ORDER`: active topics first, dead-heavy ones like geo sink to the bottom).
+  Clicking a folder header filters the stream to that category; the caret toggles
+  collapse. Feeds with no category render flat (single-feed users unaffected).
+- `store.query({ category })` resolves items by their feed's folder.
+- Verified in-browser (folder order, category filter, collapse).
+
 ### youtube adapter — 2026-05-31
 
 - `src/js/adapters/youtube.js`: parses YouTube channel feeds
