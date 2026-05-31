@@ -23,8 +23,15 @@ const RSS = `<rss version="2.0"><channel><title>F</title>
   <item><title>A</title><guid>a</guid><link>http://x/a</link></item>
   <item><title>B</title><guid>b</guid></item></channel></rss>`;
 const mockResponse = (body, ct = 'application/rss+xml') => ({
-  headers: { get: () => ct }, clone() { return mockResponse(body, ct); }, async text() { return body; },
+  status: 200,
+  headers: { get: (k) => (String(k).toLowerCase() === 'content-type' ? ct : null) },
+  clone() { return mockResponse(body, ct); }, async text() { return body; },
 });
+// Header-accurate response for conditional-GET tests.
+const mkRes = ({ status = 200, ct = 'application/rss+xml', body = '', headers = {} } = {}) => {
+  const h = new Map(Object.entries({ 'content-type': ct, ...headers }).map(([k, v]) => [k.toLowerCase(), v]));
+  return { status, headers: { get: (k) => (h.has(String(k).toLowerCase()) ? h.get(String(k).toLowerCase()) : null) }, clone() { return mkRes({ status, ct, body, headers }); }, async text() { return body; } };
+};
 
 const store = new Store(await VFS.create());
 await store._hydrate();
@@ -79,5 +86,36 @@ await okp.pollFeed(store.getFeed('f'));
 const coreGap = store.getFeed('core').next_poll_at - Date.now();
 const fGap = store.getFeed('f').next_poll_at - Date.now();
 assert.ok(coreGap < fGap, 'adaptive: favorite re-polls sooner than a neutral feed');
+
+// ── conditional GET: capture validators, send them, skip parse on unchanged ──
+await store.putFeed({ id: 'cg', name: 'CG', adapter: 'feed', url: 'http://x/feed', next_poll_at: NOW - 1000 });
+const seen = [];   // headers sent on each fetch
+let phase = 0;
+const cgFetch = async (url, opts = {}) => {
+  seen.push(opts.headers || {});
+  if (phase === 0) return mkRes({ status: 200, body: RSS, headers: { etag: 'W/"v1"', 'last-modified': 'Mon, 01 Jun 2026 00:00:00 GMT' } });
+  if (phase === 1) return mkRes({ status: 304, ct: 'text/plain' });             // server: not modified
+  return mkRes({ status: 200, ct: 'text/plain', headers: { 'x-gcu-bridge-cache': 'hit' } });   // bridge cache hit
+};
+const cg = new Poller(store, { adapters: [feedAdapter], fetch: cgFetch });
+
+phase = 0; const c0 = await cg.pollFeed(store.getFeed('cg'));
+assert.equal(c0.inserted, 2, 'first poll inserts');
+assert.equal(store.getFeed('cg').etag, 'W/"v1"', 'etag captured from 200 response');
+assert.equal(store.getFeed('cg').last_modified, 'Mon, 01 Jun 2026 00:00:00 GMT', 'last-modified captured');
+assert.deepEqual(seen[0], {}, 'no conditional headers on the first poll (nothing stored yet)');
+
+phase = 1; const c1 = await cg.pollFeed(store.getFeed('cg'));
+assert.equal(c1.unchanged, true, '304 → unchanged, no parse');
+assert.equal(seen[1]['If-None-Match'], 'W/"v1"', 'sent If-None-Match from stored etag');
+assert.equal(seen[1]['If-Modified-Since'], 'Mon, 01 Jun 2026 00:00:00 GMT', 'sent If-Modified-Since');
+
+phase = 2; const c2 = await cg.pollFeed(store.getFeed('cg'));
+assert.equal(c2.unchanged, true, 'bridge x-gcu-bridge-cache: hit → unchanged');
+
+const cgStats = cg.stats();
+assert.equal(cgStats.fetches, 3, 'three fetches');
+assert.equal(cgStats.unchanged, 2, 'two confirmed-unchanged');
+assert.ok(Math.abs(cgStats.ratio - 2 / 3) < 1e-9, 'ratio = unchanged/fetches');
 
 console.log('poller smoke ok:', JSON.stringify(store.counts()));

@@ -65,8 +65,13 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
   rail render); a dedicated health filter-view; richer signals (language-shift vs.
   the feed's own history, near-duplicate-body bursts); auto-suggest the native
   source when a FeedBurner proxy goes suspect.
-- **Bridge v0.2 conditional GETs.** When `@gcu/bridge` ships ETag/If-Modified-Since
-  caching, wire `etag`/`last_modified` (already on the Feed model) for polite polls.
+- ~~**Bridge v0.2 conditional GETs.**~~ ✅ Shipped 2026-06-01. `@gcu/bridge`
+  already brokers conditional GETs (auto-revalidation, `304→200` masking,
+  freshness, `x-gcu-bridge-cache` header) — no bridge change needed. weir now
+  stores `etag`/`last_modified`, sends `If-None-Match`/`If-Modified-Since` (also
+  covers the direct-fetch path), and **skips parsing unchanged feeds** (304 or
+  bridge cache hit). Status bar shows the cache ratio. Possible bridge tuning for
+  heavy feed-reader use (its cache is 500 entries / 256 KB-body) — deferred.
 - **Search v0.2.** Swap the cursor scan for a MiniSearch/`@gcu/librarian` inverted
   index over `search_text` (ranked, fuzzy); index full-content text too.
 - **Save-to-glass.** Auditable Works interop — `BroadcastChannel('gcu-handoff')`

@@ -1099,6 +1099,8 @@ export class App {
     const last = this.poller.lastPollAt ? `last ${relativeTime(this.poller.lastPollAt)}` : 'idle';
     const nextAt = this.poller.nextPollAt();
     const next = nextAt ? ` · next ${nextAt <= Date.now() ? 'due' : 'in ' + relativeTime(2 * Date.now() - nextAt)}` : '';
-    el.textContent = last + next;
+    const st = this.poller.stats?.();
+    const cache = st && st.fetches >= 5 ? ` · ${Math.round(st.ratio * 100)}% unchanged` : '';
+    el.textContent = last + next + cache;
   }
 }

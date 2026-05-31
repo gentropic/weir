@@ -42,6 +42,26 @@ export class Poller {
     this._running = new Set();        // feed ids currently in flight
     this._listeners = new Map();
     this.lastPollAt = null;
+    this._stats = { fetches: 0, unchanged: 0 };   // conditional-GET savings (cache ratio)
+  }
+
+  // Cumulative conditional-GET stats for the status bar. `ratio` = fraction of
+  // fetches the server/bridge confirmed unchanged (304 or bridge cache hit).
+  stats() {
+    const { fetches, unchanged } = this._stats;
+    return { fetches, unchanged, ratio: fetches ? unchanged / fetches : 0 };
+  }
+
+  // Stamp a successful (healthy) poll: reset failures, advance the schedule.
+  _markHealthy(feed) {
+    const h = feed.feed_health || (feed.feed_health = { consecutive_failures: 0, publication_history: [] });
+    const t = Date.now();
+    h.consecutive_failures = 0;
+    h.last_successful_poll = t;
+    h.last_error = undefined;
+    feed.last_polled_at = t;
+    feed.state = 'healthy';
+    feed.next_poll_at = t + this._nextIntervalMs(feed);
   }
 
   on(ev, fn) { (this._listeners.get(ev) || this._listeners.set(ev, new Set()).get(ev)).add(fn); return () => this._listeners.get(ev)?.delete(fn); }
@@ -90,8 +110,34 @@ export class Poller {
     if (this._running.has(feed.id)) return null;
     this._running.add(feed.id);
     const adapter = this.pickAdapter(feed);
+    // Conditional GET: let the server (or the bridge) confirm nothing changed,
+    // so we don't re-download/re-parse an unchanged feed. `cache: 'no-store'`
+    // keeps the browser's HTTP cache out of it on the direct-fetch path, so our
+    // own validators are authoritative (mirrors how the bridge fetches).
+    const headers = {};
+    if (feed.etag) headers['If-None-Match'] = feed.etag;
+    if (feed.last_modified) headers['If-Modified-Since'] = feed.last_modified;
+    const opts = { cache: 'no-store' };
+    if (Object.keys(headers).length) opts.headers = headers;
     try {
-      let res = await this.fetch(feed.url);
+      this._stats.fetches++;
+      let res = await this.fetch(feed.url, opts);
+
+      // Unchanged? A real 304 (direct path), or the bridge serving its cache
+      // (it masks 304 as 200 + x-gcu-bridge-cache: hit|fresh). Skip the parse —
+      // but only if we actually hold this feed's items (else a stale bridge
+      // "fresh" hit could mask an empty store, e.g. after a data reset).
+      const cacheTag = res.headers?.get?.('x-gcu-bridge-cache');
+      const hasItems = (this.store.byFeed?.get(feed.id)?.size || 0) > 0;
+      if (hasItems && (res.status === 304 || cacheTag === 'hit' || cacheTag === 'fresh')) {
+        this._stats.unchanged++;
+        this._markHealthy(feed);
+        await this.store.putFeed(feed);
+        const result = { inserted: 0, updated: 0, skipped: 0, unchanged: true };
+        this.emit('polled', { feed, result });
+        return result;
+      }
+
       let items = await adapter.parse(res.clone ? res.clone() : res, feed);
 
       // Pasted a site URL, not a feed? Try autodiscovery once.
@@ -108,14 +154,11 @@ export class Poller {
       }
 
       const result = await this.store.upsertItems(items);
-      const h = feed.feed_health || (feed.feed_health = { consecutive_failures: 0, publication_history: [] });
-      const t = Date.now();
-      h.consecutive_failures = 0;
-      h.last_successful_poll = t;
-      h.last_error = undefined;
-      feed.last_polled_at = t;
-      feed.state = 'healthy';
-      feed.next_poll_at = t + this._nextIntervalMs(feed);
+      // Capture this version's validators for the next conditional GET (a real
+      // 200 body IS the current version, so overwrite — clears stale validators).
+      feed.etag = res.headers?.get?.('etag') || undefined;
+      feed.last_modified = res.headers?.get?.('last-modified') || undefined;
+      this._markHealthy(feed);
       await this.store.putFeed(feed);
       this.emit('polled', { feed, result });
       return result;

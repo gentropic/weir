@@ -6,6 +6,21 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Conditional GETs — skip re-parsing unchanged feeds — 2026-06-01
+
+- The poller now does **conditional GETs**: it stores each feed's `etag` /
+  `last_modified` and sends `If-None-Match` / `If-Modified-Since` on the next
+  poll (with `cache: 'no-store'` so our validators are authoritative on the
+  direct-fetch path). When the feed is **unchanged** — a real `304`, or the
+  bridge serving its cache (`x-gcu-bridge-cache: hit|fresh`) — weir **skips the
+  whole parse/sanitize/dedup pass**, just advancing health + schedule. Gentler on
+  servers *and* on weir. Guarded so a stale bridge "fresh" hit can't mask an
+  empty store (only short-circuits when the feed already holds items).
+- The status bar now shows a **cache ratio** (`… · N% unchanged`) once enough
+  polls have run — flight-deck visibility into the savings.
+- No bridge change needed: `@gcu/bridge` already brokers conditional GETs end to
+  end (auto-revalidation, `304→200` masking, freshness, the cache-status header).
+
 ### Gallery thumbnails from inline content images — 2026-05-31
 
 - The feed adapter now falls back to the **first usable `<img>` in an item's
