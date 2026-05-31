@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS = {
   retainer_run_hour: 4,
   theme: 'switchboard-dark',
   fetch_full_content_default: false,
+  rail_width: 240,                       // source rail width in px (drag to resize)
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
   retention_enabled: false,

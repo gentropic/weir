@@ -6,6 +6,12 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Resizable source rail — 2026-05-31
+
+- Drag the divider between the rail and the stream to resize the source rail
+  (clamped 170px–50vw). The width persists to settings (`rail_width`) and is
+  restored on reload.
+
 ### UI polish — themed scrollbars + obvious onboarding — 2026-05-31
 
 - Scrollbars themed to the dark surfaces (Firefox `scrollbar-color` + WebKit

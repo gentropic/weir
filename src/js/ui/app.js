@@ -92,6 +92,7 @@ export class App {
     document.getElementById('rules-close')?.addEventListener('click', () => this.closeRules());
     this.store.on('notify', () => this.renderNotify());
 
+    this._initRailResize();
     document.addEventListener('keydown', (e) => this.onKey(e));
     setInterval(() => this.renderPollStatus(), 30_000);
 
@@ -441,6 +442,26 @@ export class App {
     const a = document.createElement('a');
     a.href = url; a.download = 'weir-feeds.opml'; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  _setRailWidth(px) { document.documentElement.style.setProperty('--rail-w', `${Math.round(px)}px`); }
+
+  _initRailResize() {
+    this._setRailWidth(this.store.getSettings().rail_width || 240);
+    const r = document.getElementById('rail-resizer');
+    if (!r) return;
+    let dragging = false;
+    const clamp = (x) => Math.max(170, Math.min(Math.round(window.innerWidth * 0.5), x));
+    const onMove = (e) => { if (dragging) this._setRailWidth(clamp(e.clientX)); };
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false; r.classList.remove('dragging'); document.body.style.userSelect = '';
+      const w = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--rail-w'), 10);
+      if (w) this.store.setSettings({ rail_width: w });
+    };
+    r.addEventListener('mousedown', (e) => { dragging = true; r.classList.add('dragging'); document.body.style.userSelect = 'none'; e.preventDefault(); });
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }
 
   renderRoutes() {

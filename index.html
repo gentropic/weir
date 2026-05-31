@@ -167,7 +167,12 @@ body {
   overflow: hidden;
 }
 
-.app { display: grid; grid-template-columns: 240px 1fr; height: 100vh; }
+.app { position: relative; display: grid; grid-template-columns: var(--rail-w, 240px) 1fr; height: 100vh; }
+
+/* draggable divider between rail and main */
+.resizer { position: absolute; top: 0; bottom: 0; left: var(--rail-w, 240px); width: 8px; transform: translateX(-50%); cursor: col-resize; z-index: 50; }
+.resizer::after { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; transform: translateX(-50%); background: transparent; transition: background 0.12s, width 0.12s; }
+.resizer:hover::after, .resizer.dragging::after { background: var(--au-action); width: 2px; }
 
 /* ── Source rail ── */
 .rail { background: var(--sw-bg-raised); border-right: 1px solid var(--au-border); display: flex; flex-direction: column; overflow-y: auto; }
@@ -368,6 +373,8 @@ body {
       <div class="navrow" id="open-settings"><span class="lbl"><span class="ico">⚙</span> settings</span><span class="ico arrow">→</span></div>
     </div>
   </aside>
+
+  <div class="resizer" id="rail-resizer" title="Drag to resize"></div>
 
   <!-- ── Main ── -->
   <main class="main">
@@ -3789,6 +3796,7 @@ const DEFAULT_SETTINGS = {
   retainer_run_hour: 4,
   theme: 'switchboard-dark',
   fetch_full_content_default: false,
+  rail_width: 240,                       // source rail width in px (drag to resize)
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
   retention_enabled: false,
@@ -5432,6 +5440,7 @@ class App {
     document.getElementById('rules-close')?.addEventListener('click', () => this.closeRules());
     this.store.on('notify', () => this.renderNotify());
 
+    this._initRailResize();
     document.addEventListener('keydown', (e) => this.onKey(e));
     setInterval(() => this.renderPollStatus(), 30_000);
 
@@ -5781,6 +5790,26 @@ class App {
     const a = document.createElement('a');
     a.href = url; a.download = 'weir-feeds.opml'; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  _setRailWidth(px) { document.documentElement.style.setProperty('--rail-w', `${Math.round(px)}px`); }
+
+  _initRailResize() {
+    this._setRailWidth(this.store.getSettings().rail_width || 240);
+    const r = document.getElementById('rail-resizer');
+    if (!r) return;
+    let dragging = false;
+    const clamp = (x) => Math.max(170, Math.min(Math.round(window.innerWidth * 0.5), x));
+    const onMove = (e) => { if (dragging) this._setRailWidth(clamp(e.clientX)); };
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false; r.classList.remove('dragging'); document.body.style.userSelect = '';
+      const w = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--rail-w'), 10);
+      if (w) this.store.setSettings({ rail_width: w });
+    };
+    r.addEventListener('mousedown', (e) => { dragging = true; r.classList.add('dragging'); document.body.style.userSelect = 'none'; e.preventDefault(); });
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }
 
   renderRoutes() {

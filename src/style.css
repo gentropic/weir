@@ -23,7 +23,12 @@ body {
   overflow: hidden;
 }
 
-.app { display: grid; grid-template-columns: 240px 1fr; height: 100vh; }
+.app { position: relative; display: grid; grid-template-columns: var(--rail-w, 240px) 1fr; height: 100vh; }
+
+/* draggable divider between rail and main */
+.resizer { position: absolute; top: 0; bottom: 0; left: var(--rail-w, 240px); width: 8px; transform: translateX(-50%); cursor: col-resize; z-index: 50; }
+.resizer::after { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; transform: translateX(-50%); background: transparent; transition: background 0.12s, width 0.12s; }
+.resizer:hover::after, .resizer.dragging::after { background: var(--au-action); width: 2px; }
 
 /* ── Source rail ── */
 .rail { background: var(--sw-bg-raised); border-right: 1px solid var(--au-border); display: flex; flex-direction: column; overflow-y: auto; }
