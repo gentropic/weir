@@ -8707,22 +8707,32 @@ function buildWeirTools({ store, cardFacets, ensureCards } = {}) {
     return o;
   }
 
-  async function listFacets() {
+  async function listFacets(input = {}) {
     if (ensureCards) { try { await ensureCards(); } catch { /* fall back to Stage-0 */ } }
+    const only = input.facet ? String(input.facet) : null;     // drill into one facet
+    const per = Math.min(Math.max(1, Number(input.limit) || 25), 200);   // top-N terms per facet
+    const minCount = Math.max(1, Number(input.minCount) || 1);
     const idx = {};
     for (const it of store.items.values()) {
       if (it.archived) continue;
       const f = facetsFor(it);
       for (const facet of FACETS) {
+        if (only && facet !== only) continue;
         const vals = f[facet]; if (!vals || !vals.length) continue;
         const m = idx[facet] || (idx[facet] = new Map());
         for (const term of vals) m.set(term, (m.get(term) || 0) + 1);
       }
     }
+    // Bounded output: top `per` terms per facet by count, with total/omitted —
+    // the entity facet alone can be thousands of terms on a real corpus.
     const out = {};
-    for (const facet of Object.keys(idx)) {
-      const terms = [...idx[facet]].map(([term, count]) => ({ term, count })).sort((a, b) => b.count - a.count || a.term.localeCompare(b.term));
-      if (terms.length) out[facet] = terms;
+    for (const facet of FACETS) {
+      const m = idx[facet]; if (!m) continue;
+      const all = [...m].map(([term, count]) => ({ term, count })).filter((t) => t.count >= minCount).sort((a, b) => b.count - a.count || a.term.localeCompare(b.term));
+      if (!all.length) continue;
+      const top = all.slice(0, per);
+      out[facet] = { total: all.length, terms: top };
+      if (all.length > top.length) out[facet].omitted = all.length - top.length;
     }
     return out;
   }
@@ -8762,8 +8772,14 @@ const TOOLS = [
   },
   {
     name: 'weir_listFacets', fn: 'listFacets',
-    description: 'List glass catalog facets across the non-archived corpus: facet → terms with counts (domain, entity, process, method, scale, spatial, form, provenance, temporal). Cataloged items contribute their LLM facets; the rest contribute deterministic Stage-0 facets.',
-    inputSchema: { type: 'object', properties: {} },
+    description: 'Glass catalog facets across the non-archived corpus: each facet → { total, terms:[{term,count}], omitted }, top terms by count (entity alone can be thousands). Facets: domain, entity, process, method, scale, spatial, temporal, form, provenance. Cataloged items contribute LLM facets; the rest contribute deterministic Stage-0 facets. Use facet+limit to drill into one.',
+    inputSchema: {
+      type: 'object', properties: {
+        facet: { type: 'string', description: 'Limit to one facet (domain|entity|process|method|scale|spatial|temporal|form|provenance)' },
+        limit: { type: 'integer', description: 'Top terms per facet by count (default 25, max 200)' },
+        minCount: { type: 'integer', description: 'Only terms appearing at least this many times' },
+      },
+    },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'List weir facets' },
   },
 ];

@@ -37,18 +37,25 @@ assert.match(it.content_text, /full whiskey text here/, 'content_text extracted 
 await assert.rejects(tools.getItem({ id: 'ghost' }), /No item/, 'missing id errors helpfully');
 await assert.rejects(tools.getItem({}), /No item/, 'missing id param errors');
 
-// ── listFacets (Stage-0 deterministic) ──
+// ── listFacets (Stage-0 deterministic) — bounded { total, terms, omitted } ──
 const f = await tools.listFacets();
-assert.ok(f.form.find((t) => t.term === 'article' && t.count === 1), 'form: article');
-assert.ok(f.form.find((t) => t.term === 'video' && t.count === 1), 'form: video');
-assert.ok(f.provenance.find((t) => t.term === 'web-feed' && t.count === 2), 'provenance: web-feed ×2');
-assert.ok(f.temporal.find((t) => t.term === '2026' && t.count === 2), 'temporal: 2026 ×2');
-assert.ok(f.entity.find((t) => t.term === 'whiskey' && t.count === 1), 'entity from tags');
+assert.ok(f.form.terms.find((t) => t.term === 'article' && t.count === 1), 'form: article');
+assert.ok(f.form.terms.find((t) => t.term === 'video' && t.count === 1), 'form: video');
+assert.equal(f.form.total, 2, 'form total');
+assert.ok(f.provenance.terms.find((t) => t.term === 'web-feed' && t.count === 2), 'provenance: web-feed ×2');
+assert.ok(f.temporal.terms.find((t) => t.term === '2026' && t.count === 2), 'temporal: 2026 ×2');
+assert.ok(f.entity.terms.find((t) => t.term === 'whiskey' && t.count === 1), 'entity from tags');
+
+// caps: limit + facet drill-down + omitted bookkeeping
+const cap = await tools.listFacets({ facet: 'form', limit: 1 });
+assert.deepEqual(Object.keys(cap), ['form'], 'facet filter returns only that facet');
+assert.equal(cap.form.terms.length, 1, 'limit caps terms');
+assert.equal(cap.form.omitted, 1, 'omitted = total - shown');
 
 // archived items are excluded from facets + default query
 store.setState('v1', { archived: true });
 const f2 = await tools.listFacets();
-assert.ok(!f2.form.find((t) => t.term === 'video'), 'archived item dropped from facets');
+assert.ok(!(f2.form.terms.find((t) => t.term === 'video')), 'archived item dropped from facets');
 const inbox = await tools.queryItems({});
 assert.equal(inbox.count, 1, 'archived item dropped from default query');
 
