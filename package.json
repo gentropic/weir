@@ -9,6 +9,6 @@
   "scripts": {
     "build": "node build.js",
     "serve": "node tools/serve.mjs",
-    "smoke": "node tools/smoke-vfs.mjs && node tools/smoke-store.mjs && node tools/smoke-feed.mjs && node tools/smoke-youtube.mjs && node tools/smoke-poller.mjs && node tools/smoke-opml.mjs && node tools/smoke-router.mjs && node tools/smoke-wayback.mjs && node tools/smoke-recovery.mjs && node tools/smoke-retainer.mjs"
+    "smoke": "node tools/smoke-vfs.mjs && node tools/smoke-store.mjs && node tools/smoke-feed.mjs && node tools/smoke-youtube.mjs && node tools/smoke-poller.mjs && node tools/smoke-opml.mjs && node tools/smoke-router.mjs && node tools/smoke-wayback.mjs && node tools/smoke-recovery.mjs && node tools/smoke-retainer.mjs && node tools/smoke-affinity.mjs"
   }
 }

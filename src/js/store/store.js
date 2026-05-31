@@ -17,6 +17,7 @@ import {
   SCHEMA_VERSION, DEFAULT_SETTINGS, makeItem, makeFeed, makeTombstone,
   fsKey, deriveExcerpt, deriveSearchText, computeExpiry, now,
 } from './schema.js';
+import { channelIdOf } from '../affinity.js';
 
 const FLUSH_DELAY_MS = 250;
 
@@ -118,6 +119,24 @@ export class Store {
     this.emit('feed', { id: feed.id });
     return feed;
   }
+
+  // Stamp watch-affinity scores onto matching YouTube feeds (from a Takeout
+  // digest). Returns how many feeds matched.
+  async applyAffinity(scoreMap) {
+    let matched = 0;
+    for (const feed of this.feeds.values()) {
+      const cid = channelIdOf(feed.url);
+      if (cid && scoreMap[cid] != null && feed.affinity !== scoreMap[cid]) {
+        feed.affinity = scoreMap[cid];
+        await this.vfs.writeFile(this._feedPath(feed.id), JSON.stringify(feed, null, 2));
+        matched++;
+      }
+    }
+    if (matched) this.emit('feed', { affinity: matched });
+    return { matched };
+  }
+
+  feedsWithAffinity() { let n = 0; for (const f of this.feeds.values()) if (f.affinity) n++; return n; }
 
   async removeFeed(id) {
     const set = this.byFeed.get(id);

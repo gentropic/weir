@@ -6,6 +6,21 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### watch-affinity (YouTube Takeout signal) — 2026-05-31
+
+- `src/js/affinity.js`: turns a Google Takeout watch-history digest
+  (`channelId → { watches, months_since }`) into a **recency-weighted** affinity
+  score — recent watches count fully, stale ones decay hard (≤6mo ×1, ≤12mo ×0.6,
+  ≤24mo ×0.25, else ×0.08). So a binged-then-dropped Shorts-era fad ranks far
+  below something you actually watch now.
+- `Feed.affinity` + `store.applyAffinity(scoreMap)` stamp scores onto matching
+  YouTube feeds (channel id extracted from the feed URL). The rail orders feeds
+  within each folder by affinity (most-watched first), tooltips the score, and
+  stars standouts (≥100).
+- Settings → "YouTube watch data" imports the digest JSON.
+- Tests: `tools/smoke-affinity.mjs` (recency weighting, id extraction, store
+  stamping). Verified in-browser (import → reorder + star).
+
 ### settings panel — 2026-05-31
 
 - A `settings ⚙` rail entry opens a panel surfacing what was console-only:

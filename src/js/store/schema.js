@@ -138,6 +138,7 @@ export function makeFeed(raw) {
     fetch_full_content: raw.fetch_full_content ?? DEFAULT_SETTINGS.fetch_full_content_default,
     retention: raw.retention || undefined,
     category: raw.category || undefined,
+    affinity: raw.affinity || 0,           // watch-affinity score (set from Takeout digest)
     feed_health: raw.feed_health || {
       last_successful_poll: undefined,
       consecutive_failures: 0,

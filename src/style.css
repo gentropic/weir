@@ -56,6 +56,7 @@ body {
 .source.dead .spark { color: var(--au-error); opacity: 0.7; }
 .source .sname { font-size: 13px; color: var(--au-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source .scount { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
+.source .fav { color: var(--au-action); font-size: 9px; vertical-align: middle; }
 
 /* ── Main ── */
 .main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; position: relative; }

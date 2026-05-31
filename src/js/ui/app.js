@@ -6,6 +6,7 @@
 import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, fmtBytes, dailyCounts, sparkPoints } from './format.js';
 import { parseOpml, buildOpml } from '../opml.js';
 import { DEFAULT_ROUTING } from '../router.js';
+import { parseWatchDigest } from '../affinity.js';
 import { recoverFeed } from '../wayback.js';
 import { parseFeed } from '../adapters/feed.js';
 
@@ -78,6 +79,9 @@ export class App {
     document.getElementById('settings-save')?.addEventListener('click', () => this.saveSettings());
     document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
     document.getElementById('set-request-persist')?.addEventListener('click', () => this.requestPersist());
+    const affFile = document.getElementById('affinity-file');
+    document.getElementById('set-import-affinity')?.addEventListener('click', () => affFile.click());
+    affFile?.addEventListener('change', async () => { const f = affFile.files[0]; if (f) await this.importWatchData(await f.text()); affFile.value = ''; });
     document.getElementById('rules-save')?.addEventListener('click', () => this.saveRules());
     document.getElementById('rules-rerun')?.addEventListener('click', () => this.uiRerunRules());
     document.getElementById('rules-close')?.addEventListener('click', () => this.closeRules());
@@ -132,8 +136,10 @@ export class App {
     const cls = f.state === 'failing' || f.state === 'archived' ? 'dead' : f.state === 'slow' ? 'slow' : 'up';
     const active = this.feedFilter === f.id ? ' active' : '';
     const spark = pts ? `<svg width="44" height="13" viewBox="0 0 44 13"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>` : '';
-    return `<div class="source ${cls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${f.feed_health?.last_error ? ' — ' + escapeHtml(f.feed_health.last_error) : ''}">`
-      + `<span class="spark">${spark}</span><span class="sname">${escapeHtml(f.name)}</span><span class="scount">${unread || ''}</span></div>`;
+    const fav = f.affinity >= 100 ? ' <span class="fav">★</span>' : '';
+    const aff = f.affinity ? ` · watch-affinity ${f.affinity}` : '';
+    return `<div class="source ${cls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${aff}${f.feed_health?.last_error ? ' — ' + escapeHtml(f.feed_health.last_error) : ''}">`
+      + `<span class="spark">${spark}</span><span class="sname">${escapeHtml(f.name)}${fav}</span><span class="scount">${unread || ''}</span></div>`;
   }
 
   renderRail() {
@@ -157,7 +163,8 @@ export class App {
 
     let html = '';
     for (const c of cats) {
-      const list = groups.get(c).sort((x, y) => x.name.localeCompare(y.name));
+      // Most-watched first within a folder (affinity), then alphabetical.
+      const list = groups.get(c).sort((x, y) => (y.affinity || 0) - (x.affinity || 0) || x.name.localeCompare(y.name));
       const collapsed = this.collapsedCats.has(c);
       const unread = list.reduce((n, f) => n + this.feedUnread(f.id), 0);
       const activeCat = (this.catFilter || '') === c ? ' active' : '';
@@ -479,8 +486,18 @@ export class App {
     val('set-ia-access', s.ia_access_key || '');
     val('set-ia-secret', s.ia_secret_key || '');
     document.getElementById('settings-msg').textContent = '';
+    const aff = this.store.feedsWithAffinity();
+    document.getElementById('affinity-status').textContent = aff ? `watch data on ${aff} feeds` : 'no watch data loaded';
     this._refreshStorageInfo();
     document.getElementById('settings-overlay').hidden = false;
+  }
+
+  async importWatchData(text) {
+    let r;
+    try { r = await this.store.applyAffinity(parseWatchDigest(text)); }
+    catch (e) { document.getElementById('affinity-status').textContent = `bad digest: ${e.message}`; return; }
+    document.getElementById('affinity-status').textContent = `applied to ${r.matched} feed${r.matched === 1 ? '' : 's'} ✓`;
+    this.renderRail();
   }
 
   async _refreshStorageInfo() {
