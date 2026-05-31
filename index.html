@@ -7180,33 +7180,47 @@ class App {
       const r = await catalogStoreItem(this.store, id, await this._catalogOpts());
       if (this._cardFacets) this._cardFacets.set(id, r.card.facets);
       const dom = (r.card.facets.domain || []).join(', ');
-      this._catStatus(`cataloged${dom ? ' · ' + dom : ''}${r.ok ? '' : ' (needs review)'}`);
-      if (this.catalog) this.renderAll();
-      this.renderCatUsage();
+      // During a batch the caller throttles the (O(N)) re-render; don't redo it
+      // per item or the whole-corpus run gets quadratic + janky.
+      if (!this._batch) { this._catStatus(`cataloged${dom ? ' · ' + dom : ''}${r.ok ? '' : ' (needs review)'}`); if (this.catalog) this.renderAll(); this.renderCatUsage(); }
       return r;
     } catch (e) { this._catStatus(`catalog failed: ${e.message}`); this._fetchFails = (this._fetchFails || 0) + 1; this.checkBridge(); return null; }
   }
 
   // Catalog the currently-shown items that aren't cataloged yet — one at a time,
-  // paced (gentle on the NPU + the machine), cancelable.
+  // paced (gentle on the NPU + the machine), cancelable, resumable (skips already-
+  // cataloged), and self-stopping if the LLM/bridge goes down mid-run.
   async catalogVisible() {
     if (this._cataloging) { this._cataloging.cancel = true; return; }
     const todo = this.items.filter((i) => !i.glass_id);
     if (!todo.length) { this._catStatus('nothing to catalog here'); return; }
     // "Let it rip" can be the whole corpus (catalog mode, no filter) — one LLM
     // call per item. Confirm before a long unattended run.
-    if (todo.length > 30 && !confirm(`Catalog ${todo.length} items? That's one LLM call each — it can take a while. Click the button again to stop mid-run.`)) return;
+    if (todo.length > 30 && !confirm(`Catalog ${todo.length} items? That's one LLM call each — it can run for a while. It resumes where it left off if interrupted, and you can click the button again to stop.`)) return;
     const job = this._cataloging = { cancel: false };
-    let n = 0;
-    for (const it of todo) {
-      if (job.cancel) break;
-      this._catStatus(`cataloging ${++n}/${todo.length}…  (click to stop)`);
-      await this.catalogItem(it.id).catch(() => {});
-      if (!job.cancel) await new Promise((r) => setTimeout(r, 400));   // pace it
+    this._batch = true;
+    let n = 0, ok = 0, fails = 0, streak = 0, bailed = false;
+    try {
+      for (const it of todo) {
+        if (job.cancel) break;
+        this._catStatus(`cataloging ${n + 1}/${todo.length}…  ${ok} done${fails ? `, ${fails} failed` : ''} · click to stop`);
+        const r = await this.catalogItem(it.id);
+        n++;
+        if (r) { ok++; streak = 0; } else if (++streak >= 8) {
+          // 8 misses in a row → the LLM or bridge is down; stop instead of
+          // churning through thousands of no-ops.
+          bailed = true; this._catStatus(`stopped after ${streak} failures in a row — is Lemonade running / the bridge active? ${ok} cataloged so far; click to resume.`); break;
+        } else { fails++; }
+        if (n % 25 === 0 && this.catalog) this.renderAll();          // throttled refresh
+        if (!job.cancel) await new Promise((res) => setTimeout(res, 400));   // pace it
+      }
+    } finally {
+      this._batch = false;
+      this._cataloging = null;
+      if (this.catalog) this.renderAll();
+      this.renderCatUsage();
     }
-    this._cataloging = null;
-    this._catStatus(`cataloged ${n} item${n === 1 ? '' : 's'}${job.cancel ? ' (stopped)' : ''}`);
-    if (this.catalog) this.renderAll();
+    if (!bailed) this._catStatus(`cataloged ${ok}/${todo.length}${fails ? `, ${fails} failed` : ''}${job.cancel ? ' (stopped)' : ''}`);
   }
 
   // Wipe every catalog card and un-stamp items, then refresh the view. Cleanup

@@ -23,6 +23,13 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 - **"Let it rip" safety.** Cataloging the whole corpus is the catalog view with
   no facet filter → **catalog ▸**; that batch now confirms before a long run
   (>30 items) and is cancelable mid-flight (click the button again to stop).
+- **Unattended whole-corpus runs.** The batch is now genuinely set-and-forget:
+  it throttles the list re-render (every 25 items instead of after each — the old
+  per-item refresh was O(N²) and got janky as the catalog filled), **auto-stops
+  after 8 consecutive failures** (so it doesn't churn through thousands of
+  no-ops when Lemonade or the bridge goes down), and **resumes** where it left
+  off — it only ever processes items without a card, so just click **catalog ▸**
+  again to continue. Progress shows live in the status line (`N/total · X done`).
 
 ### Bridge-down banner — 2026-06-01
 
