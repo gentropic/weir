@@ -84,4 +84,25 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.deepEqual(r2, { inserted: 1, updated: 0, skipped: 0 }, 'new source items flow in (no tombstone block)');
 }
 
+// Smart views: seeded on first run, persisted (incl. deletions), survive reload.
+{
+  const v = await VFS.create();
+  const s2 = new Store(v); await s2._hydrate();
+  assert.ok(s2.getViews().length >= 4, 'type defaults seeded on first run');
+  assert.ok(s2.getViews().some((x) => x.query.type === 'video'), 'has a Videos view');
+  // add a saved search + delete a built-in
+  const kept = s2.getViews().filter((x) => x.id !== 'v-releases');
+  await s2.saveViews([...kept, { id: 'v-search', name: 'rust stuff', query: { text: 'rust' } }]);
+  const reopened2 = new Store(v); await reopened2._hydrate();
+  assert.ok(!reopened2.getViews().some((x) => x.id === 'v-releases'), 'deletion persisted (not re-seeded)');
+  assert.ok(reopened2.getViews().some((x) => x.id === 'v-search'), 'saved search persisted');
+  // a view query filters via store.query (inbox-ish)
+  await reopened2.putFeed({ id: 'mix', name: 'Mix', adapter: 'feed', url: 'http://m/f' });
+  await reopened2.upsertItems([
+    { id: 'a1', feed_id: 'mix', type: 'article', title: 'hello' },
+    { id: 'v1', feed_id: 'mix', type: 'video', title: 'a clip' },
+  ]);
+  assert.equal(reopened2.query({ type: 'video' }).length, 1, 'Videos view query returns only videos');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

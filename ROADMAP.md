@@ -8,9 +8,14 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
 
 ## Near term — small UX / polish
 
-- **Views over sources (smart-folders).** Saved filters over feeds and items —
-  by folder, feed-health, or watch-affinity; saved item searches as `#views`
-  (SPEC §6). The rail's "Routed" section is the seed of this.
+- ~~**Views over sources (smart-folders).**~~ ✅ Shipped 2026-05-31 — a rail
+  **Views** area with persisted saved filters (`/views.json`), seeded type
+  defaults (Videos/Articles/Papers/Releases, shown when non-empty), and
+  save-a-search-as-a-view. Follow-ups: a richer view builder (combine type +
+  folder + saved + tag in one dialog rather than only type-defaults or a saved
+  search); **feed-health and watch-affinity views** (the `health`/`affinity`
+  dimensions aren't yet expressible in a saved `query` — would need a post-filter
+  or query extension); optional include-archived/routed scope per view.
 - ~~**Feed favicons** in the rail for visual scanning.~~ ✅ Shipped 2026-05-31 —
   lazy/polite fetch via the bridge, cached as `data:` URLs, deterministic letter
   monogram fallback.

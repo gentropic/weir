@@ -14,7 +14,7 @@
 
 import { VFS } from '../../../vendor/vfs.js';
 import {
-  SCHEMA_VERSION, DEFAULT_SETTINGS, makeItem, makeFeed, makeTombstone,
+  SCHEMA_VERSION, DEFAULT_SETTINGS, DEFAULT_VIEWS, makeItem, makeFeed, makeTombstone,
   fsKey, deriveExcerpt, deriveSearchText, computeExpiry, now,
 } from './schema.js';
 import { channelIdOf } from '../affinity.js';
@@ -30,6 +30,7 @@ export class Store {
     this.archived = new Set();       // tombstoned item ids (pruned/expired)
     this.tombstones = [];            // ArchiveRecord[]
     this.tags = {};                  // name → Tag
+    this.savedViews = [];            // smart views (saved item filters); see DEFAULT_VIEWS
     this.settings = { ...DEFAULT_SETTINGS };
     this.router = null;              // optional Router; applied to new items on insert
     this.notifications = [];         // items a rule flagged notify:true (ephemeral)
@@ -81,6 +82,12 @@ export class Store {
     }
     this.settings = { ...DEFAULT_SETTINGS, ...(await this._readJSON('/settings.json', {})) };
     this.tags = await this._readJSON('/tags.json', {});
+
+    // Smart views — seed the type defaults on first run; persisted thereafter
+    // (so deletions stick and aren't re-seeded).
+    const storedViews = await this._readJSON('/views.json', null);
+    if (storedViews && Array.isArray(storedViews)) this.savedViews = storedViews;
+    else { this.savedViews = DEFAULT_VIEWS.map((v) => ({ ...v })); await this.vfs.writeFile('/views.json', JSON.stringify(this.savedViews, null, 2)); }
 
     for (const line of (await this._readText('/archived_index.ndjson')).split('\n')) {
       if (!line.trim()) continue;
@@ -406,6 +413,14 @@ export class Store {
     await this.vfs.writeFile('/tags.json', JSON.stringify(this.tags, null, 2));
     return this.tags[name];
   }
+  // ── smart views ──
+  getViews() { return this.savedViews.map((v) => ({ ...v })); }
+  async saveViews(views) {
+    this.savedViews = (views || []).map((v) => ({ ...v }));
+    await this.vfs.writeFile('/views.json', JSON.stringify(this.savedViews, null, 2));
+    this.emit('views', {});
+  }
+
   async getRouting() { return this._readText('/routing.js', ''); }
   async setRouting(src) { await this.vfs.writeFile('/routing.js', String(src)); this.emit('routing', {}); }
 

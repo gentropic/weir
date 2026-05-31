@@ -48,6 +48,17 @@ export const DEFAULT_SETTINGS = {
   ia_secret_key: '',
 };
 
+// Smart views (saved filters over items) seeded on first run. A view is
+// { id, name, builtin?, query } where query is a subset of store.query() opts
+// (type / text / saved / tag / category). Built-ins slice the stream by item
+// type; they render only when items of that type exist, and can be deleted.
+export const DEFAULT_VIEWS = [
+  { id: 'v-videos',   name: 'Videos',   builtin: true, query: { type: 'video' } },
+  { id: 'v-articles', name: 'Articles', builtin: true, query: { type: 'article' } },
+  { id: 'v-papers',   name: 'Papers',   builtin: true, query: { type: 'paper' } },
+  { id: 'v-releases', name: 'Releases', builtin: true, query: { type: 'release' } },
+];
+
 const DAY_MS = 86_400_000;
 
 export function now() { return Date.now(); }

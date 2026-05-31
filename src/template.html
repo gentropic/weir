@@ -14,6 +14,7 @@
       <div class="navrow active" data-view="inbox"><span class="lbl"><span class="ico ico-inbox">⬓</span> Inbox</span><span class="count" id="count-inbox">0</span></div>
       <div class="navrow" data-view="saved"><span class="lbl"><span class="ico">★</span> saved</span><span class="count" id="count-saved">0</span></div>
       <div class="navrow" data-view="archived"><span class="lbl"><span class="ico">▤</span> archived</span><span class="count" id="count-archived">0</span></div>
+      <div id="smart-views"></div>
     </nav>
 
     <div class="rail-section">
@@ -39,6 +40,7 @@
       </div>
       <div class="actions">
         <input id="search-input" class="field" type="search" placeholder="search… (/)" autocomplete="off" spellcheck="false">
+        <button id="btn-saveview" class="btn-link" type="button" hidden title="Save this search as a view">＋ view</button>
         <form id="addfeed" autocomplete="off">
           <input id="addfeed-input" class="field" type="text" placeholder="add feed URL…" autocomplete="off" spellcheck="false">
         </form>

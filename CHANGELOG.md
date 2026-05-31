@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Smart views (saved filters over items) — 2026-05-31
+
+- A **Views** area in the rail holds saved filters. Seeded on first run with
+  type smart-defaults — **Videos / Articles / Papers / Releases** — each shown
+  only when items of that type exist, with a live unread count. Click to filter
+  the stream by modality (great for a mixed feed + YouTube + papers set).
+- **Save a search as a view**: type a search, hit **＋ view**, name it — it's
+  persisted and pinned in the rail. Right-click any view to **rename** or
+  **delete** (built-ins included; deletions stick and aren't re-seeded).
+- Views persist to `/views.json` (`store.getViews` / `saveViews`); a view's query
+  is a subset of `store.query` (type / text / saved / tag / category), filtered
+  inbox-ish (excludes archived + routed).
+
 ### Adaptive poll cadence — 2026-05-31
 
 - Polling is no longer one flat interval for every feed. `pollIntervalFor` scales

@@ -49,6 +49,8 @@ body {
 .navrow .ico { width: 15px; text-align: center; color: var(--au-fg-muted); font-size: 13px; }
 .navrow.active .ico-inbox { color: var(--au-action); }
 .navrow .count { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); }
+#smart-views:not(:empty) { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--au-border); }
+.navrow.view .ico { color: var(--au-fg-soft); font-size: 11px; }
 
 /* folder headers in the source rail */
 .cat-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px 4px; margin-top: 6px; cursor: pointer; user-select: none; border-radius: var(--au-radius); }

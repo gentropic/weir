@@ -33,6 +33,7 @@ export class App {
     this.feedFilter = null;
     this.route = null;          // active routed view (#name), or null
     this.catFilter = null;      // active folder/category view, or null
+    this.smartView = null;      // active saved view (smart folder), or null
     this.collapsedCats = new Set();
     this._loadingFull = new Set();   // items with a full-content fetch in flight
     this._fullTried = new Set();     // items whose auto full-fetch already failed (don't retry on every open)
@@ -71,7 +72,7 @@ export class App {
         return;
       }
       const s = e.target.closest('.source'); if (!s) return;
-      this.catFilter = null;
+      this.catFilter = null; this.route = null; this.smartView = null;
       this.feedFilter = this.feedFilter === s.dataset.feed ? null : s.dataset.feed;
       this.renderAll();
     });
@@ -99,6 +100,11 @@ export class App {
     document.getElementById('btn-export')?.addEventListener('click', () => this.exportOpml());
 
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
+    const sv = document.getElementById('smart-views');
+    sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
+    sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
+    document.getElementById('btn-saveview')?.addEventListener('click', () => this.saveSearchAsView());
+    this.store.on('views', () => this.renderViews());
     document.getElementById('btn-recover')?.addEventListener('click', () => { if (this.feedFilter) this.recoverHistory(this.feedFilter); });
     document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
     document.getElementById('open-settings')?.addEventListener('click', () => this.openSettings());
@@ -134,18 +140,19 @@ export class App {
   }
 
   query() {
+    if (this.smartView) return this.store.query({ ...this.smartView.query, text: this.searchText || this.smartView.query.text || undefined });
     if (this.route) return this.store.query({ route: this.route, text: this.searchText || undefined });
     if (this.catFilter != null) return this.store.query({ category: this.catFilter, text: this.searchText || undefined });   // '' = ungrouped
     return this.store.query({ view: this.view, feed_id: this.feedFilter || undefined, text: this.searchText || undefined });
   }
 
-  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderTopbar(); this.renderStream(); }
+  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTopbar(); this.renderStream(); }
 
   // Debounced rail+stream rebuild for store-driven changes (polling), so rows
   // aren't recreated under the cursor on every insert.
   _scheduleRender() {
     if (this._renderTimer) return;
-    this._renderTimer = setTimeout(() => { this._renderTimer = null; this.renderRail(); this.renderRoutes(); this.renderStream(); }, 250);
+    this._renderTimer = setTimeout(() => { this._renderTimer = null; this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderStream(); }, 250);
   }
 
   // Replace a single row in place — instant feedback for a click action, no
@@ -166,7 +173,7 @@ export class App {
   renderTopbar() {
     const feed = this.feedFilter && this.store.getFeed(this.feedFilter);
     const rb = document.getElementById('btn-recover'); if (rb) rb.hidden = !this.feedFilter;
-    document.getElementById('view-title').textContent = this.catFilter != null ? (this.catFilter || 'ungrouped') : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
+    document.getElementById('view-title').textContent = this.smartView ? this.smartView.name : this.catFilter != null ? (this.catFilter || 'ungrouped') : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
     const n = this.items.length;
     const feeds = this.store.listFeeds().length;
     let sub;
@@ -174,6 +181,7 @@ export class App {
     else if (!feeds) sub = 'no feeds yet';
     else sub = `${n} item${n === 1 ? '' : 's'}${feed ? '' : ` · ${feeds} source${feeds === 1 ? '' : 's'}`}`;
     document.getElementById('view-sub').textContent = sub;
+    this._reflectSearch();
   }
 
   feedUnread(id) {
@@ -236,7 +244,7 @@ export class App {
     this.recomputeHealth();
     this.renderHealthStatus();
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
-      r.classList.toggle('active', !this.feedFilter && !this.route && this.catFilter == null && r.dataset.view === this.view));
+      r.classList.toggle('active', !this.feedFilter && !this.route && !this.smartView && this.catFilter == null && r.dataset.view === this.view));
     if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
 
     const groups = new Map();
@@ -268,8 +276,17 @@ export class App {
     this.sources.innerHTML = html;
   }
 
-  setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.smartView = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   toggleCat(c) { if (this.collapsedCats.has(c)) this.collapsedCats.delete(c); else this.collapsedCats.add(c); this.renderRail(); }
+
+  setSmartView(id) {
+    const v = this.store.getViews().find((x) => x.id === id);
+    if (!v) return;
+    this.smartView = v;
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null;
+    this.selectedId = null; this.expandedId = null;
+    this.renderAll();
+  }
 
   renderStream() {
     if (this.pendingImport) { this.stream.innerHTML = this.importReviewHtml(); return; }
@@ -520,7 +537,7 @@ export class App {
   feedMenu(feedId, x, y) {
     const feed = this.store.getFeed(feedId); if (!feed) return;
     showMenu(x, y, [
-      { label: 'Show only this feed', onClick: () => { this.catFilter = null; this.route = null; this.feedFilter = feedId; this.renderAll(); } },
+      { label: 'Show only this feed', onClick: () => { this.catFilter = null; this.route = null; this.smartView = null; this.feedFilter = feedId; this.renderAll(); } },
       (feed.site_url || feed.url) && { label: 'Open site ↗', onClick: () => window.open(feed.site_url || feed.url, '_blank', 'noopener') },
       { sep: true },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
@@ -612,7 +629,7 @@ export class App {
     const feed = this.store.getFeed(feedId); if (!feed) return;
     if (btn.dataset.hact === 'edit') { this.closeHealth(); this.openFeedEdit(feedId); }
     else if (btn.dataset.hact === 'open') { window.open(feed.site_url || feed.url, '_blank', 'noopener'); }
-    else if (btn.dataset.hact === 'view') { this.closeHealth(); this.catFilter = null; this.route = null; this.view = 'inbox'; this.feedFilter = feedId; this.renderAll(); }
+    else if (btn.dataset.hact === 'view') { this.closeHealth(); this.catFilter = null; this.route = null; this.smartView = null; this.view = 'inbox'; this.feedFilter = feedId; this.renderAll(); }
   }
 
   catMenu(cat, x, y) {
@@ -627,8 +644,10 @@ export class App {
     showMenu(x, y, [{ label: 'Mark all read', onClick: () => this.store.markAllRead({ view }) }]);
   }
 
-  setView(view) { this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
-  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  _reflectSearch() { const b = document.getElementById('btn-saveview'); if (b) b.hidden = !this.searchText || !!this.smartView; }
+
+  setView(view) { this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
 
   onKey(e) {
     // Esc closes any open overlay first, from anywhere.
@@ -760,6 +779,74 @@ export class App {
     sec.style.display = names.length ? '' : 'none';
     el.innerHTML = names.map((n) =>
       `<div class="navrow${this.route === n ? ' active' : ''}" data-route="${escapeHtml(n)}"><span class="lbl"><span class="ico">#</span> ${escapeHtml(n)}</span><span class="count">${routes[n]}</span></div>`).join('');
+  }
+
+  // Saved smart views in the rail. Built-in type views hide when empty; the
+  // count shows unread (falling back to total), like the built-in views.
+  renderViews() {
+    const el = document.getElementById('smart-views'); if (!el) return;
+    const ICONS = { video: '▶', article: '☰', paper: '✦', release: '⬡', track: '♪', search: '⌕' };
+    const rows = [];
+    for (const v of this.store.getViews()) {
+      const items = this.store.query(v.query);
+      if (v.builtin && items.length === 0) continue;     // empty type default → hide
+      const unread = items.reduce((n, i) => n + (i.read ? 0 : 1), 0);
+      const ico = ICONS[v.query.type] || (v.query.text ? ICONS.search : '◆');
+      const active = this.smartView?.id === v.id ? ' active' : '';
+      rows.push(`<div class="navrow view${active}" data-view-id="${escapeHtml(v.id)}" title="${escapeHtml(this.viewSummary(v))}">`
+        + `<span class="lbl"><span class="ico">${ico}</span> ${escapeHtml(v.name)}</span><span class="count">${unread || items.length || ''}</span></div>`);
+    }
+    el.innerHTML = rows.join('');
+  }
+
+  viewSummary(v) {
+    const q = v.query || {};
+    const parts = [];
+    if (q.type) parts.push(`type: ${q.type}`);
+    if (q.text) parts.push(`search: “${q.text}”`);
+    if (q.saved) parts.push('saved only');
+    if (q.tag) parts.push(`#${q.tag}`);
+    if (q.category != null) parts.push(`folder: ${q.category || 'ungrouped'}`);
+    return parts.join(' · ') || 'all items';
+  }
+
+  smartViewMenu(id, x, y) {
+    const v = this.store.getViews().find((x2) => x2.id === id); if (!v) return;
+    showMenu(x, y, [
+      { label: 'Rename…', onClick: () => this.renameView(id) },
+      { label: 'Delete view', danger: true, onClick: () => this.deleteView(id) },
+    ]);
+  }
+
+  async renameView(id) {
+    const views = this.store.getViews();
+    const v = views.find((x) => x.id === id); if (!v) return;
+    const name = prompt('Rename view:', v.name);
+    if (name === null || !name.trim()) return;
+    v.name = name.trim();
+    await this.store.saveViews(views);
+    if (this.smartView?.id === id) this.smartView = v;
+    this.renderViews(); this.renderTopbar();
+  }
+
+  async deleteView(id) {
+    const views = this.store.getViews().filter((x) => x.id !== id);
+    await this.store.saveViews(views);
+    if (this.smartView?.id === id) { this.smartView = null; this.view = 'inbox'; this.renderAll(); }
+    else this.renderViews();
+  }
+
+  async saveSearchAsView() {
+    const text = this.searchText.trim();
+    if (!text) return;
+    const name = prompt('Name this view:', text.length > 24 ? text.slice(0, 24) + '…' : text);
+    if (name === null || !name.trim()) return;
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'view';
+    const id = `v-${slug}-${this.store.getViews().length}`;
+    const views = [...this.store.getViews(), { id, name: name.trim(), query: { text } }];
+    await this.store.saveViews(views);
+    this.searchEl.value = ''; this.searchText = '';
+    this.setSmartView(id);
   }
 
   renderDripStatus(st) {
