@@ -5,7 +5,7 @@ import assert from 'node:assert';
 import { VFS } from '../vendor/vfs.js';
 import { Store } from '../src/js/store/store.js';
 import { feedAdapter } from '../src/js/adapters/feed.js';
-import { Poller } from '../src/js/poller.js';
+import { Poller, pollIntervalFor } from '../src/js/poller.js';
 import { relativeTime, dailyCounts, sparkPoints, fmtDuration } from '../src/js/ui/format.js';
 
 // ── format ──
@@ -53,5 +53,31 @@ assert.ok(r3.error, 'error surfaced');
 f = store.getFeed('f');
 assert.equal(f.feed_health.consecutive_failures, 1, 'failure counted');
 assert.equal(f.feed_health.last_error, 'network down', 'error recorded');
+
+// ── adaptive poll interval (pollIntervalFor) ──
+const S = { default_poll_interval_minutes: 180 };
+const base = pollIntervalFor({ affinity: 0 }, S);
+assert.equal(base, 180, 'neutral feed = baseline');
+assert.ok(pollIntervalFor({ affinity: 120 }, S) < base, 'core (high affinity) polls more often');
+assert.equal(pollIntervalFor({ affinity: 120 }, S), 72, 'affinity≥100 → base×0.4');
+assert.ok(pollIntervalFor({ affinity: 5 }, S) > base, 'subscribed-but-barely-watched polls less often');
+assert.ok(pollIntervalFor({ affinity: 0, state: 'failing' }, S) >= pollIntervalFor({ affinity: 0 }, S) * 3, 'failing feed backs off hard');
+// cadence: proven low-volume (with ≥3wk history) slows down; high-volume speeds up
+assert.ok(pollIntervalFor({ affinity: 0 }, S, { itemsPerWeek: 0.2, spanWeeks: 12 }) > base, 'low-volume slows');
+assert.ok(pollIntervalFor({ affinity: 0 }, S, { itemsPerWeek: 30, spanWeeks: 12 }) < base, 'high-volume speeds up');
+assert.equal(pollIntervalFor({ affinity: 0 }, S, { itemsPerWeek: 0.1, spanWeeks: 1 }), base, 'short history → cadence ignored (new feed not starved)');
+// clamps
+assert.ok(pollIntervalFor({ affinity: 200, state: 'healthy' }, { default_poll_interval_minutes: 20 }) >= 30, 'never faster than 30 min');
+assert.ok(pollIntervalFor({ affinity: 0, state: 'failing' }, { default_poll_interval_minutes: 100000 }) <= 7 * 24 * 60, 'never slower than weekly');
+
+// integration: adaptive ON makes a high-affinity feed's next_poll sooner than a neutral one
+await store.setSettings({ adaptive_polling: true, default_poll_interval_minutes: 180 });
+await store.putFeed({ id: 'core', name: 'Core', adapter: 'feed', url: 'http://x/feed', affinity: 150, next_poll_at: NOW - 1000 });
+const okp = new Poller(store, { adapters: [feedAdapter], fetch: async () => mockResponse(RSS) });
+await okp.pollFeed(store.getFeed('core'));
+await okp.pollFeed(store.getFeed('f'));
+const coreGap = store.getFeed('core').next_poll_at - Date.now();
+const fGap = store.getFeed('f').next_poll_at - Date.now();
+assert.ok(coreGap < fGap, 'adaptive: favorite re-polls sooner than a neutral feed');
 
 console.log('poller smoke ok:', JSON.stringify(store.counts()));

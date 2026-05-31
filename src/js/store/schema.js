@@ -23,7 +23,8 @@ export const RETENTION = {
 };
 
 export const DEFAULT_SETTINGS = {
-  default_poll_interval_minutes: 180,   // 3h — a reader you check a few times a day, not a firehose
+  default_poll_interval_minutes: 180,   // 3h baseline — a reader you check a few times a day, not a firehose
+  adaptive_polling: true,               // scale each feed's interval by watch-affinity, activity, health
   poll_concurrency: 8,
   pause_polling_when_hidden: true,
   images_default_allowed: false,

@@ -35,9 +35,11 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
 
 ## Medium
 
-- **Affinity-driven poll cadence.** Poll favorites often, rarely-watched feeds
-  seldom (from watch-affinity + observed activity) — makes a 1,600-channel set
-  effortless and gentle. The default is now a flat 3h; this makes it adaptive.
+- ~~**Affinity-driven poll cadence.**~~ ✅ Shipped 2026-05-31 (`pollIntervalFor`
+  in `poller.js`). Scales each feed's interval off the baseline by watch-affinity,
+  observed cadence (≥3wk history guard), and health backoff; clamped 30 min–1 wk;
+  `adaptive_polling` toggle (on by default). Follow-up: surface the effective
+  interval per feed (edit dialog / tooltip); fold in time-of-day patterns.
 - **Source-health view** (SPEC §9 v0.3): per-feed history, last-known-good,
   surfacing slow/failing feeds; auto-archive after a failure threshold.
 - ~~**Feed-hijack / drift detection.**~~ ✅ Shipped 2026-05-31 (`health.js`).

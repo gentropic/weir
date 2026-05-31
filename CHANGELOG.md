@@ -6,6 +6,18 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Adaptive poll cadence — 2026-05-31
+
+- Polling is no longer one flat interval for every feed. `pollIntervalFor` scales
+  each feed's `next_poll_at` off the `default_poll_interval_minutes` baseline by:
+  **watch-affinity** (core YouTube channels ×0.4 → polled ~2.5× more often,
+  barely-watched ×1.8), **observed cadence** (proven high-volume feeds ×0.7,
+  proven-quiet ×2 — only once there's ≥3 weeks of history, so new feeds aren't
+  starved), and **health backoff** (failing ×4, slow ×1.5). Clamped to
+  [30 min, 1 week]. Makes a 1,600-channel set both fresher where it matters and
+  far gentler on servers. Toggle in **Settings → Polling** (`adaptive_polling`,
+  on by default); off restores the flat interval.
+
 ### Feed health: hijack / drift / stale detection — 2026-05-31
 
 - New `health.js` `assessFeed` classifies each feed from the items already stored

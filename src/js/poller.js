@@ -2,6 +2,36 @@
 // (SPEC §1 lifecycle). Fetch and the adapter set are injected so it's testable
 // in node without network or DOM.
 
+// Adaptive poll interval (minutes) for a feed — poll favorites often, quiet and
+// dead feeds seldom. Pure + testable. `ctx` carries observed activity the poller
+// derives from stored items. Clamped to [30 min, 1 week]. The flat
+// default_poll_interval_minutes is the neutral baseline everything scales from.
+export function pollIntervalFor(feed, settings = {}, ctx = {}) {
+  const base = settings.default_poll_interval_minutes || 180;
+  const MIN = 30, MAX = 7 * 24 * 60;
+  let mult = 1;
+
+  // Watch-affinity (YouTube): the big lever for a large channel set.
+  const aff = feed.affinity || 0;
+  if (aff >= 100) mult *= 0.4;           // core: poll ~2.5× more often
+  else if (aff >= 40) mult *= 0.7;       // regular
+  else if (aff > 0 && aff < 10) mult *= 1.8;   // subscribed but barely watched
+  // affinity 0 (non-YouTube feeds, unscored) and 10–40 stay neutral.
+
+  // Observed cadence — only with enough history so new feeds aren't starved.
+  const { itemsPerWeek, spanWeeks } = ctx;
+  if (itemsPerWeek != null && spanWeeks != null && spanWeeks >= 3) {
+    if (itemsPerWeek >= 10) mult *= 0.7;       // high-volume → keep it fresh
+    else if (itemsPerWeek < 0.5) mult *= 2;    // proven low-volume → poll seldom
+  }
+
+  // Health backoff — be gentle on failing/slow hosts.
+  if (feed.state === 'failing') mult *= 4;
+  else if (feed.state === 'slow') mult *= 1.5;
+
+  return Math.round(Math.min(MAX, Math.max(MIN, base * mult)));
+}
+
 export class Poller {
   constructor(store, opts = {}) {
     this.store = store;
@@ -23,13 +53,43 @@ export class Poller {
       || this.adapters[0];
   }
 
+  // Observed activity for a feed from its stored items: recent rate + history
+  // span, so pollIntervalFor can slow proven-quiet feeds without starving new
+  // ones. Cheap: one pass over the feed's item index.
+  _activity(feedId) {
+    const ids = this.store.byFeed?.get(feedId);
+    if (!ids || !ids.size) return {};
+    const now = Date.now();
+    const span8 = 8 * 7 * 86_400_000;
+    let newest = 0, oldest = Infinity, recent = 0;
+    for (const id of ids) {
+      const r = this.store.items.get(id);
+      if (!r || !r.published_at) continue;
+      if (r.published_at > newest) newest = r.published_at;
+      if (r.published_at < oldest) oldest = r.published_at;
+      if (now - r.published_at <= span8) recent++;
+    }
+    if (!newest) return {};
+    return { itemsPerWeek: recent / 8, spanWeeks: (newest - oldest) / (7 * 86_400_000) };
+  }
+
+  // Minutes until this feed's next poll — adaptive when enabled, else the flat
+  // per-feed/default interval. Read after feed.state is updated so failing/slow
+  // feeds get the backoff.
+  _nextIntervalMs(feed) {
+    const s = this.store.getSettings();
+    const minutes = s.adaptive_polling
+      ? pollIntervalFor(feed, s, this._activity(feed.id))
+      : (feed.poll_interval_minutes || s.default_poll_interval_minutes || 30);
+    return minutes * 60_000;
+  }
+
   // Poll a single feed: fetch → (autodiscover if the body is a web page) →
   // parse → upsert → record health. Never throws; failures land in feed_health.
   async pollFeed(feed) {
     if (this._running.has(feed.id)) return null;
     this._running.add(feed.id);
     const adapter = this.pickAdapter(feed);
-    const intervalMs = (feed.poll_interval_minutes || 30) * 60_000;
     try {
       let res = await this.fetch(feed.url);
       let items = await adapter.parse(res.clone ? res.clone() : res, feed);
@@ -54,8 +114,8 @@ export class Poller {
       h.last_successful_poll = t;
       h.last_error = undefined;
       feed.last_polled_at = t;
-      feed.next_poll_at = t + intervalMs;
       feed.state = 'healthy';
+      feed.next_poll_at = t + this._nextIntervalMs(feed);
       await this.store.putFeed(feed);
       this.emit('polled', { feed, result });
       return result;
@@ -65,8 +125,8 @@ export class Poller {
       h.consecutive_failures = (h.consecutive_failures || 0) + 1;
       h.last_error = e.message;
       feed.last_polled_at = t;
-      feed.next_poll_at = t + intervalMs;
       if (h.consecutive_failures >= 5) feed.state = 'failing';
+      feed.next_poll_at = t + this._nextIntervalMs(feed);
       await this.store.putFeed(feed);
       this.emit('polled', { feed, error: e });
       return { error: e.message };

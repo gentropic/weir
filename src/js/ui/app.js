@@ -807,6 +807,7 @@ export class App {
     const val = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
     const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
     val('set-poll-interval', s.default_poll_interval_minutes);
+    chk('set-adaptive', s.adaptive_polling);
     val('set-poll-concurrency', s.poll_concurrency);
     chk('set-pause-hidden', s.pause_polling_when_hidden);
     chk('set-images', s.images_default_allowed);
@@ -847,6 +848,7 @@ export class App {
     const chk = (id) => document.getElementById(id).checked;
     const patch = {
       default_poll_interval_minutes: Math.max(1, num('set-poll-interval', cur.default_poll_interval_minutes)),
+      adaptive_polling: chk('set-adaptive'),
       poll_concurrency: Math.max(1, Math.min(32, num('set-poll-concurrency', cur.poll_concurrency))),
       pause_polling_when_hidden: chk('set-pause-hidden'),
       images_default_allowed: chk('set-images'),
