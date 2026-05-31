@@ -229,6 +229,18 @@ export class Store {
     return this._readText(this._contentPath(rec.feed_id, rec.id), null);
   }
 
+  // Replace an item's stored content (e.g. fetched full article). Marks `full`
+  // so we don't re-fetch and so the UI can hide the "load full article" button.
+  async setContent(id, html, opts = {}) {
+    const rec = this.items.get(String(id));
+    if (!rec) return;
+    await this._writeContent(rec.feed_id, rec.id, html);
+    rec.has_content = !!String(html).length;
+    if (opts.full) rec.full = true;
+    this._markFeedDirty(rec.feed_id);
+    this.emit('item', { id: rec.id });
+  }
+
   async _writeContent(feedId, itemId, html) {
     await this._ensureDir(this._contentDir(feedId));
     await this.vfs.writeFile(this._contentPath(feedId, itemId), String(html));

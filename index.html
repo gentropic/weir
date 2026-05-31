@@ -4238,6 +4238,18 @@ class Store {
     return this._readText(this._contentPath(rec.feed_id, rec.id), null);
   }
 
+  // Replace an item's stored content (e.g. fetched full article). Marks `full`
+  // so we don't re-fetch and so the UI can hide the "load full article" button.
+  async setContent(id, html, opts = {}) {
+    const rec = this.items.get(String(id));
+    if (!rec) return;
+    await this._writeContent(rec.feed_id, rec.id, html);
+    rec.has_content = !!String(html).length;
+    if (opts.full) rec.full = true;
+    this._markFeedDirty(rec.feed_id);
+    this.emit('item', { id: rec.id });
+  }
+
   async _writeContent(feedId, itemId, html) {
     await this._ensureDir(this._contentDir(feedId));
     await this.vfs.writeFile(this._contentPath(feedId, itemId), String(html));
@@ -4797,6 +4809,60 @@ const youtubeAdapter = {
     return id ? `https://www.youtube.com/feeds/videos.xml?channel_id=${id}` : null;
   },
 };
+
+// ── src/js/extract.js ──
+
+// Lightweight readability — pull the main article out of a fetched web page so
+// truncated feeds can be read in full. Browser-only (uses DOMParser for robust
+// HTML parsing; that's also where sanitization happens — script/handler/iframe
+// removal on the live DOM, more reliable than the regex pass). Heuristic, not
+// perfect: prefers <article>/<main>, else the densest low-link text block.
+
+const KILL = 'script,style,noscript,iframe,object,embed,svg,form,nav,header,footer,aside,'
+  + '[role=navigation],[role=complementary],[role=banner],[aria-hidden=true]';
+
+function extractArticle(html, baseUrl, opts = {}) {
+  let doc;
+  try { doc = new DOMParser().parseFromString(String(html), 'text/html'); } catch { return null; }
+  return extractFromDoc(doc, baseUrl, opts);
+}
+
+function extractFromDoc(doc, baseUrl, opts = {}) {
+  doc.querySelectorAll(KILL).forEach((n) => n.remove());
+
+  let best = doc.querySelector('article') || doc.querySelector('[role=main]') || doc.querySelector('main');
+  if (!best) {
+    let bestScore = 0;
+    for (const el of doc.querySelectorAll('div, section')) {
+      const len = (el.textContent || '').trim().length;
+      if (len < 250) continue;
+      const linkText = [...el.querySelectorAll('a')].reduce((s, a) => s + (a.textContent || '').length, 0);
+      const linkDensity = len ? linkText / len : 1;
+      if (linkDensity > 0.5) continue;            // a nav/list, not prose
+      const score = len * (1 - linkDensity) + el.querySelectorAll('p').length * 25;
+      if (score > bestScore) { bestScore = score; best = el; }
+    }
+  }
+  if (!best) return null;
+
+  // DOM sanitize: drop event handlers + dangerous URLs.
+  for (const el of best.querySelectorAll('*')) {
+    for (const attr of [...el.attributes]) {
+      if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
+      else if (/^(href|src|srcset)$/i.test(attr.name) && /^\s*(javascript|vbscript|data):/i.test(attr.value)) el.removeAttribute(attr.name);
+    }
+  }
+  // Resolve relative links/images against the article URL; open links in a tab.
+  for (const a of best.querySelectorAll('a[href]')) { try { a.setAttribute('href', new URL(a.getAttribute('href'), baseUrl).href); a.setAttribute('target', '_blank'); a.setAttribute('rel', 'noopener'); } catch { /* bad href */ } }
+  for (const img of best.querySelectorAll('img[src]')) { try { img.setAttribute('src', new URL(img.getAttribute('src'), baseUrl).href); } catch { /* bad src */ } img.removeAttribute('srcset'); }
+  // Image policy (same as the feed sanitizer): suppress unless allowed.
+  if (!opts.allowImages) {
+    for (const img of best.querySelectorAll('img[src]')) { img.setAttribute('data-weir-src', img.getAttribute('src')); img.removeAttribute('src'); }
+  }
+
+  const out = best.innerHTML.trim();
+  return out.length > 60 ? out : null;
+}
 
 // ── src/js/opml.js ──
 
@@ -5472,6 +5538,7 @@ class Poller {
 
 
 
+
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
 const RENDER_CAP = 300;
@@ -5756,6 +5823,7 @@ class App {
 
     const suppressed = (cached || '').includes('data-weir-src');
     inner += '<div class="ifooter">';
+    if (it.url && !it.full) inner += '<button data-act="fullcontent">load full article ↡</button>';
     if (it.url) inner += '<button data-act="open">open original ↗</button>';
     inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button>`;
     inner += '<button data-act="archive">archive</button>';
@@ -5819,6 +5887,8 @@ class App {
     if (it && !it.read) this.store.setState(id, { read: true });   // counts update via 'item'
     this.renderStream();
     const row = this.rowEl(id); if (row) row.scrollIntoView({ block: 'nearest' });
+    const feed = it && this.store.getFeed(it.feed_id);
+    if (feed?.fetch_full_content && it && it.url && !it.full) this.loadFullContent(id);   // auto-fetch full text
   }
   collapse() { this.expandedId = null; this.renderStream(); }
 
@@ -5835,6 +5905,7 @@ class App {
     const it = this.store.getItem(id);
     if (!it) return;
     if (act === 'open') { if (it.url) window.open(it.url, '_blank', 'noopener'); return; }
+    if (act === 'fullcontent') { this.loadFullContent(id); return; }
     if (act === 'images') { this.loadImages(id); return; }
     if (act === 'save') { this.store.setState(id, { saved: !it.saved }); this._refreshRow(id); return; }
     if (act === 'read') { this.store.setState(id, { read: !it.read }); this._refreshRow(id); return; }
@@ -5857,6 +5928,26 @@ class App {
     el.classList.add('on');
     clearTimeout(this._undoTimer);
     this._undoTimer = setTimeout(() => el.classList.remove('on'), 6000);
+  }
+
+  // Fetch the item's page through the bridge, extract the main article, store it.
+  async loadFullContent(id) {
+    const it = this.store.getItem(id);
+    if (!it || !it.url) return;
+    const slot = this.rowEl(id)?.querySelector('.iexpand .icontent');
+    if (slot) { slot.classList.add('loading'); slot.textContent = 'fetching full article…'; }
+    try {
+      const res = await this.poller.fetch(it.url);
+      const html = await res.text();
+      const feed = this.store.getFeed(it.feed_id);
+      const article = extractArticle(html, it.url, { allowImages: feed?.images_allowed });
+      if (!article) { if (slot) { slot.classList.remove('loading'); slot.textContent = 'Couldn’t extract the article — open the original instead.'; } return; }
+      await this.store.setContent(id, article, { full: true });
+      this._content.set(id, article);
+      this.renderStream();
+    } catch (e) {
+      if (slot) { slot.classList.remove('loading'); slot.textContent = `Fetch failed: ${e.message}`; }
+    }
   }
 
   loadImages(id) {
@@ -5893,6 +5984,7 @@ class App {
       { label: 'Move to folder…', onClick: () => this.moveFeedToFolder(feedId) },
       { label: 'Rename…', onClick: () => this.renameFeed(feedId) },
       { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: async () => { feed.images_allowed = !feed.images_allowed; await this.store.putFeed(feed); } },
+      { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: async () => { feed.fetch_full_content = !feed.fetch_full_content; await this.store.putFeed(feed); } },
       { label: 'Recover history…', onClick: () => this.recoverHistory(feedId) },
       { sep: true },
       { label: 'Remove feed', danger: true, onClick: () => { if (confirm(`Remove "${feed.name}" and its items?`)) { this.store.removeFeed(feedId); if (this.feedFilter === feedId) this.feedFilter = null; this.renderAll(); } } },

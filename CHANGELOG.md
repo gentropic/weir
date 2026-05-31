@@ -6,6 +6,21 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Full-content extraction — read truncated feeds in full — 2026-05-31
+
+- `src/js/extract.js`: lightweight readability (browser DOMParser) — pulls the
+  main article from a fetched page (prefers `<article>`/`<main>`, else the densest
+  low-link text block), sanitizes on the live DOM (drops scripts, event handlers,
+  iframes, javascript:/data: URLs), resolves relative links/images, and applies
+  the image-suppression policy.
+- In the reader, a **"load full article ↡"** button fetches the item's URL through
+  the bridge, extracts, and stores the result (`store.setContent`, marked `full`
+  so it won't re-fetch). Feeds with **Auto-fetch full text** (per-feed toggle in
+  the context menu, or the global `fetch_full_content_default`) do it automatically
+  on open. Truncated feeds now read in full, images included.
+- Verified in headless Chromium (full text in, nav/footer/script out, image
+  suppressed, `full` persisted, button hidden after).
+
 ### UX batch — no-flicker rendering, hoisted controls, help, undo, feed management — 2026-05-31
 
 - **Fixed hover flicker during polling:** poll inserts no longer tear the whole

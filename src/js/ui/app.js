@@ -8,6 +8,7 @@ import { parseOpml, buildOpml } from '../opml.js';
 import { DEFAULT_ROUTING } from '../router.js';
 import { parseWatchDigest } from '../affinity.js';
 import { showMenu } from './menu.js';
+import { extractArticle } from '../extract.js';
 import { recoverFeed } from '../wayback.js';
 import { parseFeed } from '../adapters/feed.js';
 
@@ -295,6 +296,7 @@ export class App {
 
     const suppressed = (cached || '').includes('data-weir-src');
     inner += '<div class="ifooter">';
+    if (it.url && !it.full) inner += '<button data-act="fullcontent">load full article ↡</button>';
     if (it.url) inner += '<button data-act="open">open original ↗</button>';
     inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button>`;
     inner += '<button data-act="archive">archive</button>';
@@ -358,6 +360,8 @@ export class App {
     if (it && !it.read) this.store.setState(id, { read: true });   // counts update via 'item'
     this.renderStream();
     const row = this.rowEl(id); if (row) row.scrollIntoView({ block: 'nearest' });
+    const feed = it && this.store.getFeed(it.feed_id);
+    if (feed?.fetch_full_content && it && it.url && !it.full) this.loadFullContent(id);   // auto-fetch full text
   }
   collapse() { this.expandedId = null; this.renderStream(); }
 
@@ -374,6 +378,7 @@ export class App {
     const it = this.store.getItem(id);
     if (!it) return;
     if (act === 'open') { if (it.url) window.open(it.url, '_blank', 'noopener'); return; }
+    if (act === 'fullcontent') { this.loadFullContent(id); return; }
     if (act === 'images') { this.loadImages(id); return; }
     if (act === 'save') { this.store.setState(id, { saved: !it.saved }); this._refreshRow(id); return; }
     if (act === 'read') { this.store.setState(id, { read: !it.read }); this._refreshRow(id); return; }
@@ -396,6 +401,26 @@ export class App {
     el.classList.add('on');
     clearTimeout(this._undoTimer);
     this._undoTimer = setTimeout(() => el.classList.remove('on'), 6000);
+  }
+
+  // Fetch the item's page through the bridge, extract the main article, store it.
+  async loadFullContent(id) {
+    const it = this.store.getItem(id);
+    if (!it || !it.url) return;
+    const slot = this.rowEl(id)?.querySelector('.iexpand .icontent');
+    if (slot) { slot.classList.add('loading'); slot.textContent = 'fetching full article…'; }
+    try {
+      const res = await this.poller.fetch(it.url);
+      const html = await res.text();
+      const feed = this.store.getFeed(it.feed_id);
+      const article = extractArticle(html, it.url, { allowImages: feed?.images_allowed });
+      if (!article) { if (slot) { slot.classList.remove('loading'); slot.textContent = 'Couldn’t extract the article — open the original instead.'; } return; }
+      await this.store.setContent(id, article, { full: true });
+      this._content.set(id, article);
+      this.renderStream();
+    } catch (e) {
+      if (slot) { slot.classList.remove('loading'); slot.textContent = `Fetch failed: ${e.message}`; }
+    }
   }
 
   loadImages(id) {
@@ -432,6 +457,7 @@ export class App {
       { label: 'Move to folder…', onClick: () => this.moveFeedToFolder(feedId) },
       { label: 'Rename…', onClick: () => this.renameFeed(feedId) },
       { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: async () => { feed.images_allowed = !feed.images_allowed; await this.store.putFeed(feed); } },
+      { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: async () => { feed.fetch_full_content = !feed.fetch_full_content; await this.store.putFeed(feed); } },
       { label: 'Recover history…', onClick: () => this.recoverHistory(feedId) },
       { sep: true },
       { label: 'Remove feed', danger: true, onClick: () => { if (confirm(`Remove "${feed.name}" and its items?`)) { this.store.removeFeed(feedId); if (this.feedFilter === feedId) this.feedFilter = null; this.renderAll(); } } },
