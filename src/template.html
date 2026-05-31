@@ -161,6 +161,26 @@
   </div>
 </div>
 
+<!-- Edit / replace feed -->
+<div class="overlay" id="feededit-overlay" hidden>
+  <div class="panel panel-sm">
+    <div class="panel-head"><span>edit feed</span><span class="rules-error" id="feededit-msg"></span></div>
+    <div class="settings-body">
+      <label class="set-row">name<input type="text" id="fe-name" class="field" autocomplete="off" spellcheck="false"></label>
+      <label class="set-row">feed URL<input type="text" id="fe-url" class="field" autocomplete="off" spellcheck="false" placeholder="https://…"></label>
+      <label class="set-row">folder<input type="text" id="fe-folder" class="field" autocomplete="off" spellcheck="false" placeholder="(none)"></label>
+      <label class="set-row check"><input type="checkbox" id="fe-images"> load images</label>
+      <label class="set-row check"><input type="checkbox" id="fe-full"> auto-fetch full text</label>
+      <label class="set-row check"><input type="checkbox" id="fe-clear"> remove stored items on save (<span id="fe-itemcount">0</span>)</label>
+      <div class="hint">Re-point a hijacked or relocated feed: change the URL, optionally clear the old items, and weir re-polls the new source immediately. Saved items are kept.</div>
+    </div>
+    <div class="panel-foot">
+      <button class="btn" id="feededit-save">Save</button>
+      <button class="btn" id="feededit-close">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Routing rules editor (SPEC §6) -->
 <div class="overlay" id="rules-overlay" hidden>
   <div class="panel">

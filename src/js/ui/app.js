@@ -109,6 +109,8 @@ export class App {
     const affFile = document.getElementById('affinity-file');
     document.getElementById('set-import-affinity')?.addEventListener('click', () => affFile.click());
     affFile?.addEventListener('change', async () => { const f = affFile.files[0]; if (f) await this.importWatchData(await f.text()); affFile.value = ''; });
+    document.getElementById('feededit-save')?.addEventListener('click', () => this.saveFeedEdit());
+    document.getElementById('feededit-close')?.addEventListener('click', () => this.closeFeedEdit());
     document.getElementById('rules-save')?.addEventListener('click', () => this.saveRules());
     document.getElementById('rules-rerun')?.addEventListener('click', () => this.uiRerunRules());
     document.getElementById('rules-close')?.addEventListener('click', () => this.closeRules());
@@ -484,8 +486,7 @@ export class App {
       (feed.site_url || feed.url) && { label: 'Open site ↗', onClick: () => window.open(feed.site_url || feed.url, '_blank', 'noopener') },
       { sep: true },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
-      { label: 'Move to folder…', onClick: () => this.moveFeedToFolder(feedId) },
-      { label: 'Rename…', onClick: () => this.renameFeed(feedId) },
+      { label: 'Edit feed…', onClick: () => this.openFeedEdit(feedId) },
       { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: () => this.store.updateFeed(feedId, { images_allowed: !feed.images_allowed }) },
       { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: () => this.store.updateFeed(feedId, { fetch_full_content: !feed.fetch_full_content }) },
       { label: 'Recover history…', onClick: () => this.recoverHistory(feedId) },
@@ -494,20 +495,53 @@ export class App {
     ].filter(Boolean));
   }
 
-  async moveFeedToFolder(feedId) {
+  openFeedEdit(feedId) {
     const feed = this.store.getFeed(feedId); if (!feed) return;
-    const cat = prompt('Move to folder (leave blank for none):', feed.category || '');
-    if (cat === null) return;
-    await this.store.updateFeed(feedId, { category: cat.trim() || undefined });
-    this.renderRail();
+    this._editingFeed = feedId;
+    const val = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+    val('fe-name', feed.name || '');
+    val('fe-url', feed.url || '');
+    val('fe-folder', feed.category || '');
+    chk('fe-images', feed.images_allowed);
+    chk('fe-full', feed.fetch_full_content);
+    chk('fe-clear', false);
+    const count = (this.store.byFeed.get(feedId) || new Set()).size;
+    document.getElementById('fe-itemcount').textContent = `${count} item${count === 1 ? '' : 's'}`;
+    document.getElementById('feededit-msg').textContent = '';
+    document.getElementById('feededit-overlay').hidden = false;
+    document.getElementById('fe-name').focus();
   }
 
-  async renameFeed(feedId) {
-    const feed = this.store.getFeed(feedId); if (!feed) return;
-    const name = prompt('Rename feed:', feed.name);
-    if (name === null || !name.trim()) return;
-    await this.store.updateFeed(feedId, { name: name.trim() });
-    this.renderRail();
+  closeFeedEdit() { document.getElementById('feededit-overlay').hidden = true; this._editingFeed = null; }
+
+  async saveFeedEdit() {
+    const feedId = this._editingFeed;
+    const feed = feedId && this.store.getFeed(feedId);
+    if (!feed) return this.closeFeedEdit();
+    const v = (id) => document.getElementById(id).value.trim();
+    const chk = (id) => document.getElementById(id).checked;
+    const name = v('fe-name'); const url = v('fe-url');
+    if (!url) { document.getElementById('feededit-msg').textContent = 'feed URL is required'; return; }
+    try { new URL(url); } catch { document.getElementById('feededit-msg').textContent = 'not a valid URL'; return; }
+
+    const urlChanged = url !== feed.url;
+    const patch = {
+      name: name || feed.name,
+      url,
+      category: v('fe-folder') || undefined,
+      images_allowed: chk('fe-images'),
+      fetch_full_content: chk('fe-full'),
+    };
+    if (urlChanged) patch.next_poll_at = Date.now();   // re-point → poll the new source now
+    await this.store.updateFeed(feedId, patch);
+    if (chk('fe-clear')) await this.store.clearFeedItems(feedId);
+    this.closeFeedEdit();
+    this.renderAll();
+    if (urlChanged) {   // fetch immediately so the new source's items appear without waiting for the cycle
+      const fresh = this.store.getFeed(feedId);
+      if (fresh) this.poller.pollFeed(fresh).then(() => this.renderAll()).catch(() => {});
+    }
   }
 
   openHelp() { document.getElementById('help-overlay').hidden = false; }
@@ -531,7 +565,7 @@ export class App {
   onKey(e) {
     // Esc closes any open overlay first, from anywhere.
     if (e.key === 'Escape') {
-      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay']) {
+      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; return; }
       }
@@ -542,6 +576,7 @@ export class App {
         if (e.target === this.searchEl) { e.target.value = ''; this.searchText = ''; this.renderStream(); }
         else if (e.target.id === 'rules-text') { this.closeRules(); }
         else if (e.target.closest('#settings-overlay')) { this.closeSettings(); }
+        else if (e.target.closest('#feededit-overlay')) { this.closeFeedEdit(); }
         e.target.blur();
       }
       return;

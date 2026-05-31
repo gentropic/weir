@@ -164,6 +164,26 @@ export class Store {
     this.emit('feed', { id, removed: true });
   }
 
+  // Remove all of a feed's items (and their stored content), saved items exempt.
+  // For re-pointing a feed to a new source — the old items belong to the old
+  // URL. Unlike prune(), it does NOT tombstone: the new source has its own ids,
+  // and we don't want a stale-id guard blocking them.
+  async clearFeedItems(feedId) {
+    const set = this.byFeed.get(feedId);
+    if (!set) return { removed: 0 };
+    let removed = 0;
+    for (const id of [...set]) {
+      const r = this.items.get(id);
+      if (!r || r.saved) continue;
+      this.items.delete(id);
+      set.delete(id);
+      await this._deleteContent(r);
+      removed++;
+    }
+    if (removed) { this._markFeedDirty(feedId); this.emit('items', { inserted: 0, updated: 0, skipped: 0, removed }); }
+    return { removed };
+  }
+
   // ── items ──
   // Dedup guards on insert (SPEC §5): a tombstoned id is never resurrected; an
   // existing id updates mutable fields only — never read/saved/archived/tags.

@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Edit / replace feed dialog — 2026-05-31
+
+- Feed context menu → **"Edit feed…"** opens a dialog to change a feed's **name,
+  URL, folder**, image + full-text flags, and — for hijacked or relocated feeds —
+  **"remove stored items on save"**. Changing the URL re-points the feed (resets
+  `next_poll_at`) and **re-polls the new source immediately**, so replacement
+  items appear without waiting for the cycle. Replaces the old prompt-based
+  Rename / Move-to-folder menu items.
+- New `Store.clearFeedItems(feedId)` — drops a feed's items + their content,
+  **saved items exempt**, and (unlike `prune`) writes no tombstone, so the new
+  source's ids flow in freely. The motivating case: the PSF FeedBurner feed had
+  been hijacked into Vietnamese shoe spam; now it's a one-dialog fix.
+
 ### Rail polish: favicons + density toggle — 2026-05-31
 
 - **Feed favicons in the source rail.** Each feed's site icon is fetched once —

@@ -63,4 +63,25 @@ assert.equal(reopened.archived.has('arxiv:2026.003'), true, 'tombstone survived 
 assert.equal(reopened.getItem('arxiv:2026.001').read, true, 'read flag survived reload');
 assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content survived reload');
 
+// clearFeedItems: drop a feed's items without tombstoning (feed re-point),
+// saved items exempt; the new source's ids can flow in afterward.
+{
+  const s2 = new Store(await VFS.create());
+  await s2._hydrate();
+  await s2.putFeed({ id: 'hijacked', name: 'Hijacked', url: 'https://spam.example/feed' });
+  await s2.upsertItems([
+    { id: 'spam-1', feed_id: 'hijacked', title: 'Giay 1', content: 'x' },
+    { id: 'spam-2', feed_id: 'hijacked', title: 'Giay 2' },
+    { id: 'keep-me', feed_id: 'hijacked', title: 'accidentally saved' },
+  ]);
+  s2.setState('keep-me', { saved: true });
+  assert.deepEqual(await s2.clearFeedItems('hijacked'), { removed: 2 }, 'cleared the two non-saved items');
+  assert.equal(s2.getItem('spam-1'), null, 'spam gone');
+  assert.equal(s2.getItem('keep-me').saved, true, 'saved item kept');
+  assert.equal((s2.byFeed.get('hijacked') || new Set()).size, 1, 'feed index reflects removal');
+  // No tombstone → the new source can deliver fresh ids freely.
+  const r2 = await s2.upsertItems([{ id: 'real-1', feed_id: 'hijacked', title: 'Real PSF news' }]);
+  assert.deepEqual(r2, { inserted: 1, updated: 0, skipped: 0 }, 'new source items flow in (no tombstone block)');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

@@ -14,7 +14,20 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
 - ~~**Feed favicons** in the rail for visual scanning.~~ ✅ Shipped 2026-05-31 —
   lazy/polite fetch via the bridge, cached as `data:` URLs, deterministic letter
   monogram fallback.
+  - **Follow-up: `<link rel="icon">` fallback.** The fetcher only tries
+    `<origin>/favicon.ico`. Sites that declare their icon only in HTML (no root
+    `.ico`) keep the monogram. Add a second pass: fetch the home page, parse
+    `<link rel="icon"|"shortcut icon"|"apple-touch-icon">`, resolve + fetch that.
+    Gated behind the same politeness throttle; only for feeds that missed the
+    `.ico`.
 - ~~**Density toggle** (compact ↔ comfortable item rows).~~ ✅ Shipped 2026-05-31.
+- ~~**Edit feed URL.**~~ ✅ Shipped 2026-05-31 — the feed context menu's
+  "Edit feed…" opens a dialog (name, URL, folder, images, full-text, **+ "remove
+  stored items on save"**). Changing the URL resets `next_poll_at` and re-polls
+  the new source immediately; `clearFeedItems` drops the old items (saved-exempt,
+  no tombstone). Motivated by a real hijack: the abandoned FeedBurner proxy
+  `feeds.feedburner.com/PythonSoftwareFoundationNews` now serves SEO spam instead
+  of `pyfound.blogspot.com` — now a one-dialog fix.
 - **Manual reorder within a folder.** Regroup (move-to-folder) + rename already
   exist via the feed context menu; this adds a manual `feed.order` to override the
   affinity/name sort. (Drag deferred — context-menu "move up/down" likely enough.)
@@ -28,6 +41,13 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
   effortless and gentle. The default is now a flat 3h; this makes it adaptive.
 - **Source-health view** (SPEC §9 v0.3): per-feed history, last-known-good,
   surfacing slow/failing feeds; auto-archive after a failure threshold.
+- **Feed-hijack / drift detection.** A live feed can be quietly taken over —
+  expired domains and abandoned FeedBurner proxies get repurposed into SEO spam
+  (real case: the PSF FeedBurner feed now emits Vietnamese shoe listings). Signals
+  to flag a feed as *suspect* in the rail: a sudden language shift vs. the feed's
+  history, the `<title>`/`<link>` host diverging from the subscribed origin, every
+  recent author collapsing to one (`admin`), or a burst of near-duplicate titles.
+  Cheap heuristics over the items we already store; pairs with "Edit feed URL".
 - **Bridge v0.2 conditional GETs.** When `@gcu/bridge` ships ETag/If-Modified-Since
   caching, wire `etag`/`last_modified` (already on the Feed model) for polite polls.
 - **Search v0.2.** Swap the cursor scan for a MiniSearch/`@gcu/librarian` inverted
