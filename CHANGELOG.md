@@ -25,9 +25,14 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
   calls + tokens; for NanoGPT the **billed input tokens (×2 on GLM-5.1 /
   DeepSeek-V4-Pro)** — the unit its subscription meters. Surfaced in Settings →
   **AI cataloger** (provider/model/base-url/key + a usage readout + a "check
-  allowance" gauge). Try one item: `await __weir.catalogItemLLM('<id>')`. Next:
-  the per-item / batch UI + a `needs_review` review queue, then the catalog
-  browser's empty facets start filling in.
+  allowance" gauge).
+- **Catalog UI:** a per-item **"Catalog with AI"** in the item menu, a **batch**
+  "catalog ▸" button in the Facets rail (one at a time, paced ~400ms,
+  click-to-stop — gentle on the NPU), and a catalog status line. The payoff: the
+  **catalog browser now sources enriched facets from the cards**, so the empty
+  `domain`/`method`/… facet columns **fill in live** as items get cataloged
+  (Stage-0 facets for un-cataloged items, LLM facets once enriched). Next: a
+  `needs_review` review queue, and proposed `related` edges.
 
 ### Glass: catalog Stage 0 — weir speaks the glass format — 2026-06-01
 

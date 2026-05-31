@@ -20,10 +20,10 @@ the trigger/query layer on top.
 - **Stage 1 — the cataloger service.** ✅ *Foundation shipped 2026-06-01*
   (`llm.js` provider client, `llmkeys.js` OPFS vault, `cataloger.js` bounded call
   filling the language facets + abstract, `Store.writeCard`/usage ledger, Settings
-  → AI cataloger). **Remaining:** the per-item "catalog" action + batch run
-  (on-keep, Ollama-first), a `needs_review` **review queue** to confirm/correct,
-  proposed typed `related` edges, and the catalog browser filling in its empty
-  facets live as items get enriched.
+  → AI cataloger; **per-item + batch catalog UI**, and the **catalog browser
+  fills in enriched facets live**). **Remaining:** a `needs_review` **review
+  queue** to confirm/correct the librarian, proposed typed `related` edges, and a
+  persisted `/glass-index/` so the browser scales past loading every card.
 - **Stage 2 — the query side.** Facet-intersection + thesaurus broaden/narrow (this
   *is* search v2); navigable emergent graph.
 - **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +

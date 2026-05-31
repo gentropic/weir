@@ -19,6 +19,7 @@ import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle
 import { facetsOf, FACETS } from '../glass.js';
 import { getKey, hasKey, saveKey } from '../llmkeys.js';
 import { fetchUsageGauge } from '../llm.js';
+import { catalogStoreItem } from '../cataloger.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
@@ -108,6 +109,7 @@ export class App {
 
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
     document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
+    document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -334,12 +336,68 @@ export class App {
     this.renderAll();
   }
 
-  // ── glass catalog: faceted browse (GLASS.md §8 facet intersection, Stage 0) ──
+  // ── glass catalog: faceted browse (GLASS.md §8 facet intersection) ──
   setCatalog() {
     this.catalog = this.catalog || { filters: {} };
     this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null;
     this.selectedId = null; this.expandedId = null;
     this.renderAll();
+    // Enrich the browser with cataloged cards' LLM facets once they load.
+    this.loadCardFacets().then(() => { if (this.catalog) this.renderAll(); });
+  }
+
+  // Cache item_id → enriched card facets for cataloged items, so the facet
+  // browser shows the LLM-assigned facets (not just the Stage-0 deterministic
+  // ones). Un-cataloged items fall back to facetsOf() live.
+  async loadCardFacets() {
+    const map = new Map();
+    for (const item of this.store.items.values()) {
+      if (!item.glass_id) continue;
+      try { const c = await this.store.getCard(item.glass_id); if (c && c.facets) map.set(item.id, c.facets); } catch { /* skip */ }
+    }
+    this._cardFacets = map;
+  }
+
+  // ── glass cataloger (Stage 1): per-item + gentle batch ──
+  _catStatus(text) { const el = document.getElementById('catalog-status'); if (el) el.textContent = text || ''; }
+
+  async _catalogOpts() {
+    const s = this.store.getSettings();
+    const provider = s.catalog_provider || 'ollama';
+    return { provider, model: s.catalog_model, baseUrl: s.catalog_base_url, key: await getKey(provider), fetch: this.poller.fetch };
+  }
+
+  async catalogItem(id) {
+    const it = this.store.getItem(id); if (!it) return null;
+    this._catStatus(`cataloging “${(it.title || '').slice(0, 40)}”…`);
+    try {
+      const r = await catalogStoreItem(this.store, id, await this._catalogOpts());
+      if (this._cardFacets) this._cardFacets.set(id, r.card.facets);
+      const dom = (r.card.facets.domain || []).join(', ');
+      this._catStatus(`cataloged${dom ? ' · ' + dom : ''}${r.ok ? '' : ' (needs review)'}`);
+      if (this.catalog) this.renderAll();
+      this.renderCatUsage();
+      return r;
+    } catch (e) { this._catStatus(`catalog failed: ${e.message}`); return null; }
+  }
+
+  // Catalog the currently-shown items that aren't cataloged yet — one at a time,
+  // paced (gentle on the NPU + the machine), cancelable.
+  async catalogVisible() {
+    if (this._cataloging) { this._cataloging.cancel = true; return; }
+    const todo = this.items.filter((i) => !i.glass_id);
+    if (!todo.length) { this._catStatus('nothing to catalog here'); return; }
+    const job = this._cataloging = { cancel: false };
+    let n = 0;
+    for (const it of todo) {
+      if (job.cancel) break;
+      this._catStatus(`cataloging ${++n}/${todo.length}…  (click to stop)`);
+      await this.catalogItem(it.id).catch(() => {});
+      if (!job.cancel) await new Promise((r) => setTimeout(r, 400));   // pace it
+    }
+    this._cataloging = null;
+    this._catStatus(`cataloged ${n} item${n === 1 ? '' : 's'}${job.cancel ? ' (stopped)' : ''}`);
+    if (this.catalog) this.renderAll();
   }
 
   // In-memory inverted index over the live (Stage-0, deterministic) facets:
@@ -349,7 +407,7 @@ export class App {
     const idx = {}; for (const f of FACETS) idx[f] = new Map();
     for (const item of this.store.items.values()) {
       if (item.archived) continue;
-      const f = facetsOf(item, this.store.getFeed(item.feed_id));
+      const f = (this._cardFacets && this._cardFacets.get(item.id)) || facetsOf(item, this.store.getFeed(item.feed_id));
       for (const facet of FACETS) for (const term of (f[facet] || [])) {
         let s = idx[facet].get(term); if (!s) idx[facet].set(term, s = new Set());
         s.add(item.id);
@@ -689,6 +747,8 @@ export class App {
       { label: it.saved ? 'Unsave' : 'Save', onClick: () => this.doAct('save', id) },
       { label: it.read ? 'Mark unread' : 'Mark read', onClick: () => this.doAct('read', id) },
       { label: it.archived ? 'Unarchive' : 'Archive', onClick: () => { if (it.archived) { this.store.setState(id, { archived: false }); this.reflectItem(id); } else this.doAct('archive', id); } },
+      { sep: true },
+      { label: it.glass_id ? 'Re-catalog with AI' : 'Catalog with AI', onClick: () => this.catalogItem(id) },
       it.url && { label: 'Copy link', onClick: () => navigator.clipboard?.writeText(it.url).catch(() => {}) },
     ].filter(Boolean));
   }

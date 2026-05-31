@@ -63,6 +63,8 @@ body {
 .facet-term.active .ft-name { color: var(--au-action); }
 .facet-term .ft-count { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); flex-shrink: 0; }
 .facet-more { padding: 2px 8px 2px 22px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
+.rail-label #cat-run { float: right; font-size: 10px; text-transform: none; letter-spacing: 0; }
+#catalog-status { color: var(--au-action); }
 
 /* folder headers in the source rail */
 .cat-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px 4px; margin-top: 6px; cursor: pointer; user-select: none; border-radius: var(--au-radius); }
