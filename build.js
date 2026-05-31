@@ -23,7 +23,9 @@ const SRC = path.join(ROOT, 'src');
 const VENDOR = path.join(ROOT, 'vendor');
 
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-const BUILD_DATE = new Date().toISOString().slice(0, 10);
+// Empty by default so `node build.js` is deterministic (same src → same
+// index.html, no daily churn in git). Set WEIR_BUILD_DATE=YYYY-MM-DD for releases.
+const BUILD_DATE = process.env.WEIR_BUILD_DATE || '';
 
 // ── Module inliner ────────────────────────────────────────────────────────
 
@@ -133,8 +135,8 @@ const css = buildCss();
 const template = fs.readFileSync(path.join(SRC, 'template.html'), 'utf8');
 
 const html = `<!DOCTYPE html>
-<!-- @gcu/weir ${pkg.version} — a unified reader for timestamped streams. -->
-<!-- Built ${BUILD_DATE} from src/ via build.js. https://github.com/gentropic/weir -->
+<!-- @gcu/weir ${pkg.version}${BUILD_DATE ? ` (${BUILD_DATE})` : ''} — a unified reader for timestamped streams. -->
+<!-- Built from src/ via build.js. https://github.com/gentropic/weir -->
 ${licensesComment()}<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">

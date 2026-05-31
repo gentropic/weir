@@ -205,7 +205,11 @@ export class App {
     return `<section class="onboard">
       <div class="onboard-glyph">⬓</div>
       <h2>No feeds yet</h2>
-      <p>Paste a feed (or site) URL in the box up top to start, or try one:</p>
+      <p>Import an OPML export (Inoreader, Feedly, …) — you can pick several files at once. Or paste a single feed URL in the box up top.</p>
+      <div class="onboard-actions">
+        <button class="btn btn-primary" data-onboard="import">Import OPML…</button>
+      </div>
+      <p class="onboard-or">or try one:</p>
       <div class="onboard-actions">
         <button class="btn" data-sample="https://hnrss.org/frontpage">Hacker News</button>
         <button class="btn" data-sample="https://www.theverge.com/rss/index.xml">The Verge</button>
@@ -281,6 +285,8 @@ export class App {
 
   // ── interaction ──
   onStreamClick(e) {
+    const onb = e.target.closest('[data-onboard]');
+    if (onb) { if (onb.dataset.onboard === 'import') document.getElementById('opml-file')?.click(); return; }
     const imp = e.target.closest('[data-import]');
     if (imp) { this.runImport(imp.dataset.import); return; }
     const sample = e.target.closest('[data-sample]');

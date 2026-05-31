@@ -6,15 +6,24 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### UI polish — themed scrollbars + obvious onboarding — 2026-05-31
+
+- Scrollbars themed to the dark surfaces (Firefox `scrollbar-color` + WebKit
+  `::-webkit-scrollbar`) — no more default light scrollbar in the panels.
+- Empty-state onboarding leads with a prominent **Import OPML…** button (opens the
+  multi-file picker) and clearer copy, so adding your exports is obvious instead of
+  hidden behind the small topbar link.
+
 ### GitHub Pages deploy — 2026-05-31
 
-- Build output renamed `weir.html` → **`index.html`** (the web-serving / Pages
-  convention). Updated the SW shell, dev server, and docs accordingly. Still a
-  single self-contained file; still gitignored (built, not committed).
-- `.github/workflows/pages.yml`: builds `index.html` + stages the PWA assets
-  (manifest, sw.js, icons) and deploys to GitHub Pages on every push to main — so
-  the artifact never lives in git, CI produces it fresh. One-time repo setting:
-  Pages → Source → "GitHub Actions".
+- Build output renamed `weir.html` → **`index.html`** (web-serving / Pages
+  convention); SW shell, dev server, and docs updated.
+- The built `index.html` is now **committed** (no longer gitignored) so GitHub
+  Pages "deploy from a branch" serves it directly — no CI/source-flip needed.
+  `.nojekyll` keeps Pages from rendering the README instead. To make this painless,
+  the build is **deterministic**: `BUILD_DATE` is empty unless `WEIR_BUILD_DATE` is
+  set, so `node build.js` produces byte-identical output and only re-diffs when
+  `src/` actually changes.
 
 ### multi-file OPML import — 2026-05-31
 
