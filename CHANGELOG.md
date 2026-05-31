@@ -6,7 +6,23 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
-### Catalog: fix card-id collision + add cleanup — 2026-05-31
+### WebMCP: drive weir from Claude Code — 2026-05-31
+
+- weir now speaks **WebMCP** (`@gcu/webmcp`): Claude Code can read the corpus over
+  localhost. Vendored the shim (`vendor/webmcp-shim.js`, installs
+  `navigator.modelContext` + `window.gcuWebMCP`) and added an adapter
+  (`src/js/webmcp.js`) registering three **read-only** tools — `weir_queryItems`
+  (search/filter), `weir_getItem` (one item + glass facets + optional body text),
+  `weir_listFacets` (catalog facets with counts across the corpus). Mutations come
+  later, behind confirmation.
+- **Transport built for the deployed PWA.** The adapter injects `gcuFetch` into the
+  shim, so on a public origin (gentropic.org/weir) the WebMCP traffic rides the
+  **@gcu/bridge** extension to reach `localhost` — same path as the Lemonade
+  cataloger — sidestepping Chromium's public→loopback (PNA) block on `ws://`.
+- **Connect once.** Settings → **Claude (WebMCP)**: paste the `port:token` from
+  `node webmcp-bridge.js --app weir --port 7801 --info`, connect, and weir
+  remembers it (origin-local, never in backups). A status-bar `mcp` indicator
+  shows the connection. `.mcp.json` wires the bridge for the repo (port 7801).
 
 - **Bug fix — cross-contaminated catalog cards.** `buildCard` fabricated a
   default `glass_id` of `glass-YYYYMMDD-001` whenever none was passed, so *every*

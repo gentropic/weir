@@ -11,6 +11,7 @@ import { App } from './ui/app.js';
 import { initPwa, setAutoCheck } from './pwa.js';
 import { loadHandle, handlePermission } from './fsmount.js';
 import { catalogStoreItem } from './cataloger.js';
+import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
@@ -91,6 +92,13 @@ async function boot() {
   app.mount();
   poller.start();
 
+  // WebMCP — register weir's tools on the shim-polyfilled navigator.modelContext
+  // and reconnect to the bridge if a connection string was saved. gcuFetch is the
+  // injected transport so it works from the deployed (public-origin) PWA too.
+  const webmcp = initWebmcp({ store, app, fetch: gcuFetch });
+  app.webmcp = webmcp;
+  app.renderWebmcpStatus(webmcp ? webmcp.state() : 'unavailable');
+
   const retainer = new Retainer(store);   // archives expired items (never deletes); off until enabled
   retainer.start();
 
@@ -108,7 +116,7 @@ async function boot() {
       const key = o.key || (await getKey(provider));
       return catalogStoreItem(store, id, { provider, model: o.model || s.catalog_model, baseUrl: o.baseUrl || s.catalog_base_url, key, fetch: gcuFetch, ...o });
     },
-    parseFeed, feedAdapter, gcuFetch };
+    webmcp, parseFeed, feedAdapter, gcuFetch };
 
   try {
     let persisted = false;

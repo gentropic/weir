@@ -116,6 +116,7 @@ export class App {
     document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
+    document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -1243,6 +1244,26 @@ export class App {
   }
 
   // ── settings ──
+  // WebMCP (Claude Code bridge) connection state → status bar + settings.
+  renderWebmcpStatus(state) {
+    const s = state || (this.webmcp ? this.webmcp.state() : 'unavailable');
+    const bar = document.getElementById('webmcp-status');
+    if (bar) { bar.textContent = s === 'connected' ? 'mcp' : s === 'connecting' ? 'mcp…' : s === 'error' ? 'mcp err' : ''; bar.dataset.state = s; }
+    const lab = document.getElementById('set-webmcp-state');
+    if (lab) lab.textContent = (this.webmcp && this.webmcp.available) ? s : 'unavailable (shim not loaded)';
+    const btn = document.getElementById('set-webmcp-toggle');
+    if (btn) btn.textContent = (s === 'connected' || s === 'connecting') ? 'disconnect' : 'connect';
+  }
+
+  toggleWebmcp() {
+    if (!this.webmcp || !this.webmcp.available) { this.renderWebmcpStatus('unavailable'); return; }
+    const st = this.webmcp.state();
+    if (st === 'connected' || st === 'connecting') { this.webmcp.disconnect(); this.renderWebmcpStatus(); return; }
+    const input = document.getElementById('set-webmcp-conn');
+    try { this.webmcp.connect((input && input.value) || ''); }
+    catch (e) { const lab = document.getElementById('set-webmcp-state'); if (lab) lab.textContent = e.message; }
+  }
+
   async openSettings() {
     const s = this.store.getSettings();
     const val = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
@@ -1259,6 +1280,8 @@ export class App {
     val('set-cat-baseurl', s.catalog_base_url || '');
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
+    { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
+    this.renderWebmcpStatus();
     chk('set-retention', s.retention_enabled);
     chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));

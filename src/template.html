@@ -74,6 +74,7 @@
         <span id="notify-status"></span>
       </div>
       <div class="right">
+        <span id="webmcp-status" title="WebMCP — Claude Code connection"></span>
         <span id="bridge-status">bridge: …</span>
         <span id="persist-status">—</span>
         <span>store <span id="storage-usage">— / —</span></span>
@@ -178,6 +179,12 @@
         <div class="set-row"><span id="cat-usage">no LLM usage yet</span><button class="btn-link" id="set-cat-gauge" type="button">check allowance</button></div>
         <div class="set-row"><span>Catalog maintenance</span><button class="btn-link" id="set-cat-clear" type="button" title="Delete all catalog cards and un-file every item (items &amp; reading state kept)">clear catalog</button></div>
         <div class="hint">The librarian that fills the language facets. Ollama runs locally (free, nothing leaves your machine). Keys are stored encrypted-out-of-band (OPFS), never in backups or the mounted folder. Cloud providers need their origin added to the bridge allowlist once.</div>
+      </section>
+      <section class="set-group">
+        <h4>Claude (WebMCP)</h4>
+        <div class="set-row"><span>status: <b id="set-webmcp-state">—</b></span><button class="btn-link" id="set-webmcp-toggle" type="button">connect</button></div>
+        <label class="set-row">connection<input type="text" id="set-webmcp-conn" class="field" autocomplete="off" spellcheck="false" placeholder="port:token (e.g. 7801:…)"></label>
+        <div class="hint">Lets Claude Code read weir's corpus over localhost via <b>@gcu/webmcp</b> (read-only: query items, get an item, list facets). Run <code>node webmcp-bridge.js --app weir --port 7801 --info</code> in the webmcp repo to get the connection string, paste it, and connect — weir remembers it (origin-local, never in backups). Uses the same @gcu/bridge extension as the cataloger to reach localhost.</div>
       </section>
       <section class="set-group">
         <h4>Updates</h4>

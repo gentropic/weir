@@ -9,6 +9,7 @@
 
 import '../../vendor/vfs.js';            // → VFS, IDBBackend, OPFSBackend, FSAABackend, path, …
 import '../../vendor/bridge-client.js';  // → gcuFetch, hasBridge, bridgeVersion, clearBridgeCache
+import '../../vendor/webmcp-shim.js';    // → window.gcuWebMCP + navigator.modelContext polyfill (IIFE)
 import './store/schema.js';              // data model + helpers (before store)
 import './affinity.js';                  // → channelIdOf, affinityScore (before store)
 import './glass.js';                     // → buildCard, nextGlassId (glass catalog; before store)
@@ -35,4 +36,5 @@ import './ui/format.js';                 // → relativeTime, sparkPoints, … (
 import './ui/menu.js';                    // → showMenu (context menus)
 import './poller.js';                    // → Poller
 import './ui/app.js';                    // → App (uses format)
+import './webmcp.js';                    // → buildWeirTools, initWebmcp (WebMCP adapter; after app)
 import './boot.js';                      // boots on DOMContentLoaded

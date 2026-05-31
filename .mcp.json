@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "webmcp-weir": {
+      "command": "node",
+      "args": ["../webmcp/webmcp-bridge.js", "--app", "weir", "--port", "7801"]
+    }
+  }
+}

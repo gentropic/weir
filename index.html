@@ -525,6 +525,7 @@ body {
         <span id="notify-status"></span>
       </div>
       <div class="right">
+        <span id="webmcp-status" title="WebMCP — Claude Code connection"></span>
         <span id="bridge-status">bridge: …</span>
         <span id="persist-status">—</span>
         <span>store <span id="storage-usage">— / —</span></span>
@@ -629,6 +630,12 @@ body {
         <div class="set-row"><span id="cat-usage">no LLM usage yet</span><button class="btn-link" id="set-cat-gauge" type="button">check allowance</button></div>
         <div class="set-row"><span>Catalog maintenance</span><button class="btn-link" id="set-cat-clear" type="button" title="Delete all catalog cards and un-file every item (items &amp; reading state kept)">clear catalog</button></div>
         <div class="hint">The librarian that fills the language facets. Ollama runs locally (free, nothing leaves your machine). Keys are stored encrypted-out-of-band (OPFS), never in backups or the mounted folder. Cloud providers need their origin added to the bridge allowlist once.</div>
+      </section>
+      <section class="set-group">
+        <h4>Claude (WebMCP)</h4>
+        <div class="set-row"><span>status: <b id="set-webmcp-state">—</b></span><button class="btn-link" id="set-webmcp-toggle" type="button">connect</button></div>
+        <label class="set-row">connection<input type="text" id="set-webmcp-conn" class="field" autocomplete="off" spellcheck="false" placeholder="port:token (e.g. 7801:…)"></label>
+        <div class="hint">Lets Claude Code read weir's corpus over localhost via <b>@gcu/webmcp</b> (read-only: query items, get an item, list facets). Run <code>node webmcp-bridge.js --app weir --port 7801 --info</code> in the webmcp repo to get the connection string, paste it, and connect — weir remembers it (origin-local, never in backups). Uses the same @gcu/bridge extension as the cataloger to reach localhost.</div>
       </section>
       <section class="set-group">
         <h4>Updates</h4>
@@ -3987,6 +3994,264 @@ async function gcuFetch(url, opts = {}) {
   }
 }
 
+// ── vendor/webmcp-shim.js ──
+
+// @gcu/webmcp shim — WebMCP polyfill + WebSocket/HTTP bridge client.
+// Generic: knows nothing about any specific app. Drop it into any page; it
+// installs navigator.modelContext (registerTool/unregisterTool) and a small
+// window.gcuWebMCP control surface, then relays tool calls to a @gcu/webmcp
+// bridge over localhost. Tries WebSocket first; falls back to HTTP long-polling
+// (which works from file:// origins where WS is blocked).
+//
+// Plain script, no imports/exports — inlines cleanly into any single-file build.
+//
+// Connect: gcuWebMCP.connect("PORT:TOKEN")  (the page usually stores PORT:TOKEN
+// in its own config after a one-time paste, then reconnects silently). Or append
+// #mcp=PORT:TOKEN to the URL. Set gcuWebMCP.name to a stable per-app id ("weir").
+//
+// Public-origin transport: a page served from a PUBLIC https origin (e.g.
+// gentropic.org/weir) can't reach ws://localhost — Chromium's Local/Private
+// Network Access gates public→loopback, and the WS upgrade can't carry the
+// preflight. Set `gcuWebMCP.fetch = gcuFetch` (the @gcu/bridge extension's
+// brokered fetch, the same one weir uses for Lemonade) and the shim routes its
+// HTTP long-poll transport through it, sidestepping the page-origin gate.
+// Injecting a fetch forces the HTTP transport (WS is skipped). On localhost/
+// file:// dev, leave it unset and WS/direct-HTTP are used.
+
+(function () {
+  var PROTOCOL = 1;
+
+  var _tools = new Map();
+  var _transport = null;            // { type: 'ws'|'http', ... }
+  var _state = 'disconnected';      // disconnected | connecting | connected | error
+  var _clientId = null;
+  var _portAndToken = null;
+  var _reconnectTimer = null;
+  var _name = null;
+  var _onStateChange = null;
+  var _fetch = null;                // injected fetch for the HTTP transport (e.g. gcuFetch)
+
+  // HTTP-transport fetch: the injected one if set, else the global. Injecting one
+  // also forces the HTTP transport (see _connect) — that's the public-origin path.
+  function _doFetch(url, opts) { return (_fetch || fetch)(url, opts); }
+
+  function _setState(s) {
+    _state = s;
+    if (_onStateChange) { try { _onStateChange(s, _clientId); } catch (e) { /* host callback */ } }
+    // Optional best-effort status element; apps normally use onStateChange instead.
+    var el = (typeof document !== 'undefined') && document.getElementById('gcu-mcp-status');
+    if (el) {
+      el.textContent = s === 'connected' ? ('mcp ' + (_clientId || '')) : s === 'connecting' ? 'mcp…' : s === 'error' ? 'mcp err' : '';
+      el.className = 'gcu-mcp-status mcp-' + s;
+    }
+  }
+
+  function _serializeTools() {
+    var tools = [];
+    _tools.forEach(function (tool) {
+      tools.push({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema || undefined, annotations: tool.annotations || undefined });
+    });
+    return tools;
+  }
+
+  function _derivedName() {
+    var title = (typeof document !== 'undefined' && document.title) || 'surface';
+    // Strip a leading "AppName — " / "AppName - " prefix, then slugify.
+    title = title.replace(/^[^—–\-]{1,40}\s*[—–\-]+\s*/, '');
+    return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'surface';
+  }
+
+  function _effectiveName() { return _name || _derivedName(); }
+
+  // ── transport-agnostic send ──
+
+  function _send(obj) {
+    if (!_transport) return;
+    if (_transport.type === 'ws') {
+      if (_transport.ws && _transport.ws.readyState === WebSocket.OPEN) _transport.ws.send(JSON.stringify(obj));
+    } else if (_transport.type === 'http') {
+      _httpSend(obj);
+    }
+  }
+
+  // ── WebSocket transport ──
+
+  function _connectWs(port, token) {
+    return new Promise(function (resolve, reject) {
+      var ws;
+      try { ws = new WebSocket('ws://localhost:' + port); } catch (e) { return reject(e); }
+      var timer = setTimeout(function () { ws.close(); reject(new Error('timeout')); }, 3000);
+
+      ws.onopen = function () {
+        clearTimeout(timer);
+        _transport = { type: 'ws', ws: ws };
+        _send({ type: 'hello', protocol: PROTOCOL, title: (typeof document !== 'undefined' && document.title) || 'Untitled', name: _effectiveName(), path: (typeof location !== 'undefined' && location.href) || '', token: token });
+        _send({ type: 'tools_changed', tools: _serializeTools() });
+        resolve();
+      };
+      ws.onmessage = function (event) { var msg; try { msg = JSON.parse(event.data); } catch (e) { return; } _handleMessage(msg); };
+      ws.onclose = function () {
+        if (!_transport || _transport.type !== 'ws' || _transport.ws !== ws) return;
+        _clientId = null; _transport = null; _setState('disconnected');
+        if (_portAndToken) _reconnectTimer = setTimeout(function () { _connect(_portAndToken); }, 2000);
+      };
+      ws.onerror = function () { clearTimeout(timer); reject(new Error('ws failed')); };
+    });
+  }
+
+  // ── HTTP polling transport ──
+
+  function _httpSend(obj) {
+    if (!_transport || _transport.type !== 'http') return;
+    var t = _transport;
+    _doFetch('http://localhost:' + t.port + '/send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: t.token, id: t.id, message: obj }),
+    }).catch(function () { /* poll will detect disconnect */ });
+  }
+
+  function _connectHttp(port, token) {
+    _setState('connecting');
+    return _doFetch('http://localhost:' + port + '/connect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ protocol: PROTOCOL, token: token, title: (typeof document !== 'undefined' && document.title) || 'Untitled', name: _effectiveName(), path: (typeof location !== 'undefined' && location.href) || '' }),
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data.type === 'error') throw new Error(data.message);
+      _transport = { type: 'http', port: port, token: token, id: data.id, polling: true };
+      _clientId = data.id;
+      _setState('connected');
+      _httpSend({ type: 'tools_changed', tools: _serializeTools() });
+      _pollLoop();
+    });
+  }
+
+  function _pollLoop() {
+    if (!_transport || _transport.type !== 'http' || !_transport.polling) return;
+    var t = _transport;
+    _doFetch('http://localhost:' + t.port + '/poll?token=' + encodeURIComponent(t.token) + '&id=' + encodeURIComponent(t.id))
+      .then(function (r) { return r.json(); })
+      .then(function (messages) {
+        if (!Array.isArray(messages)) return;
+        for (var i = 0; i < messages.length; i++) _handleMessage(messages[i]);
+        _pollLoop();
+      })
+      .catch(function () {
+        _transport = null; _clientId = null; _setState('disconnected');
+        if (_portAndToken) _reconnectTimer = setTimeout(function () { _connect(_portAndToken); }, 2000);
+      });
+  }
+
+  // ── shared message handler ──
+
+  function _handleMessage(msg) {
+    if (msg.type === 'welcome') { _clientId = msg.id; _setState('connected'); }
+    else if (msg.type === 'tool_invoke') { _handleInvoke(msg); }
+    else if (msg.type === 'ping') { _send({ type: 'pong' }); }
+    else if (msg.type === 'error') { console.error('[gcu-webmcp]', msg.message); _setState('error'); }
+  }
+
+  // ── connect (try WS, fall back to HTTP) ──
+
+  function _connect(portAndToken) {
+    if (typeof portAndToken !== 'string' || portAndToken.indexOf(':') === -1) throw new Error('Token required: use "port:token" format');
+    var forceHttp = /:http$/.test(portAndToken);
+    var connStr = (forceHttp || /:ws$/.test(portAndToken)) ? portAndToken.slice(0, portAndToken.lastIndexOf(':')) : portAndToken;
+    _portAndToken = portAndToken;
+    var idx = connStr.indexOf(':');
+    var port = connStr.substring(0, idx);
+    var token = connStr.substring(idx + 1);
+
+    if (_transport) {
+      if (_transport.type === 'ws' && _transport.ws) { try { _transport.ws.close(); } catch (e) { /* ignore */ } }
+      if (_transport.type === 'http') _transport.polling = false;
+      _transport = null;
+    }
+    clearTimeout(_reconnectTimer);
+
+    _setState('connecting');
+    // Injected fetch (gcuFetch) ⇒ public origin ⇒ HTTP transport (WS can't be brokered).
+    var useHttp = forceHttp || !!_fetch || (typeof location !== 'undefined' && location.protocol === 'file:');
+    (useHttp ? _connectHttp(port, token) : _connectWs(port, token).catch(function () { return _connectHttp(port, token); }))
+      .catch(function (e) {
+        console.error('[gcu-webmcp] connection failed:', e.message || e);
+        _setState('error');
+        if (_portAndToken) _reconnectTimer = setTimeout(function () { _connect(_portAndToken); }, 5000);
+      });
+  }
+
+  function _disconnect() {
+    _portAndToken = null;
+    clearTimeout(_reconnectTimer);
+    if (_transport) {
+      if (_transport.type === 'ws' && _transport.ws) { try { _transport.ws.close(); } catch (e) { /* ignore */ } }
+      if (_transport.type === 'http') _transport.polling = false;
+      _transport = null;
+    }
+    _clientId = null;
+    _setState('disconnected');
+  }
+
+  function _handleInvoke(msg) {
+    var tool = _tools.get(msg.name);
+    if (!tool) { _send({ type: 'tool_result', callId: msg.callId, error: 'Tool not found: ' + msg.name }); return; }
+    var client = { requestUserInteraction: function (cb) { return cb(); } };
+    Promise.resolve()
+      .then(function () { return tool.execute(msg.input || {}, client); })
+      .then(function (result) { _send({ type: 'tool_result', callId: msg.callId, result: result }); })
+      .catch(function (e) { _send({ type: 'tool_result', callId: msg.callId, error: (e && e.message) || String(e) }); });
+  }
+
+  // ── polyfill navigator.modelContext ──
+
+  if (typeof navigator !== 'undefined' && !navigator.modelContext) {
+    navigator.modelContext = {
+      registerTool: function (tool) {
+        if (!tool || !tool.name) throw new Error('Tool must have a name');
+        _tools.set(tool.name, tool);
+        if (_state === 'connected') _send({ type: 'tools_changed', tools: _serializeTools() });
+      },
+      unregisterTool: function (name) {
+        _tools.delete(name);
+        if (_state === 'connected') _send({ type: 'tools_changed', tools: _serializeTools() });
+      },
+    };
+  }
+
+  // ── public control surface ──
+
+  var api = {
+    connect: _connect,
+    disconnect: _disconnect,
+    notify: function (method, params) { _send({ type: 'notification', method: method, params: params }); },
+    get state() { return _state; },
+    get clientId() { return _clientId; },
+    get name() { return _effectiveName(); },
+    set name(v) { _name = v || null; },
+    get derivedName() { return _derivedName(); },
+    get tools() { var n = []; _tools.forEach(function (t) { n.push(t.name); }); return n; },   // registered tool names (introspection)
+    invoke: function (name, input) {   // run a registered tool locally (testing / "try it" UIs)
+      var t = _tools.get(name);
+      if (!t) return Promise.reject(new Error('no such tool: ' + name));
+      return Promise.resolve(t.execute(input || {}, { requestUserInteraction: function (cb) { return cb(); } }));
+    },
+    set onStateChange(fn) { _onStateChange = fn; },
+    get fetch() { return _fetch; },
+    set fetch(fn) { _fetch = fn || null; },   // inject gcuFetch for public-origin → localhost
+  };
+  if (typeof window !== 'undefined') {
+    window.gcuWebMCP = api;
+    // Back-compat alias for pages migrating from the Auditable-bundled shim.
+    if (!window.__auditable_mcp) window.__auditable_mcp = api;
+  }
+
+  // ── auto-connect from URL fragment: #mcp=port:token ──
+
+  if (typeof location !== 'undefined' && location.hash) {
+    var m = location.hash.match(/[#&]mcp=([^&]+)/);
+    if (m) setTimeout(function () { _connect(decodeURIComponent(m[1])); }, 500);
+  }
+})();
+
 // ── src/js/store/schema.js ──
 
 // Data model + pure helpers for the store (SPEC §2/§5). No VFS/DOM here, so
@@ -6911,6 +7176,7 @@ class App {
     document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
+    document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -8038,6 +8304,26 @@ class App {
   }
 
   // ── settings ──
+  // WebMCP (Claude Code bridge) connection state → status bar + settings.
+  renderWebmcpStatus(state) {
+    const s = state || (this.webmcp ? this.webmcp.state() : 'unavailable');
+    const bar = document.getElementById('webmcp-status');
+    if (bar) { bar.textContent = s === 'connected' ? 'mcp' : s === 'connecting' ? 'mcp…' : s === 'error' ? 'mcp err' : ''; bar.dataset.state = s; }
+    const lab = document.getElementById('set-webmcp-state');
+    if (lab) lab.textContent = (this.webmcp && this.webmcp.available) ? s : 'unavailable (shim not loaded)';
+    const btn = document.getElementById('set-webmcp-toggle');
+    if (btn) btn.textContent = (s === 'connected' || s === 'connecting') ? 'disconnect' : 'connect';
+  }
+
+  toggleWebmcp() {
+    if (!this.webmcp || !this.webmcp.available) { this.renderWebmcpStatus('unavailable'); return; }
+    const st = this.webmcp.state();
+    if (st === 'connected' || st === 'connecting') { this.webmcp.disconnect(); this.renderWebmcpStatus(); return; }
+    const input = document.getElementById('set-webmcp-conn');
+    try { this.webmcp.connect((input && input.value) || ''); }
+    catch (e) { const lab = document.getElementById('set-webmcp-state'); if (lab) lab.textContent = e.message; }
+  }
+
   async openSettings() {
     const s = this.store.getSettings();
     const val = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
@@ -8054,6 +8340,8 @@ class App {
     val('set-cat-baseurl', s.catalog_base_url || '');
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
+    { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
+    this.renderWebmcpStatus();
     chk('set-retention', s.retention_enabled);
     chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
@@ -8340,10 +8628,193 @@ class App {
   }
 }
 
+// ── src/js/webmcp.js ──
+
+// webmcp.js — weir's WebMCP adapter. Registers weir's domain tools on the
+// shim-polyfilled navigator.modelContext (vendor/webmcp-shim.js) and manages the
+// localhost bridge connection (@gcu/webmcp, repo gentropic/webmcp).
+//
+// v0.1 is READ-ONLY — queryItems / getItem / listFacets. Mutations (mark read,
+// trigger a catalog) come later, behind confirmation. Tool implementations live
+// in buildWeirTools() (pure over a store, so testable without a browser); the
+// registration + bridge connection live in initWebmcp() (browser-only).
+//
+// Transport: on a public origin (gentropic.org/weir, the PWA) ws://localhost is
+// gated by Chromium's Local/Private Network Access, so we inject gcuFetch — the
+// shim then routes its HTTP long-poll transport through the @gcu/bridge extension,
+// exactly like weir's LLM client reaches Lemonade. (See gentropic/webmcp SPEC §4.1.)
+
+
+
+
+const LS_KEY = 'weir-webmcp';   // localStorage "port:token" — origin-scoped, never in backups/FSA folder
+
+// Compact projection for tool output — never dump whole records at the model.
+function projItem(store, it, full) {
+  const feed = store.getFeed(it.feed_id);
+  const o = {
+    id: it.id, type: it.type, title: it.title || '(untitled)', url: it.url || undefined,
+    feed: (feed && feed.name) || it.feed_id,
+    author: it.author || undefined,
+    published: it.published_at ? new Date(it.published_at).toISOString() : undefined,
+    read: !!it.read, saved: !!it.saved,
+    tags: (it.tags && it.tags.length) ? it.tags : undefined,
+  };
+  if (full) {
+    o.archived = !!it.archived; o.route = it.route || undefined; o.glass_id = it.glass_id || undefined;
+    o.excerpt = it.excerpt || undefined;
+  } else if (it.excerpt) {
+    o.excerpt = it.excerpt.length > 280 ? it.excerpt.slice(0, 280) + '…' : it.excerpt;
+  }
+  return o;
+}
+
+// Tool implementations over a store. `cardFacets` (optional) returns the app's
+// live item→facets cache (enriched, when catalog cards are loaded); `ensureCards`
+// (optional) warms it. Without them, facets fall back to deterministic Stage-0.
+function buildWeirTools({ store, cardFacets, ensureCards } = {}) {
+  const facetsFor = (it) => {
+    const live = cardFacets && cardFacets();
+    return (live && live.get(it.id)) || facetsOf(it, store.getFeed(it.feed_id));
+  };
+
+  async function queryItems(input = {}) {
+    const { q, type, view, limit, unread, saved } = input;
+    const opts = { limit: Math.min(Math.max(1, Number(limit) || 30), 100) };
+    if (q) opts.text = String(q);
+    if (type) opts.type = String(type);
+    if (view) opts.view = String(view);
+    if (unread === true) opts.read = false;
+    if (saved !== undefined) opts.saved = !!saved;
+    const rows = store.query(opts);
+    return { count: rows.length, items: rows.map((r) => projItem(store, r, false)) };
+  }
+
+  async function getItem(input = {}) {
+    const id = input && input.id;
+    const it = id != null && store.getItem(String(id));
+    if (!it) throw new Error(`No item with id "${id}". Use weir_queryItems to find ids.`);
+    const o = projItem(store, it, true);
+    if (it.glass_id) {
+      try {
+        const c = await store.getCard(it.glass_id);
+        if (c) { o.facets = c.facets; if (c.dublin_core && c.dublin_core.description) o.description = c.dublin_core.description; }
+      } catch { /* card unreadable */ }
+    }
+    if (input.content && it.has_content) {
+      try { const html = await store.getContent(it.id); if (html) o.content_text = stripToText(html).slice(0, 8000); } catch { /* content unreadable */ }
+    }
+    return o;
+  }
+
+  async function listFacets() {
+    if (ensureCards) { try { await ensureCards(); } catch { /* fall back to Stage-0 */ } }
+    const idx = {};
+    for (const it of store.items.values()) {
+      if (it.archived) continue;
+      const f = facetsFor(it);
+      for (const facet of FACETS) {
+        const vals = f[facet]; if (!vals || !vals.length) continue;
+        const m = idx[facet] || (idx[facet] = new Map());
+        for (const term of vals) m.set(term, (m.get(term) || 0) + 1);
+      }
+    }
+    const out = {};
+    for (const facet of Object.keys(idx)) {
+      const terms = [...idx[facet]].map(([term, count]) => ({ term, count })).sort((a, b) => b.count - a.count || a.term.localeCompare(b.term));
+      if (terms.length) out[facet] = terms;
+    }
+    return out;
+  }
+
+  return { queryItems, getItem, listFacets };
+}
+
+// Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
+// the prefix namespaces weir's tools if its bridge is ever co-registered with
+// another surface's in one Claude session.
+const TOOLS = [
+  {
+    name: 'weir_queryItems', fn: 'queryItems',
+    description: 'Search/list weir feed items. Filters: q (substring over title/excerpt/text), type (article|video|release|paper|status|track|podcast|commit|issue|note), view (inbox|saved|archived), unread (bool), saved (bool), limit (default 30, max 100). Returns compact items (id, title, url, feed, published, tags, excerpt).',
+    inputSchema: {
+      type: 'object', properties: {
+        q: { type: 'string', description: 'Substring search over title/excerpt/text' },
+        type: { type: 'string', description: 'Item type filter' },
+        view: { type: 'string', enum: ['inbox', 'saved', 'archived'], description: 'Which view to scope to' },
+        unread: { type: 'boolean', description: 'Only unread items' },
+        saved: { type: 'boolean', description: 'Only saved (true) / only unsaved (false)' },
+        limit: { type: 'integer', description: 'Max items (default 30, cap 100)' },
+      },
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'Query weir items' },
+  },
+  {
+    name: 'weir_getItem', fn: 'getItem',
+    description: "Get one weir item by id, including its glass catalog facets + description if cataloged. Pass content:true to include the extracted article text (capped at 8k chars).",
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'Item id (from weir_queryItems)' },
+        content: { type: 'boolean', description: 'Include the extracted body text' },
+      }, required: ['id'],
+    },
+    annotations: { readOnlyHint: true, title: 'Get a weir item' },
+  },
+  {
+    name: 'weir_listFacets', fn: 'listFacets',
+    description: 'List glass catalog facets across the non-archived corpus: facet → terms with counts (domain, entity, process, method, scale, spatial, form, provenance, temporal). Cataloged items contribute their LLM facets; the rest contribute deterministic Stage-0 facets.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'List weir facets' },
+  },
+];
+
+// Register the tools on navigator.modelContext (polyfilled by the shim) and wire
+// the bridge connection. Returns a small control api for the settings UI, or null
+// if the shim isn't present. `fetch` should be gcuFetch (the bridge-brokered one).
+function initWebmcp({ store, app, fetch }) {
+  if (typeof navigator === 'undefined' || !navigator.modelContext) return null;   // shim absent
+  const mc = navigator.modelContext;
+  const wm = (typeof window !== 'undefined') ? window.gcuWebMCP : null;
+
+  const tools = buildWeirTools({
+    store,
+    cardFacets: () => (app ? app._cardFacets : null),
+    ensureCards: async () => { if (app && app.loadCardFacets && (!app._cardFacets || app._cardFacets.size === 0)) await app.loadCardFacets(); },
+  });
+  for (const t of TOOLS) {
+    mc.registerTool({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations, execute: (input) => tools[t.fn](input || {}) });
+  }
+
+  if (wm) {
+    wm.name = 'weir';
+    wm.fetch = fetch;                       // route the HTTP transport through gcuFetch (public-origin/PNA)
+    if (app && app.renderWebmcpStatus) wm.onStateChange = (s) => app.renderWebmcpStatus(s);
+  }
+
+  const read = () => { try { return localStorage.getItem(LS_KEY) || ''; } catch { return ''; } };
+  const api = {
+    available: !!wm,
+    state: () => (wm ? wm.state : 'unavailable'),
+    stored: read,
+    connect(connStr) {
+      const v = String(connStr || '').trim();
+      if (!/^\d+:[0-9a-f]{8,}/i.test(v)) throw new Error('expected port:token (e.g. 7801:…)');
+      try { localStorage.setItem(LS_KEY, v); } catch { /* private mode */ }
+      if (wm) wm.connect(v);
+    },
+    disconnect() { try { localStorage.removeItem(LS_KEY); } catch { /* ignore */ } if (wm) wm.disconnect(); },
+  };
+
+  const stored = read();
+  if (wm && stored) { try { wm.connect(stored); } catch { /* bad stored string */ } }
+  return api;
+}
+
 // ── src/js/boot.js ──
 
 // Boot — assembles the store, poller, and UI, wires the status bar, and starts
 // polling. The dynamic UI lives in App; boot owns one-time setup + diagnostics.
+
 
 
 
@@ -8435,6 +8906,13 @@ async function boot() {
   app.mount();
   poller.start();
 
+  // WebMCP — register weir's tools on the shim-polyfilled navigator.modelContext
+  // and reconnect to the bridge if a connection string was saved. gcuFetch is the
+  // injected transport so it works from the deployed (public-origin) PWA too.
+  const webmcp = initWebmcp({ store, app, fetch: gcuFetch });
+  app.webmcp = webmcp;
+  app.renderWebmcpStatus(webmcp ? webmcp.state() : 'unavailable');
+
   const retainer = new Retainer(store);   // archives expired items (never deletes); off until enabled
   retainer.start();
 
@@ -8452,7 +8930,7 @@ async function boot() {
       const key = o.key || (await getKey(provider));
       return catalogStoreItem(store, id, { provider, model: o.model || s.catalog_model, baseUrl: o.baseUrl || s.catalog_base_url, key, fetch: gcuFetch, ...o });
     },
-    parseFeed, feedAdapter, gcuFetch };
+    webmcp, parseFeed, feedAdapter, gcuFetch };
 
   try {
     let persisted = false;
