@@ -4269,7 +4269,7 @@ class Store {
       if (view === 'archived' && !r.archived) continue;
       if (!view && !route && (r.archived || r.route)) continue;
       if (route && r.route !== route) continue;
-      if (category) { const cf = this.feeds.get(r.feed_id); if (!cf || cf.category !== category) continue; }
+      if (category != null) { const cf = this.feeds.get(r.feed_id); if ((cf?.category || '') !== category) continue; }   // '' = ungrouped
       if (feed_id && r.feed_id !== feed_id) continue;
       if (type && r.type !== type) continue;
       if (read !== undefined && r.read !== read) continue;
@@ -4315,16 +4315,12 @@ class Store {
     return r;
   }
 
-  // Bulk mark-read, scoped by feed / category / view. Returns count.
+  // Bulk mark-read over exactly the items a view/folder/feed shows — reuses the
+  // query predicate so scope always matches what's visible.
   markAllRead(opts = {}) {
-    const { feed_id, category, view } = opts;
     let n = 0; const touched = new Set();
-    for (const r of this.items.values()) {
-      if (r.read || r.archived) continue;
-      if (view !== 'archived' && r.archived) continue;
-      if (feed_id && r.feed_id !== feed_id) continue;
-      if (category) { const f = this.feeds.get(r.feed_id); if (!f || f.category !== category) continue; }
-      if ((view === 'inbox' || !view) && r.route) continue;
+    for (const r of this.query(opts)) {
+      if (r.read) continue;
       r.read = true; touched.add(r.feed_id); n++;
     }
     for (const fid of touched) this._markFeedDirty(fid);
@@ -5557,6 +5553,8 @@ class App {
     this.route = null;          // active routed view (#name), or null
     this.catFilter = null;      // active folder/category view, or null
     this.collapsedCats = new Set();
+    this._loadingFull = new Set();   // items with a full-content fetch in flight
+    this._fullTried = new Set();     // items whose auto full-fetch already failed (don't retry on every open)
     this.searchText = '';
     this.selectedId = null;
     this.expandedId = null;
@@ -5587,7 +5585,7 @@ class App {
       const head = e.target.closest('.cat-head');
       if (head) {
         if (e.target.closest('.cat-toggle')) this.toggleCat(head.dataset.cat);
-        else this.setCategory(head.dataset.cat || null);
+        else this.setCategory(head.dataset.cat);
         return;
       }
       const s = e.target.closest('.source'); if (!s) return;
@@ -5646,7 +5644,7 @@ class App {
 
   query() {
     if (this.route) return this.store.query({ route: this.route, text: this.searchText || undefined });
-    if (this.catFilter) return this.store.query({ category: this.catFilter, text: this.searchText || undefined });
+    if (this.catFilter != null) return this.store.query({ category: this.catFilter, text: this.searchText || undefined });   // '' = ungrouped
     return this.store.query({ view: this.view, feed_id: this.feedFilter || undefined, text: this.searchText || undefined });
   }
 
@@ -5677,7 +5675,7 @@ class App {
   renderTopbar() {
     const feed = this.feedFilter && this.store.getFeed(this.feedFilter);
     const rb = document.getElementById('btn-recover'); if (rb) rb.hidden = !this.feedFilter;
-    document.getElementById('view-title').textContent = this.catFilter ? this.catFilter : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
+    document.getElementById('view-title').textContent = this.catFilter != null ? (this.catFilter || 'ungrouped') : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
     const n = this.items.length;
     const feeds = this.store.listFeeds().length;
     let sub;
@@ -5710,7 +5708,7 @@ class App {
   renderRail() {
     const feeds = this.store.listFeeds();
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
-      r.classList.toggle('active', !this.feedFilter && !this.route && !this.catFilter && r.dataset.view === this.view));
+      r.classList.toggle('active', !this.feedFilter && !this.route && this.catFilter == null && r.dataset.view === this.view));
     if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
 
     const groups = new Map();
@@ -5732,7 +5730,7 @@ class App {
       const list = groups.get(c).sort((x, y) => (y.affinity || 0) - (x.affinity || 0) || x.name.localeCompare(y.name));
       const collapsed = this.collapsedCats.has(c);
       const unread = list.reduce((n, f) => n + this.feedUnread(f.id), 0);
-      const activeCat = (this.catFilter || '') === c ? ' active' : '';
+      const activeCat = this.catFilter === c ? ' active' : '';
       html += `<div class="cat-head${activeCat}" data-cat="${escapeHtml(c)}">`
         + `<span class="cat-toggle">${collapsed ? '▸' : '▾'}</span>`
         + `<span class="cat-name">${escapeHtml(c || 'ungrouped')}</span>`
@@ -5742,7 +5740,7 @@ class App {
     this.sources.innerHTML = html;
   }
 
-  setCategory(cat) { this.catFilter = cat || null; this.view = null; this.feedFilter = null; this.route = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   toggleCat(c) { if (this.collapsedCats.has(c)) this.collapsedCats.delete(c); else this.collapsedCats.add(c); this.renderRail(); }
 
   renderStream() {
@@ -5878,7 +5876,20 @@ class App {
     if (row) row.scrollIntoView({ block: 'nearest' });
   }
 
-  rowEl(id) { for (const r of this.stream.querySelectorAll('.item')) if (r.dataset.id === id) return r; return null; }
+  rowEl(id) { return this.stream.querySelector(`.item[data-id="${(window.CSS && CSS.escape) ? CSS.escape(id) : id}"]`); }
+
+  // Reflect one item's new state in the DOM: refresh its row if it still matches
+  // the current view, remove it if not, and keep this.items + the topbar in sync.
+  // Single place every action site uses, so no path forgets to re-render.
+  reflectItem(id) {
+    this.items = this.query();
+    const visible = this.items.some((x) => x.id === id);
+    const row = this.rowEl(id);
+    if (!visible) { if (row) row.remove(); }
+    else if (row) this._refreshRow(id);
+    else this._scheduleRender();
+    this.renderTopbar();
+  }
 
   toggleExpand(id) { if (this.expandedId === id) this.collapse(); else this.expand(id); }
   expand(id) {
@@ -5888,7 +5899,7 @@ class App {
     this.renderStream();
     const row = this.rowEl(id); if (row) row.scrollIntoView({ block: 'nearest' });
     const feed = it && this.store.getFeed(it.feed_id);
-    if (feed?.fetch_full_content && it && it.url && !it.full) this.loadFullContent(id);   // auto-fetch full text
+    if (feed?.fetch_full_content && it && it.url && !it.full && !this._fullTried.has(id)) this.loadFullContent(id);   // auto-fetch full text (once)
   }
   collapse() { this.expandedId = null; this.renderStream(); }
 
@@ -5907,14 +5918,13 @@ class App {
     if (act === 'open') { if (it.url) window.open(it.url, '_blank', 'noopener'); return; }
     if (act === 'fullcontent') { this.loadFullContent(id); return; }
     if (act === 'images') { this.loadImages(id); return; }
-    if (act === 'save') { this.store.setState(id, { saved: !it.saved }); this._refreshRow(id); return; }
-    if (act === 'read') { this.store.setState(id, { read: !it.read }); this._refreshRow(id); return; }
+    if (act === 'save') { this.store.setState(id, { saved: !it.saved }); this.reflectItem(id); return; }
+    if (act === 'read') { this.store.setState(id, { read: !it.read }); this.reflectItem(id); return; }
     if (act === 'archive') {
       this.store.setState(id, { archived: true });
       if (this.expandedId === id) this.expandedId = null;
-      // Drop it from the current view instantly (unless we're in Archived), with an undo.
-      if (this.view !== 'archived') { const row = this.rowEl(id); if (row) row.remove(); this.showUndo(`Archived “${it.title}”`, () => this.store.setState(id, { archived: false })); }
-      else this._refreshRow(id);
+      if (this.view !== 'archived') this.showUndo(`Archived “${it.title}”`, () => { this.store.setState(id, { archived: false }); this.reflectItem(id); });
+      this.reflectItem(id);   // removes it from the inbox view (or refreshes in Archived)
     }
   }
 
@@ -5933,20 +5943,25 @@ class App {
   // Fetch the item's page through the bridge, extract the main article, store it.
   async loadFullContent(id) {
     const it = this.store.getItem(id);
-    if (!it || !it.url) return;
-    const slot = this.rowEl(id)?.querySelector('.iexpand .icontent');
-    if (slot) { slot.classList.add('loading'); slot.textContent = 'fetching full article…'; }
+    if (!it || !it.url || this._loadingFull.has(id)) return;   // de-dup concurrent fetches
+    this._loadingFull.add(id);
+    const setMsg = (msg) => { const s = this.rowEl(id)?.querySelector('.iexpand .icontent'); if (s) { s.classList.add('loading'); s.textContent = msg; } };
+    setMsg('fetching full article…');
     try {
       const res = await this.poller.fetch(it.url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);   // don't cache 4xx/5xx error pages as the article
       const html = await res.text();
       const feed = this.store.getFeed(it.feed_id);
       const article = extractArticle(html, it.url, { allowImages: feed?.images_allowed });
-      if (!article) { if (slot) { slot.classList.remove('loading'); slot.textContent = 'Couldn’t extract the article — open the original instead.'; } return; }
+      if (!article) { this._fullTried.add(id); setMsg('Couldn’t extract the article — open the original instead.'); return; }
       await this.store.setContent(id, article, { full: true });
       this._content.set(id, article);
-      this.renderStream();
+      if (this.expandedId === id) this.renderStream();   // only re-render if still open
     } catch (e) {
-      if (slot) { slot.classList.remove('loading'); slot.textContent = `Fetch failed: ${e.message}`; }
+      this._fullTried.add(id);
+      setMsg(`Fetch failed: ${e.message}`);
+    } finally {
+      this._loadingFull.delete(id);
     }
   }
 
@@ -5969,7 +5984,7 @@ class App {
       { sep: true },
       { label: it.saved ? 'Unsave' : 'Save', onClick: () => this.doAct('save', id) },
       { label: it.read ? 'Mark unread' : 'Mark read', onClick: () => this.doAct('read', id) },
-      { label: it.archived ? 'Unarchive' : 'Archive', onClick: () => this.store.setState(id, { archived: !it.archived }) },
+      { label: it.archived ? 'Unarchive' : 'Archive', onClick: () => { if (it.archived) { this.store.setState(id, { archived: false }); this.reflectItem(id); } else this.doAct('archive', id); } },
       it.url && { label: 'Copy link', onClick: () => navigator.clipboard?.writeText(it.url).catch(() => {}) },
     ].filter(Boolean));
   }
@@ -6014,7 +6029,7 @@ class App {
 
   catMenu(cat, x, y) {
     showMenu(x, y, [
-      { label: 'View this folder', onClick: () => this.setCategory(cat || null) },
+      { label: 'View this folder', onClick: () => this.setCategory(cat) },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ category: cat }) },
       { label: this.collapsedCats.has(cat) ? 'Expand' : 'Collapse', onClick: () => this.toggleCat(cat) },
     ]);

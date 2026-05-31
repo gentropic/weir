@@ -58,3 +58,10 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
 - The rail/stream render eagerly; very large sets (1000+) lean on folder-collapse
   + the 300-row cap. Virtualize if it ever feels heavy.
 - The built `index.html` is committed (deterministic build) for GitHub Pages.
+- **Cleanup from the 2026-05-31 code review** (bugs fixed; these are the
+  refactors): the six overlay open/close pairs + Esc id-list want one overlay
+  mechanism; image-suppression lives in two places (`sanitize.js` regex +
+  `extract.js` DOM) — unify into one `suppressImages` helper; feed-menu toggles
+  mutate-then-`putFeed` — add `store.updateFeed(id, patch)`; item-action verbs are
+  spelled out in three render sites (hover toolbar, reader footer, context menu) —
+  drive from one descriptor list. (`reflectItem` already unified row updates.)

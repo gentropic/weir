@@ -6,6 +6,24 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Bug fixes from code review — 2026-05-31
+
+A `/code-review` pass found and we fixed:
+- **Context-menu Archive/Unarchive did nothing visible** (regression): a `reflectItem(id)`
+  helper now refreshes-or-removes a row on any state change, so every action site
+  (hover button, key, context menu) updates the DOM consistently — and keeps
+  `this.items` + the topbar count in sync.
+- **`markAllRead` scope bugs:** now reuses the `query` predicate, so "mark all read"
+  on **Saved** only marks saved items (was marking the whole inbox), on an
+  **ungrouped** folder only marks ungrouped (was marking everything), and on
+  **Archived** actually works (was a no-op). Also fixes the `category=''`
+  (ungrouped) **filter** in `query`.
+- **Full-content no longer caches error pages** (checks `res.ok`), guards against a
+  **stale slot / concurrent fetch** (in-flight set + only re-renders if still open),
+  and **won't auto-refetch forever** when extraction fails (`_fullTried`).
+- Undo now correctly **restores** an archived item; `rowEl` uses a single
+  `querySelector` instead of a linear scan.
+
 ### Full-content extraction — read truncated feeds in full — 2026-05-31
 
 - `src/js/extract.js`: lightweight readability (browser DOMParser) — pulls the

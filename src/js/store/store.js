@@ -260,7 +260,7 @@ export class Store {
       if (view === 'archived' && !r.archived) continue;
       if (!view && !route && (r.archived || r.route)) continue;
       if (route && r.route !== route) continue;
-      if (category) { const cf = this.feeds.get(r.feed_id); if (!cf || cf.category !== category) continue; }
+      if (category != null) { const cf = this.feeds.get(r.feed_id); if ((cf?.category || '') !== category) continue; }   // '' = ungrouped
       if (feed_id && r.feed_id !== feed_id) continue;
       if (type && r.type !== type) continue;
       if (read !== undefined && r.read !== read) continue;
@@ -306,16 +306,12 @@ export class Store {
     return r;
   }
 
-  // Bulk mark-read, scoped by feed / category / view. Returns count.
+  // Bulk mark-read over exactly the items a view/folder/feed shows — reuses the
+  // query predicate so scope always matches what's visible.
   markAllRead(opts = {}) {
-    const { feed_id, category, view } = opts;
     let n = 0; const touched = new Set();
-    for (const r of this.items.values()) {
-      if (r.read || r.archived) continue;
-      if (view !== 'archived' && r.archived) continue;
-      if (feed_id && r.feed_id !== feed_id) continue;
-      if (category) { const f = this.feeds.get(r.feed_id); if (!f || f.category !== category) continue; }
-      if ((view === 'inbox' || !view) && r.route) continue;
+    for (const r of this.query(opts)) {
+      if (r.read) continue;
       r.read = true; touched.add(r.feed_id); n++;
     }
     for (const fid of touched) this._markFeedDirty(fid);
