@@ -9,7 +9,7 @@
 const CACHE = 'weir-shell-v1';
 const SHELL = [
   './',
-  './weir.html',
+  './index.html',
   './manifest.webmanifest',
   './icon.svg',
   './icon-maskable.svg',
@@ -46,7 +46,7 @@ async function handle(req) {
     if (resp && resp.ok) cache.put(req, resp.clone()).catch(() => {});
     return resp;
   } catch (e) {
-    const navFallback = await cache.match('./weir.html') || await cache.match('./');
+    const navFallback = await cache.match('./index.html') || await cache.match('./');
     if (navFallback) return navFallback;
     throw e;
   }

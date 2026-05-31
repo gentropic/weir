@@ -9,8 +9,8 @@ store, dedup, retention fields, cursor-scan search) and wired into a single-file
 shell; adapters, the poller, and the UI stream are next.
 
 [SPEC.md](SPEC.md) is the canonical design intent; everything in §9's v0.1 list
-is the build target. Build the app with `node build.js` (→ `weir.html`); run it
-over a local origin with `npm run serve` → `http://localhost:8017/weir.html`.
+is the build target. Build the app with `node build.js` (→ `index.html`); run it
+over a local origin with `npm run serve` → `http://localhost:8017/`.
 
 ## Why "weir"?
 
@@ -72,7 +72,7 @@ ETag/If-Modified-Since caching, which makes polite per-feed polling possible.
 ## Building
 
 `node build.js` inlines the `src/` ES modules, the vendored VFS, and the
-Switchboard tokens + base64 fonts into a single self-contained `weir.html`. No
+Switchboard tokens + base64 fonts into a single self-contained `index.html`. No
 npm install, no dependencies. `npm run serve` hosts it over `http://localhost`
 (a stable origin, so IndexedDB/persistence work). `npm run smoke` runs the store
 and VFS round-trip tests in node.

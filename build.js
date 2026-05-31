@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Zero-dependency build for @gcu/weir.
 //
-// Dev workflow: edit files under src/, run `node build.js`, open weir.html.
-// The single-file weir.html IS the artifact — there is no separate dev page.
+// Dev workflow: edit files under src/, run `node build.js`, open index.html.
+// The single-file index.html IS the artifact — there is no separate dev page.
 //
 // What it does (mirrors the tool targets in auditable/build.js):
 //   1. Inlines src/js/ modules — src/js/main.js is an ordered import manifest;
@@ -13,7 +13,7 @@
 //      @font-face url() rules with base64 data: URLs so the output is offline +
 //      truly single-file.
 //   3. Injects build metadata (version, date) and a vendored-licenses note.
-//   4. Wraps template.html + CSS + JS into one self-contained weir.html.
+//   4. Wraps template.html + CSS + JS into one self-contained index.html.
 
 const fs = require('fs');
 const path = require('path');
@@ -158,7 +158,7 @@ ${js}
 </html>
 `;
 
-const outPath = path.join(ROOT, 'weir.html');
+const outPath = path.join(ROOT, 'index.html');
 fs.writeFileSync(outPath, html);
 const kb = (fs.statSync(outPath).size / 1024).toFixed(1);
-console.log(`Built weir.html (${kb} KB)`);
+console.log(`Built index.html (${kb} KB)`);

@@ -3,7 +3,7 @@
 // estimate() all work — unlike file://, where Chromium treats every file as a
 // unique opaque origin and blocks persistent storage.
 //
-// Run: `node tools/serve.mjs` → open http://localhost:8017/weir.html
+// Run: `node tools/serve.mjs` → open http://localhost:8017/
 // (build first with `node build.js`).
 
 import { createServer } from 'node:http';
@@ -27,7 +27,7 @@ const TYPES = {
 createServer(async (req, res) => {
   try {
     let p = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
-    if (p === '/') p = '/weir.html';
+    if (p === '/') p = '/index.html';
     const fp = normalize(join(ROOT, p));
     if (fp !== ROOT && !fp.startsWith(ROOT + sep)) { res.writeHead(403).end('forbidden'); return; }
     const s = await stat(fp);
@@ -37,4 +37,4 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end('not found');
   }
-}).listen(PORT, () => console.log(`weir dev server → http://localhost:${PORT}/weir.html`));
+}).listen(PORT, () => console.log(`weir dev server → http://localhost:${PORT}/`));

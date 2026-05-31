@@ -6,6 +6,16 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### GitHub Pages deploy — 2026-05-31
+
+- Build output renamed `weir.html` → **`index.html`** (the web-serving / Pages
+  convention). Updated the SW shell, dev server, and docs accordingly. Still a
+  single self-contained file; still gitignored (built, not committed).
+- `.github/workflows/pages.yml`: builds `index.html` + stages the PWA assets
+  (manifest, sw.js, icons) and deploys to GitHub Pages on every push to main — so
+  the artifact never lives in git, CI produces it fresh. One-time repo setting:
+  Pages → Source → "GitHub Actions".
+
 ### multi-file OPML import — 2026-05-31
 
 - The import file picker now accepts **multiple OPML files at once**; they're
