@@ -406,6 +406,8 @@ body {
 /* ── Update toast (PWA) ── */
 .toast { position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%) translateY(140%); display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg); box-shadow: 0 8px 32px rgba(0,0,0,0.5); font-size: 13px; color: var(--au-fg); z-index: 200; opacity: 0; transition: transform 0.2s, opacity 0.2s; pointer-events: none; }
 .toast.on { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
+.toast-warn { border-color: var(--au-warn); }
+.toast-warn b { color: var(--au-warn); }
 
 /* ── Status bar ── */
 .statusbar { position: absolute; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 7px 22px; font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); background: var(--sw-bg); border-top: 1px solid var(--au-border); }
@@ -537,6 +539,13 @@ body {
   <span>A new version of weir is ready.</span>
   <button class="btn" id="update-reload">Reload</button>
   <button class="btn-link" id="update-dismiss">later</button>
+</div>
+
+<!-- Bridge-down banner — shown when fetches are failing AND the bridge isn't active -->
+<div class="toast toast-warn" id="bridge-toast">
+  <span>⚠ Bridge not active — feeds &amp; the AI cataloger can't fetch. Enable <b>@gcu/bridge</b>, then reload the tab.</span>
+  <button class="btn" id="bridge-recheck">Re-check</button>
+  <button class="btn-link" id="bridge-dismiss">dismiss</button>
 </div>
 
 <!-- Filesystem-mount reconnect banner (folder mounted but permission lapsed) -->
@@ -6770,6 +6779,7 @@ class Poller {
 
 
 
+
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
 const RENDER_CAP = 300;
@@ -6814,7 +6824,11 @@ class App {
     for (const ev of ['items', 'prune']) this.store.on(ev, () => { this.renderCounts(); this._scheduleRender(); });
     this.store.on('item', () => this.renderCounts());   // single state changes refresh their row in-place via doAct
     this.store.on('feed', () => this._scheduleRender());
-    this.poller.on('polled', () => this.renderPollStatus());
+    this.poller.on('polled', (e) => {
+      this.renderPollStatus();
+      if (e && e.error) { this._fetchFails = (this._fetchFails || 0) + 1; if (this._fetchFails >= 3) this.checkBridge(); }
+      else if (e && e.result) { if (this._fetchFails) { this._fetchFails = 0; this._bridgeDismissed = false; this._setBridgeBanner(false); } }
+    });
     this.poller.on('cycle', () => this.renderPollStatus());
 
     document.querySelectorAll('.navrow[data-view]').forEach((row) => {
@@ -6877,6 +6891,8 @@ class App {
     document.getElementById('set-storage-actions')?.addEventListener('click', (e) => this.onMountAction(e));
     document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
     document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
+    document.getElementById('bridge-recheck')?.addEventListener('click', () => this.checkBridge());
+    document.getElementById('bridge-dismiss')?.addEventListener('click', () => { this._bridgeDismissed = true; this._setBridgeBanner(false); });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('set-cat-gauge')?.addEventListener('click', () => this.checkCatGauge());
     document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } });
@@ -6911,6 +6927,7 @@ class App {
     this.renderAll();
     this.renderNotify();
     this.renderPollStatus();
+    this.checkBridge();
     if (this.fsMount && this.fsMount.pending) setTimeout(() => document.getElementById('mount-toast')?.classList.add('on'), 600);
   }
 
@@ -7127,7 +7144,7 @@ class App {
       if (this.catalog) this.renderAll();
       this.renderCatUsage();
       return r;
-    } catch (e) { this._catStatus(`catalog failed: ${e.message}`); return null; }
+    } catch (e) { this._catStatus(`catalog failed: ${e.message}`); this._fetchFails = (this._fetchFails || 0) + 1; this.checkBridge(); return null; }
   }
 
   // Catalog the currently-shown items that aren't cataloged yet — one at a time,
@@ -8186,6 +8203,23 @@ class App {
     const r = this.store.rerunRules();
     document.getElementById('rules-error').textContent = `re-ran over history — ${r.matched} item${r.matched === 1 ? '' : 's'} matched`;
     this.renderAll();
+  }
+
+  // Probe the bridge; update the status-bar label and decide the banner. The
+  // banner shows only when fetches are actually failing (_fetchFails) AND the
+  // bridge isn't detected — so it never false-alarms a CORS-friendly setup.
+  async checkBridge() {
+    let detected = false, version = null;
+    try { detected = !!(await hasBridge()); if (detected) version = await bridgeVersion(); } catch { detected = false; }
+    const el = document.getElementById('bridge-status');
+    if (el) el.textContent = detected ? `bridge: ${version ? 'v' + version : 'connected'}` : 'bridge: not detected';
+    this._setBridgeBanner(!detected && (this._fetchFails || 0) >= 1);
+    return detected;
+  }
+
+  _setBridgeBanner(show) {
+    if (show && this._bridgeDismissed) return;
+    document.getElementById('bridge-toast')?.classList.toggle('on', !!show);
   }
 
   renderPollStatus() {

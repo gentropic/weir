@@ -20,6 +20,7 @@ import { facetsOf, FACETS } from '../glass.js';
 import { getKey, hasKey, saveKey } from '../llmkeys.js';
 import { fetchUsageGauge } from '../llm.js';
 import { catalogStoreItem } from '../cataloger.js';
+import { hasBridge, bridgeVersion } from '../../../vendor/bridge-client.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
@@ -65,7 +66,11 @@ export class App {
     for (const ev of ['items', 'prune']) this.store.on(ev, () => { this.renderCounts(); this._scheduleRender(); });
     this.store.on('item', () => this.renderCounts());   // single state changes refresh their row in-place via doAct
     this.store.on('feed', () => this._scheduleRender());
-    this.poller.on('polled', () => this.renderPollStatus());
+    this.poller.on('polled', (e) => {
+      this.renderPollStatus();
+      if (e && e.error) { this._fetchFails = (this._fetchFails || 0) + 1; if (this._fetchFails >= 3) this.checkBridge(); }
+      else if (e && e.result) { if (this._fetchFails) { this._fetchFails = 0; this._bridgeDismissed = false; this._setBridgeBanner(false); } }
+    });
     this.poller.on('cycle', () => this.renderPollStatus());
 
     document.querySelectorAll('.navrow[data-view]').forEach((row) => {
@@ -128,6 +133,8 @@ export class App {
     document.getElementById('set-storage-actions')?.addEventListener('click', (e) => this.onMountAction(e));
     document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
     document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
+    document.getElementById('bridge-recheck')?.addEventListener('click', () => this.checkBridge());
+    document.getElementById('bridge-dismiss')?.addEventListener('click', () => { this._bridgeDismissed = true; this._setBridgeBanner(false); });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('set-cat-gauge')?.addEventListener('click', () => this.checkCatGauge());
     document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } });
@@ -162,6 +169,7 @@ export class App {
     this.renderAll();
     this.renderNotify();
     this.renderPollStatus();
+    this.checkBridge();
     if (this.fsMount && this.fsMount.pending) setTimeout(() => document.getElementById('mount-toast')?.classList.add('on'), 600);
   }
 
@@ -378,7 +386,7 @@ export class App {
       if (this.catalog) this.renderAll();
       this.renderCatUsage();
       return r;
-    } catch (e) { this._catStatus(`catalog failed: ${e.message}`); return null; }
+    } catch (e) { this._catStatus(`catalog failed: ${e.message}`); this._fetchFails = (this._fetchFails || 0) + 1; this.checkBridge(); return null; }
   }
 
   // Catalog the currently-shown items that aren't cataloged yet — one at a time,
@@ -1437,6 +1445,23 @@ export class App {
     const r = this.store.rerunRules();
     document.getElementById('rules-error').textContent = `re-ran over history — ${r.matched} item${r.matched === 1 ? '' : 's'} matched`;
     this.renderAll();
+  }
+
+  // Probe the bridge; update the status-bar label and decide the banner. The
+  // banner shows only when fetches are actually failing (_fetchFails) AND the
+  // bridge isn't detected — so it never false-alarms a CORS-friendly setup.
+  async checkBridge() {
+    let detected = false, version = null;
+    try { detected = !!(await hasBridge()); if (detected) version = await bridgeVersion(); } catch { detected = false; }
+    const el = document.getElementById('bridge-status');
+    if (el) el.textContent = detected ? `bridge: ${version ? 'v' + version : 'connected'}` : 'bridge: not detected';
+    this._setBridgeBanner(!detected && (this._fetchFails || 0) >= 1);
+    return detected;
+  }
+
+  _setBridgeBanner(show) {
+    if (show && this._bridgeDismissed) return;
+    document.getElementById('bridge-toast')?.classList.toggle('on', !!show);
   }
 
   renderPollStatus() {

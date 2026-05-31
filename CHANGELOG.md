@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Bridge-down banner — 2026-06-01
+
+- weir now **says it out loud** when the bridge isn't brokering, instead of
+  failing quietly into a console full of CORS errors. A warning toast — *"Bridge
+  not active — feeds & the AI cataloger can't fetch. Enable @gcu/bridge, then
+  reload."* — appears **only when fetches are actually failing AND the bridge
+  isn't detected** (so a CORS-friendly setup never sees a false alarm). It clears
+  the instant a fetch succeeds and re-arms for the next outage; **Re-check**
+  re-probes, **dismiss** silences it for the session. Catches the case where Edge
+  silently disables the unpacked extension on restart.
+
 ### Glass: catalog Stage 1 foundation — the cataloger service — 2026-06-01
 
 - **LLM provider client** (`llm.js`, adopted from patchbay): OpenAI chat-shape for

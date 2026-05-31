@@ -90,6 +90,13 @@
   <button class="btn-link" id="update-dismiss">later</button>
 </div>
 
+<!-- Bridge-down banner — shown when fetches are failing AND the bridge isn't active -->
+<div class="toast toast-warn" id="bridge-toast">
+  <span>⚠ Bridge not active — feeds &amp; the AI cataloger can't fetch. Enable <b>@gcu/bridge</b>, then reload the tab.</span>
+  <button class="btn" id="bridge-recheck">Re-check</button>
+  <button class="btn-link" id="bridge-dismiss">dismiss</button>
+</div>
+
 <!-- Filesystem-mount reconnect banner (folder mounted but permission lapsed) -->
 <div class="toast" id="mount-toast">
   <span>weir is mounted to a folder — reconnect to use it.</span>
