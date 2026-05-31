@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS = {
   theme: 'switchboard-dark',
   fetch_full_content_default: false,
   rail_width: 240,                       // source rail width in px (drag to resize)
+  auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
   retention_enabled: false,

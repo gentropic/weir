@@ -9,6 +9,7 @@ import { DEFAULT_ROUTING } from '../router.js';
 import { parseWatchDigest } from '../affinity.js';
 import { showMenu } from './menu.js';
 import { extractArticle } from '../extract.js';
+import { checkForUpdateNow, setAutoCheck } from '../pwa.js';
 import { recoverFeed } from '../wayback.js';
 import { parseFeed } from '../adapters/feed.js';
 
@@ -100,6 +101,7 @@ export class App {
     document.getElementById('settings-save')?.addEventListener('click', () => this.saveSettings());
     document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
     document.getElementById('set-request-persist')?.addEventListener('click', () => this.requestPersist());
+    document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     const affFile = document.getElementById('affinity-file');
@@ -699,6 +701,7 @@ export class App {
     chk('set-images', s.images_default_allowed);
     chk('set-fullcontent', s.fetch_full_content_default);
     chk('set-retention', s.retention_enabled);
+    chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
     val('set-wb-interval', Math.round(s.wayback_min_interval_ms / 1000));
     val('set-wb-max', s.wayback_max_snapshots);
@@ -737,6 +740,7 @@ export class App {
       images_default_allowed: chk('set-images'),
       fetch_full_content_default: chk('set-fullcontent'),
       retention_enabled: chk('set-retention'),
+      auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
       wayback_min_interval_ms: Math.max(1000, num('set-wb-interval', 5) * 1000),
       wayback_max_snapshots: Math.max(1, Math.round(num('set-wb-max', 40))),
@@ -744,9 +748,17 @@ export class App {
       ia_secret_key: document.getElementById('set-ia-secret').value.trim(),
     };
     await this.store.setSettings(patch);
+    setAutoCheck(patch.auto_check_updates);   // push the preference to the SW
     if (patch.retention_enabled) this.store.runRetention();   // apply immediately if just enabled
     document.getElementById('settings-msg').textContent = 'saved ✓';
     setTimeout(() => this.closeSettings(), 700);
+  }
+
+  async checkUpdates() {
+    const el = document.getElementById('update-check-status');
+    if (el) el.textContent = 'checking…';
+    const at = await checkForUpdateNow();
+    if (el) el.textContent = at == null ? 'no service worker (serve over https / install)' : 'checked — a reload prompt appears if there’s an update';
   }
 
   async requestPersist() {

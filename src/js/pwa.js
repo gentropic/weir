@@ -7,6 +7,24 @@
 function showToast() { document.getElementById('update-toast')?.classList.add('on'); }
 function hideToast() { document.getElementById('update-toast')?.classList.remove('on'); }
 
+// Tell the SW whether to background-refresh the shell on each load.
+export function setAutoCheck(value) {
+  navigator.serviceWorker?.controller?.postMessage({ type: 'weir:set-auto-check', value: !!value });
+}
+
+// Ask the SW to revalidate the shell now; resolves when it replies. If a new
+// build is found the SW posts weir:update-available → the toast shows.
+export function checkForUpdateNow() {
+  return new Promise((resolve) => {
+    const ctrl = navigator.serviceWorker?.controller;
+    if (!ctrl) { resolve(null); return; }
+    const ch = new MessageChannel();
+    ch.port1.onmessage = (e) => { if (e.data?.type === 'weir:check-complete') resolve(e.data.at); };
+    ctrl.postMessage({ type: 'weir:check-now' }, [ch.port2]);
+    setTimeout(() => resolve(null), 8000);   // don't hang if the SW is silent
+  });
+}
+
 export function initPwa() {
   document.getElementById('update-reload')?.addEventListener('click', () => location.reload());
   document.getElementById('update-dismiss')?.addEventListener('click', hideToast);

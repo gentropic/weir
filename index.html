@@ -507,6 +507,11 @@ body {
         <div class="hint">Import a Takeout watch-affinity digest (yt-watch-counts.json) to order YouTube feeds by how much you actually watch — recency-weighted, so old fads sink.</div>
       </section>
       <section class="set-group">
+        <h4>Updates</h4>
+        <label class="set-row check"><input type="checkbox" id="set-autocheck"> check for updates automatically (background)</label>
+        <div class="set-row"><span id="update-check-status">—</span><button class="btn-link" id="set-check-update" type="button">check now</button></div>
+      </section>
+      <section class="set-group">
         <h4>Storage</h4>
         <div class="set-row"><span>persistence: <b id="set-persist">—</b></span><button class="btn-link" id="set-request-persist" type="button">request persistence</button></div>
         <div class="set-row"><span>usage</span><span id="set-usage">—</span></div>
@@ -3845,6 +3850,7 @@ const DEFAULT_SETTINGS = {
   theme: 'switchboard-dark',
   fetch_full_content_default: false,
   rail_width: 240,                       // source rail width in px (drag to resize)
+  auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
   retention_enabled: false,
@@ -5267,6 +5273,24 @@ class Retainer {
 function showToast() { document.getElementById('update-toast')?.classList.add('on'); }
 function hideToast() { document.getElementById('update-toast')?.classList.remove('on'); }
 
+// Tell the SW whether to background-refresh the shell on each load.
+function setAutoCheck(value) {
+  navigator.serviceWorker?.controller?.postMessage({ type: 'weir:set-auto-check', value: !!value });
+}
+
+// Ask the SW to revalidate the shell now; resolves when it replies. If a new
+// build is found the SW posts weir:update-available → the toast shows.
+function checkForUpdateNow() {
+  return new Promise((resolve) => {
+    const ctrl = navigator.serviceWorker?.controller;
+    if (!ctrl) { resolve(null); return; }
+    const ch = new MessageChannel();
+    ch.port1.onmessage = (e) => { if (e.data?.type === 'weir:check-complete') resolve(e.data.at); };
+    ctrl.postMessage({ type: 'weir:check-now' }, [ch.port2]);
+    setTimeout(() => resolve(null), 8000);   // don't hang if the SW is silent
+  });
+}
+
 function initPwa() {
   document.getElementById('update-reload')?.addEventListener('click', () => location.reload());
   document.getElementById('update-dismiss')?.addEventListener('click', hideToast);
@@ -5535,6 +5559,7 @@ class Poller {
 
 
 
+
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
 const RENDER_CAP = 300;
@@ -5623,6 +5648,7 @@ class App {
     document.getElementById('settings-save')?.addEventListener('click', () => this.saveSettings());
     document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
     document.getElementById('set-request-persist')?.addEventListener('click', () => this.requestPersist());
+    document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     const affFile = document.getElementById('affinity-file');
@@ -6222,6 +6248,7 @@ class App {
     chk('set-images', s.images_default_allowed);
     chk('set-fullcontent', s.fetch_full_content_default);
     chk('set-retention', s.retention_enabled);
+    chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
     val('set-wb-interval', Math.round(s.wayback_min_interval_ms / 1000));
     val('set-wb-max', s.wayback_max_snapshots);
@@ -6260,6 +6287,7 @@ class App {
       images_default_allowed: chk('set-images'),
       fetch_full_content_default: chk('set-fullcontent'),
       retention_enabled: chk('set-retention'),
+      auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
       wayback_min_interval_ms: Math.max(1000, num('set-wb-interval', 5) * 1000),
       wayback_max_snapshots: Math.max(1, Math.round(num('set-wb-max', 40))),
@@ -6267,9 +6295,17 @@ class App {
       ia_secret_key: document.getElementById('set-ia-secret').value.trim(),
     };
     await this.store.setSettings(patch);
+    setAutoCheck(patch.auto_check_updates);   // push the preference to the SW
     if (patch.retention_enabled) this.store.runRetention();   // apply immediately if just enabled
     document.getElementById('settings-msg').textContent = 'saved ✓';
     setTimeout(() => this.closeSettings(), 700);
+  }
+
+  async checkUpdates() {
+    const el = document.getElementById('update-check-status');
+    if (el) el.textContent = 'checking…';
+    const at = await checkForUpdateNow();
+    if (el) el.textContent = at == null ? 'no service worker (serve over https / install)' : 'checked — a reload prompt appears if there’s an update';
   }
 
   async requestPersist() {
@@ -6357,6 +6393,8 @@ async function boot() {
     const d = $('vfs-dot'); if (d) d.dataset.state = 'fault';
     return;
   }
+
+  setAutoCheck(store.getSettings().auto_check_updates);   // sync the SW with the saved preference
 
   const backend = store.vfs.mounts()[0]?.type || '?';
   try {

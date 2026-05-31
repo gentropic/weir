@@ -6,7 +6,7 @@
 // Being a controlled PWA also makes the browser far more willing to grant
 // persistent storage — which is the point here: nothing should be lost.
 
-const CACHE = 'weir-shell-v1';
+const CACHE = 'weir-shell-v2';
 const SHELL = [
   './',
   './index.html',
@@ -14,6 +14,8 @@ const SHELL = [
   './icon.svg',
   './icon-maskable.svg',
 ];
+
+let _autoCheck = true;   // toggled by the page via a message; gates background refresh
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -40,7 +42,12 @@ self.addEventListener('fetch', (event) => {
 async function handle(req) {
   const cache = await caches.open(CACHE);
   const cached = await cache.match(req, { ignoreSearch: true });
-  if (cached) { revalidate(req, cache, cached); return cached; }
+  if (cached) {
+    // Offline-first: serve from cache instantly. Background-refresh only if the
+    // user hasn't turned off auto-check (saves the shell re-fetch on bad links).
+    if (_autoCheck) revalidate(req, cache, cached);
+    return cached;
+  }
   try {
     const resp = await fetch(req);
     if (resp && resp.ok) cache.put(req, resp.clone()).catch(() => {});
@@ -72,3 +79,20 @@ function bytesEqual(a, b) {
   for (let i = 0; i < va.length; i++) if (va[i] !== vb[i]) return false;
   return true;
 }
+
+// Message protocol with the page (Settings → Updates).
+self.addEventListener('message', (event) => {
+  const msg = event.data || {};
+  if (msg.type === 'weir:set-auto-check') { _autoCheck = !!msg.value; return; }
+  if (msg.type === 'weir:check-now') {
+    const port = event.ports && event.ports[0];
+    event.waitUntil((async () => {
+      const cache = await caches.open(CACHE);
+      const root = new Request(new URL('./', self.location.href).toString());
+      const cached = await cache.match(root, { ignoreSearch: true });
+      if (cached) await revalidate(root, cache, cached);           // posts weir:update-available if changed
+      else { try { const r = await fetch(root); if (r && r.ok) await cache.put(root, r.clone()); } catch { /* offline */ } }
+      if (port) port.postMessage({ type: 'weir:check-complete', at: Date.now() });
+    })());
+  }
+});

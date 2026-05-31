@@ -7,7 +7,7 @@ import { Router } from './router.js';
 import { RecoveryDrip } from './recovery.js';
 import { Retainer } from './retainer.js';
 import { App } from './ui/app.js';
-import { initPwa } from './pwa.js';
+import { initPwa, setAutoCheck } from './pwa.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
 import { fmtBytes } from './ui/format.js';
@@ -41,6 +41,8 @@ async function boot() {
     const d = $('vfs-dot'); if (d) d.dataset.state = 'fault';
     return;
   }
+
+  setAutoCheck(store.getSettings().auto_check_updates);   // sync the SW with the saved preference
 
   const backend = store.vfs.mounts()[0]?.type || '?';
   try {

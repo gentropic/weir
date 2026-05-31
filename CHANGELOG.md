@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### SW: fix stale-README on reload; manual update check — 2026-05-31
+
+- The service worker had cached the Jekyll README as the navigation root during the
+  Pages-deploy transition, so a normal reload (Ctrl+R) served the stale README via
+  the SW while a hard reload (which bypasses the SW) showed the real app. **Bumped
+  the cache `weir-shell-v1 → v2`** so the new SW purges the poisoned cache on
+  activate. Kept **offline-first** (cache-first) — instant load on bad connections.
+- Added an ep-style **Settings → Updates**: a "check now" button (asks the SW to
+  revalidate the shell; a reload toast appears if a new build is found) and an
+  **auto-check** toggle (`auto_check_updates`) that turns the background shell
+  re-fetch off for bad connections. SW message protocol: `weir:check-now` /
+  `weir:set-auto-check`.
+
 ### Bug fixes from code review — 2026-05-31
 
 A `/code-review` pass found and we fixed:
