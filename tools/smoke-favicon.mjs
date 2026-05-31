@@ -1,7 +1,7 @@
 // Favicon module tests. Run: node tools/smoke-favicon.mjs
 
 import assert from 'node:assert';
-import { faviconOrigin, monogram, needsFavicon, FaviconFetcher } from '../src/js/favicon.js';
+import { faviconOrigin, monogram, needsFavicon, parseIconLinks, FaviconFetcher } from '../src/js/favicon.js';
 import { VFS } from '../vendor/vfs.js';
 import { Store } from '../src/js/store/store.js';
 
@@ -35,6 +35,7 @@ function makeRes(status, type, bytes) {
     status,
     headers: { get: (k) => (String(k).toLowerCase() === 'content-type' ? type : null) },
     arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    text: async () => new TextDecoder().decode(bytes),
   };
 }
 const ICO = new Uint8Array([0, 0, 1, 0, 1, 0, 16, 16]);   // tiny but non-empty
@@ -61,7 +62,7 @@ assert.equal(store.getFeed('html').favicon, undefined, 'HTML body rejected');
 assert.equal(store.getFeed('html').favicon_checked_at, NOW, 'miss still stamps checked_at');
 
 // oversized icon → rejected
-fetcher.fetch = async () => makeRes(200, 'image/png', new Uint8Array(25_000));
+fetcher.fetch = async () => makeRes(200, 'image/png', new Uint8Array(35_000));   // over the 30KB cap
 await fetcher._fetchOne('big');
 assert.equal(store.getFeed('big').favicon, undefined, 'oversized icon skipped');
 assert.equal(store.getFeed('big').favicon_checked_at, NOW, 'oversized still stamps');
@@ -86,5 +87,37 @@ await new Promise((r) => setTimeout(r, 60));
 f2.stop();
 assert.equal(calls, 2, 'fetched exactly the two un-cached feeds, once each (not the pre-cached one)');
 assert.ok(store2.getFeed('a').favicon && store2.getFeed('b').favicon, 'both backfilled');
+
+// ── parseIconLinks: extraction + ranking ──
+const ICONS_HTML = `<!doctype html><head>
+  <link rel="stylesheet" href="/x.css">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="https://cdn.example/i/32.png">
+  <link rel="shortcut icon" href="favicon.ico">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+</head>`;
+const links = parseIconLinks(ICONS_HTML, 'https://blog.example/path/');
+assert.equal(links[0], 'https://blog.example/icon.svg', 'scalable svg ranks first');
+assert.ok(links.includes('https://cdn.example/i/32.png'), 'absolute href preserved');
+assert.ok(links.includes('https://blog.example/path/favicon.ico'), 'relative href resolved against base dir');
+assert.ok(links.indexOf('https://cdn.example/i/32.png') < links.indexOf('https://blog.example/apple.png'),
+  '32px ranks above 180px apple icon (closer to a 16px chip)');
+assert.deepEqual(parseIconLinks('<head><link rel="icon"></head>', 'https://x.io'), [], 'no href → dropped');
+assert.deepEqual(parseIconLinks('', 'https://x.io'), [], 'empty html → []');
+
+// ── HTML fallback: .ico misses, home page <link> wins ──
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);   // PNG-ish
+function route(u) {
+  if (u.endsWith('/favicon.ico')) return makeRes(404, 'text/html', new Uint8Array(0));
+  if (u === 'https://site.example/' || u === 'https://site.example/feed') return makeRes(200, 'text/html', new TextEncoder().encode('<head><link rel="icon" href="/brand.png"></head>'));
+  if (u === 'https://site.example/brand.png') return makeRes(200, 'image/png', PNG);
+  return makeRes(404, 'text/html', new Uint8Array(0));
+}
+const store3 = new Store(await VFS.create());
+await store3._hydrate();
+await store3.putFeed({ id: 'htmlicon', name: 'HtmlIcon', url: 'https://site.example/feed', site_url: 'https://site.example/' });
+const f3 = new FaviconFetcher(store3, { fetch: async (u) => route(u), now: () => NOW });
+await f3._fetchOne('htmlicon');
+assert.ok(store3.getFeed('htmlicon').favicon?.startsWith('data:image/png;base64,'), 'fell back to <link rel=icon> PNG');
 
 console.log('smoke-favicon: ok');

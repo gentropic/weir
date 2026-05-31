@@ -6,6 +6,14 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Favicon: `<link rel="icon">` fallback — 2026-05-31
+
+- Feeds whose `<origin>/favicon.ico` is missing now get a real icon via a second
+  pass: fetch the home page, `parseIconLinks` pulls `icon` / `shortcut icon` /
+  `apple-touch-icon` hrefs (resolved absolute, ranked SVG → ~32px → rest), and
+  the best one or two are fetched. Same politeness throttle, only for feeds the
+  `.ico` missed — so fewer feeds are stuck on a monogram. Size cap nudged 24→30KB.
+
 ### Edit / replace feed dialog — 2026-05-31
 
 - Feed context menu → **"Edit feed…"** opens a dialog to change a feed's **name,

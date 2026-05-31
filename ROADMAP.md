@@ -14,12 +14,11 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
 - ~~**Feed favicons** in the rail for visual scanning.~~ ✅ Shipped 2026-05-31 —
   lazy/polite fetch via the bridge, cached as `data:` URLs, deterministic letter
   monogram fallback.
-  - **Follow-up: `<link rel="icon">` fallback.** The fetcher only tries
-    `<origin>/favicon.ico`. Sites that declare their icon only in HTML (no root
-    `.ico`) keep the monogram. Add a second pass: fetch the home page, parse
-    `<link rel="icon"|"shortcut icon"|"apple-touch-icon">`, resolve + fetch that.
-    Gated behind the same politeness throttle; only for feeds that missed the
-    `.ico`.
+  - ~~**Follow-up: `<link rel="icon">` fallback.**~~ ✅ Shipped 2026-05-31 — feeds
+    that miss `<origin>/favicon.ico` now get a second pass: fetch the home page,
+    `parseIconLinks` extracts `icon`/`shortcut icon`/`apple-touch-icon` hrefs
+    (ranked SVG → ~32px → rest), and the best one or two are fetched. Same
+    politeness throttle; only for feeds the `.ico` missed.
 - ~~**Density toggle** (compact ↔ comfortable item rows).~~ ✅ Shipped 2026-05-31.
 - ~~**Edit feed URL.**~~ ✅ Shipped 2026-05-31 — the feed context menu's
   "Edit feed…" opens a dialog (name, URL, folder, images, full-text, **+ "remove
