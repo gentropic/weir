@@ -6,6 +6,21 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### youtube adapter — 2026-05-31
+
+- `src/js/adapters/youtube.js`: parses YouTube channel feeds
+  (`youtube.com/feeds/videos.xml?channel_id=…`, Atom + yt:/media: extensions) into
+  `video` items — thumbnail, channel, view count, `yt:videoId` stable id, watch
+  URL, description. `detectFeedUrl` resolves a channel/@handle/watch page to its
+  feed URL (channel id from the page), so a pasted channel URL works via the
+  poller's autodiscovery. Registered before `feed` so YouTube URLs route here;
+  `addFeed`/OPML pick the adapter by `match()`. (YouTube feeds carry no duration.)
+- UI: video rows now render the actual thumbnail (lazy `<img>`) with a play
+  overlay and a `fmtCount` view count.
+- Tests: `tools/smoke-youtube.mjs` (real-structure fixture: video mapping, ids,
+  thumbnail, views, match + autodiscovery, store round-trip). Verified in-browser.
+  Confirmed against a live channel feed for structure.
+
 ### feed archaeology (Wayback recovery) — prototype — 2026-05-31
 
 Recover a feed's lost/dead history from the Internet Archive. Read-only and

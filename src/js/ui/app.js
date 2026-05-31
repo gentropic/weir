@@ -3,7 +3,7 @@
 // re-render on store events (fine at v0.1 scale); selection/expansion are app
 // state, content is cached to avoid re-reading on every keystroke.
 
-import { relativeTime, isoTitle, escapeHtml, fmtDuration, dailyCounts, sparkPoints } from './format.js';
+import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, dailyCounts, sparkPoints } from './format.js';
 import { parseOpml, buildOpml } from '../opml.js';
 import { DEFAULT_ROUTING } from '../router.js';
 import { recoverFeed } from '../wayback.js';
@@ -15,10 +15,11 @@ const RENDER_CAP = 300;
 const RAIL_CAP = 60;
 
 export class App {
-  constructor({ store, poller, router }) {
+  constructor({ store, poller, router, adapters }) {
     this.store = store;
     this.poller = poller;
     this.router = router;
+    this.adapters = adapters || [];
     this.view = 'inbox';
     this.feedFilter = null;
     this.route = null;          // active routed view (#name), or null
@@ -159,7 +160,11 @@ export class App {
     let body;
     if (it.type === 'video' || (it.media && it.media.thumbnail && !TEXT_TYPES.has(it.type))) {
       const dur = it.media?.duration_seconds ? `<span class="dur">${fmtDuration(it.media.duration_seconds)}</span>` : '';
-      body = `<div class="ivideo"><div class="thumb">▶${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div><div class="imeta">${meta} ${tags}</div></div></div>`;
+      const thumb = it.media?.thumbnail
+        ? `<img class="thumbimg" loading="lazy" src="${escapeHtml(it.media.thumbnail)}" alt="">`
+        : '';
+      const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
+      body = `<div class="ivideo"><div class="thumb">${thumb}<span class="playover">▶</span>${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div><div class="imeta">${meta}${views} ${tags}</div></div></div>`;
     } else {
       body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${meta} ${tags}</div>`;
     }
@@ -305,8 +310,9 @@ export class App {
 
   async addFeed(url) {
     let host = url; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep raw */ }
+    const adapter = this.adapters.find((a) => { try { return a.match(url); } catch { return false; } })?.name || 'feed';
     try {
-      const feed = await this.store.putFeed({ url, name: host, adapter: 'feed' });
+      const feed = await this.store.putFeed({ url, name: host, adapter });
       this.renderRail();
       this.setView('inbox');
       const input = document.getElementById('addfeed-input'); if (input) input.value = '';

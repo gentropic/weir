@@ -6,6 +6,7 @@ import { Poller } from './poller.js';
 import { Router } from './router.js';
 import { App } from './ui/app.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
+import { youtubeAdapter } from './adapters/youtube.js';
 import { fmtBytes } from './ui/format.js';
 import { hasBridge, bridgeVersion, gcuFetch } from '../../vendor/bridge-client.js';
 
@@ -51,8 +52,9 @@ async function boot() {
   router.load(await store.getRouting());
   store.router = router;
 
-  const poller = new Poller(store, { adapters: [feedAdapter], fetch: gcuFetch });
-  const app = new App({ store, poller, router });
+  const adapters = [youtubeAdapter, feedAdapter];   // specific before the `feed` fallback
+  const poller = new Poller(store, { adapters, fetch: gcuFetch });
+  const app = new App({ store, poller, router, adapters });
   app.mount();
   poller.start();
 
