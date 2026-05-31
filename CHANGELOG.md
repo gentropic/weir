@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Durability: full backup + restore — 2026-06-01
+
+- **Settings → Storage → backup: export… / restore…** A full backup snapshots
+  *every* file in the store — feeds, item shards, lazy content, tags, views,
+  routing, settings, tombstones — into one downloadable JSON
+  (`weir-backup-<date>.json`). Restore writes it all back (then prunes anything
+  not in the backup, so it's an *exact* snapshot) and reloads. Your safety net
+  against the browser evicting IndexedDB on a never-deleted corpus.
+- New `Store.exportAll()` / `Store.importAll()` over a recursive VFS walk; writes
+  land before any prune, so a failed restore never leaves you with less than you
+  had. Verified lossless round-trip in node **and** against real IndexedDB
+  (restored into a fresh database → identical corpus). The backup is
+  backend-agnostic — a stepping stone to the FSA "mount to a folder" flow.
+
 ### GitHub adapter — 2026-06-01
 
 - New `github` adapter over GitHub's native Atom feeds (no API, no auth). Add a

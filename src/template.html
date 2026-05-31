@@ -157,6 +157,9 @@
         <h4>Storage</h4>
         <div class="set-row"><span>persistence: <b id="set-persist">—</b></span><button class="btn-link" id="set-request-persist" type="button">request persistence</button></div>
         <div class="set-row"><span>usage</span><span id="set-usage">—</span></div>
+        <div class="set-row"><span>backup</span><span><button class="btn-link" id="set-export-backup" type="button">export…</button> &nbsp; <button class="btn-link" id="set-restore-backup" type="button">restore…</button></span></div>
+        <input type="file" id="backup-file" accept=".json,application/json" hidden>
+        <div class="hint">Export a full backup — every feed, item, and its content in one file — your safety net against the browser clearing IndexedDB. Restore replaces weir's current data with the backup, then reloads.</div>
       </section>
     </div>
     <div class="panel-foot">

@@ -112,6 +112,10 @@ export class App {
     document.getElementById('settings-save')?.addEventListener('click', () => this.saveSettings());
     document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
     document.getElementById('set-request-persist')?.addEventListener('click', () => this.requestPersist());
+    document.getElementById('set-export-backup')?.addEventListener('click', () => this.exportBackup());
+    const backupFile = document.getElementById('backup-file');
+    document.getElementById('set-restore-backup')?.addEventListener('click', () => backupFile?.click());
+    backupFile?.addEventListener('change', async () => { const f = backupFile.files[0]; if (f) await this.restoreBackup(await f.text()); backupFile.value = ''; });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
@@ -1071,6 +1075,31 @@ export class App {
   }
 
   closeSettings() { document.getElementById('settings-overlay').hidden = true; }
+
+  async exportBackup() {
+    const msg = document.getElementById('settings-msg');
+    if (msg) msg.textContent = 'building backup…';
+    try {
+      const data = await this.store.exportAll();
+      const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `weir-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      if (msg) msg.textContent = `backup: ${data.meta.files} files ✓`;
+    } catch (e) { if (msg) msg.textContent = `backup failed: ${e.message}`; }
+  }
+
+  async restoreBackup(text) {
+    const msg = document.getElementById('settings-msg');
+    let data; try { data = JSON.parse(text); } catch { if (msg) msg.textContent = 'not valid JSON'; return; }
+    if (!data || !data.files || data.meta?.app !== 'weir') { if (msg) msg.textContent = 'not a weir backup'; return; }
+    const n = Object.keys(data.files).length;
+    if (!confirm(`Restore ${n} files from this backup? This REPLACES weir's current data and reloads.`)) return;
+    try { await this.store.importAll(data); location.reload(); }
+    catch (e) { if (msg) msg.textContent = `restore failed: ${e.message}`; }
+  }
 
   async saveSettings() {
     const cur = this.store.getSettings();

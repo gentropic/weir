@@ -105,4 +105,38 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.equal(reopened2.query({ type: 'video' }).length, 1, 'Videos view query returns only videos');
 }
 
+// Backup round-trip: exportAll → importAll into a fresh VFS → re-hydrate is
+// byte-for-byte the same corpus, and strays not in the backup are pruned.
+{
+  const a = new Store(await VFS.create()); await a._hydrate();
+  await a.putFeed({ id: 'bk', name: 'Backup Me', adapter: 'feed', url: 'http://b/f', category: 'dev' });
+  await a.upsertItems([
+    { id: 'bk-1', feed_id: 'bk', type: 'article', title: 'kept', content: '<p>body one</p>' },
+    { id: 'bk-2', feed_id: 'bk', type: 'video', title: 'clip' },
+  ]);
+  a.setState('bk-1', { saved: true });
+  await a.setSettings({ default_poll_interval_minutes: 222 });
+  await a.saveViews([{ id: 'v-x', name: 'My View', query: { text: 'foo' } }]);
+  const backup = await a.exportAll();
+  assert.ok(backup.files['/feeds/' + a.feedKey('bk') + '.json'], 'backup includes the feed file');
+  assert.ok(Object.keys(backup.files).some((p) => p.startsWith('/content/')), 'backup includes lazy content');
+  assert.ok(backup.meta.files === Object.keys(backup.files).length, 'meta count matches');
+
+  // Restore into a DIFFERENT store that has a stray feed (must be pruned).
+  const b = new Store(await VFS.create()); await b._hydrate();
+  await b.putFeed({ id: 'stray', name: 'Stray', adapter: 'feed', url: 'http://s/f' });
+  const r = await b.importAll(backup);
+  assert.ok(r.pruned >= 1, 'stray feed pruned (exact snapshot)');
+
+  // Re-hydrate from the restored VFS — identical to the source.
+  const c = new Store(b.vfs); await c._hydrate();
+  assert.equal(c.items.size, 2, 'items restored');
+  assert.equal(c.getFeed('bk')?.name, 'Backup Me', 'feed restored');
+  assert.equal(c.getFeed('stray'), null, 'stray gone after restore');
+  assert.equal(c.getItem('bk-1').saved, true, 'saved flag survived backup');
+  assert.match(await c.getContent('bk-1'), /body one/, 'lazy content survived backup');
+  assert.equal(c.getSettings().default_poll_interval_minutes, 222, 'settings restored');
+  assert.ok(c.getViews().some((v) => v.id === 'v-x'), 'views restored');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

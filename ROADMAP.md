@@ -83,9 +83,15 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
   → `release`/`commit` items; add-time URL resolution). Remaining: `scrape`
   (public-page change tracking → `track` items), arXiv (→ `paper`), Mastodon,
   Bluesky.
-- **Storage tiers.** OPFS/FSA content backend (the store is already backend-agnostic
-  — mostly a config swap); a **cold-store** tier that offloads archived items out
-  of the hot in-memory index — still never deleting ([[weir-never-delete]]).
+- **Durability / storage tiers.** ~~Full backup + restore~~ ✅ Shipped
+  2026-06-01 (`exportAll`/`importAll`, Settings → Storage). **Next: FSA
+  "mount to a folder"** — run the store directly on a user-picked directory
+  (File System Access) so the whole corpus lives on the real filesystem, immune
+  to IndexedDB eviction; needs handle persistence + permission re-grant on boot +
+  an IDB→FSA migration (copy, the backup walk already does the hard part) +
+  interactive testing (headless can't drive the picker). Then a **cold-store**
+  tier that offloads archived items out of the hot in-memory index — still never
+  deleting ([[weir-never-delete]]).
 - **Save-Page-Now.** Proactively archive live feeds to the Internet Archive (uses
   the IA keys already in Settings) so future [feed archaeology](CHANGELOG.md)
   always has snapshots. Plus link-rot recovery (dead item URL → archived page).

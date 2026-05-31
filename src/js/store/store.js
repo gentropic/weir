@@ -458,5 +458,51 @@ export class Store {
     return (await this.vfs.readFile('/.health', 'utf8')) === stamp;
   }
 
+  // Recursively collect every file path under `dir` (depth-first). The VFS
+  // layout is identical on every backend, so this captures the whole store.
+  async _walk(dir, out) {
+    let names;
+    try { names = await this.vfs.readdir(dir); } catch { return out; }
+    for (const name of names) {
+      const p = dir === '/' ? `/${name}` : `${dir}/${name}`;
+      let st; try { st = await this.vfs.stat(p); } catch { continue; }
+      if (st.type === 'directory') await this._walk(p, out);
+      else if (name !== '.health') out.push(p);   // skip the transient health probe
+    }
+    return out;
+  }
+
+  // Full backup: flush pending writes, then snapshot every file (path → text
+  // content). The whole corpus — feeds, item shards, lazy content, tags, views,
+  // routing, settings, tombstones — in one portable object. Durability against
+  // IndexedDB eviction (SPEC §5 / never-delete).
+  async exportAll() {
+    await this.flush();
+    const paths = await this._walk('/', []);
+    const files = {};
+    for (const p of paths) { try { files[p] = await this.vfs.readFile(p, 'utf8'); } catch { /* skip unreadable */ } }
+    return { meta: { app: 'weir', schema: SCHEMA_VERSION, exported: now(), files: paths.length }, files };
+  }
+
+  // Restore a backup into this VFS: write every file (overwrite), then prune any
+  // file NOT in the backup, so the result is an exact snapshot. Writes happen
+  // before the prune, so a failure never leaves you with less than you had. The
+  // caller must reload (re-hydrate) afterwards — the in-memory store is now stale.
+  async importAll(backup) {
+    if (!backup || typeof backup !== 'object' || !backup.files) throw new Error('not a weir backup (no files)');
+    const want = new Set(Object.keys(backup.files));
+    for (const [p, content] of Object.entries(backup.files)) {
+      const slash = p.lastIndexOf('/');
+      const dir = slash > 0 ? p.slice(0, slash) : '';
+      if (dir) await this.vfs.mkdir(dir, { recursive: true });
+      await this.vfs.writeFile(p, String(content));
+    }
+    let pruned = 0;
+    for (const p of await this._walk('/', [])) {
+      if (!want.has(p)) { try { await this.vfs.unlink(p); pruned++; } catch { /* gone */ } }
+    }
+    return { written: want.size, pruned };
+  }
+
   async close() { await this.flush(); }
 }
