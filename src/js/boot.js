@@ -4,6 +4,7 @@
 import { Store } from './store/store.js';
 import { Poller } from './poller.js';
 import { Router } from './router.js';
+import { RecoveryDrip } from './recovery.js';
 import { App } from './ui/app.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
@@ -58,7 +59,14 @@ async function boot() {
   app.mount();
   poller.start();
 
-  window.__weir = { store, poller, router, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), parseFeed, feedAdapter, gcuFetch };
+  // Background IA recovery drip — resumes if there's pending work from last time.
+  const drip = new RecoveryDrip(store, { fetch: gcuFetch, parseFeed, intervalMs: store.getSettings().recovery_drip_interval_ms });
+  await drip.load();
+  drip.on((st) => app.renderDripStatus(st));
+  app.renderDripStatus(drip.status());
+  if (drip.queue.length || drip.current) drip.start();
+
+  window.__weir = { store, poller, router, drip, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), parseFeed, feedAdapter, gcuFetch };
 
   try {
     let persisted = false;

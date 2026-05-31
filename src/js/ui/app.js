@@ -418,6 +418,13 @@ export class App {
       `<div class="navrow${this.route === n ? ' active' : ''}" data-route="${escapeHtml(n)}"><span class="lbl"><span class="ico">#</span> ${escapeHtml(n)}</span><span class="count">${routes[n]}</span></div>`).join('');
   }
 
+  renderDripStatus(st) {
+    const el = document.getElementById('drip-status'); if (!el) return;
+    if (!st || (!st.current && !st.queued)) { el.textContent = ''; return; }
+    const cur = st.current ? `recovering ${st.current.idx}/${st.current.total}` : 'recovery queued';
+    el.textContent = `⏪ ${cur}${st.queued ? ` · ${st.queued} waiting` : ''}`;
+  }
+
   renderNotify() {
     const el = document.getElementById('notify-status'); if (!el) return;
     const n = this.store.notifications.length;

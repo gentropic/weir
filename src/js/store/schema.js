@@ -33,6 +33,7 @@ export const DEFAULT_SETTINGS = {
   // Feed archaeology (Wayback recovery) politeness — be gentle to the IA.
   wayback_min_interval_ms: 5000,    // ~0.2 req/s, one request every 5s
   wayback_max_snapshots: 40,        // hard cap per recovery run
+  recovery_drip_interval_ms: 480000, // background drip: one IA request every 8 min
   // Optional Internet Archive S3 keys — NOT needed for read-only recovery; for
   // future Save-Page-Now (proactively archiving your live feeds). Empty = off.
   ia_access_key: '',

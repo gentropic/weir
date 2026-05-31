@@ -18,6 +18,7 @@ import './adapters/youtube.js';          // → parseYoutube, youtubeAdapter (us
 import './opml.js';                      // → parseOpml, buildOpml (uses parseXml)
 import './router.js';                    // → Router, compileRules, DEFAULT_ROUTING
 import './wayback.js';                    // → cdxSnapshots, recoverFeed (uses parseFeed at call time)
+import './recovery.js';                   // → RecoveryDrip (uses cdxSnapshots)
 import './ui/format.js';                 // → relativeTime, sparkPoints, … (before app)
 import './poller.js';                    // → Poller
 import './ui/app.js';                    // → App (uses format)

@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### IA recovery drip — 2026-05-31
+
+- `src/js/recovery.js`: `RecoveryDrip` — a very slow background trickle that
+  recovers queued (archived/dead) feeds from the Internet Archive, making exactly
+  ONE request per tick (a CDX query to start a feed, or a single snapshot fetch)
+  on a long interval (`recovery_drip_interval_ms`, default 8 min). State persists
+  to `/recovery.json` and resumes across restarts; pauses when the tab is hidden;
+  completed feeds aren't re-queued. ~7 requests/hour max — gentle by construction.
+- boot resumes the drip if there's pending work; status (`⏪ recovering n/total ·
+  k waiting`) shows in the status bar. Drive from the console:
+  `__weir.drip.enqueueCategory('graveyard')`.
+- Tests: `tools/smoke-recovery.mjs` (one-request-per-tick, item accumulation,
+  completion, persistence/resume — mock fetch).
+
 ### rail folders + ordering — 2026-05-31
 
 - The source rail now groups feeds by `Feed.category` under collapsible folder
