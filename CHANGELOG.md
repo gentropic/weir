@@ -42,8 +42,12 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
   click-to-stop — gentle on the NPU), and a catalog status line. The payoff: the
   **catalog browser now sources enriched facets from the cards**, so the empty
   `domain`/`method`/… facet columns **fill in live** as items get cataloged
-  (Stage-0 facets for un-cataloged items, LLM facets once enriched). Next: a
-  `needs_review` review queue, and proposed `related` edges.
+  (Stage-0 facets for un-cataloged items, LLM facets once enriched).
+- **Model pick-list:** a **↻ list** button in the AI-cataloger settings fetches
+  the provider's `/models` (derived from the chat path) and fills a datalist, so
+  you pick a model instead of typing its id (verified live against Lemonade →
+  `qwen3-it-4b-FLM`). Next: a `needs_review` review queue, and proposed
+  `related` edges.
 
 ### Glass: catalog Stage 0 — weir speaks the glass format — 2026-06-01
 

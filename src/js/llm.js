@@ -47,6 +47,25 @@ export async function chat(opts = {}) {
   };
 }
 
+// List a provider's available models via its OpenAI-shaped /models endpoint
+// (derived from the chat path: …/chat/completions → …/models). Returns id
+// strings. Throws on network/HTTP error so the caller can show it.
+export async function listModels(opts = {}) {
+  const { provider = 'ollama', key, baseUrl } = opts;
+  const f = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  if (!f) throw new Error('no fetch available');
+  const P = PROVIDERS[provider] || PROVIDERS.custom;
+  const base = (P.local || provider === 'custom') ? (baseUrl || P.base).replace(/\/$/, '') : P.base;
+  const url = base + (P.path || '/v1/chat/completions').replace(/\/chat\/completions$/, '/models');
+  const headers = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const res = await f(url, { headers });
+  if (!res || !res.ok) throw new Error(`models ${res ? res.status : 'fetch failed'}`);
+  const data = await res.json();
+  const list = data.data || data.models || (Array.isArray(data) ? data : []);
+  return [...new Set(list.map((m) => (typeof m === 'string' ? m : (m.id || m.name || m.model))).filter(Boolean))];
+}
+
 // nano-gpt subscription gauge. Docs disagree on shape (see weir-llm-usage-providers
 // memory), so parse defensively: prefer weekly input tokens, fall back to
 // daily/monthly. Returns { kind, used, remaining, percentUsed, resetAt } or null.

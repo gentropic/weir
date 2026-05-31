@@ -18,7 +18,7 @@ import { Store } from '../store/store.js';
 import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle } from '../fsmount.js';
 import { facetsOf, FACETS } from '../glass.js';
 import { getKey, hasKey, saveKey } from '../llmkeys.js';
-import { fetchUsageGauge } from '../llm.js';
+import { fetchUsageGauge, listModels } from '../llm.js';
 import { catalogStoreItem } from '../cataloger.js';
 import { hasBridge, bridgeVersion } from '../../../vendor/bridge-client.js';
 
@@ -137,7 +137,8 @@ export class App {
     document.getElementById('bridge-dismiss')?.addEventListener('click', () => { this._bridgeDismissed = true; this._setBridgeBanner(false); });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('set-cat-gauge')?.addEventListener('click', () => this.checkCatGauge());
-    document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } });
+    document.getElementById('set-cat-models')?.addEventListener('click', () => this.loadCatModels());
+    document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } const dl = document.getElementById('cat-model-list'); if (dl) dl.innerHTML = ''; });
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
@@ -1395,6 +1396,22 @@ export class App {
       parts.push(`${prov}: ${p.calls} call${p.calls === 1 ? '' : 's'} · ${tok}`);
     }
     el.textContent = parts.length ? parts.join('  ·  ') : 'no LLM usage yet';
+  }
+
+  async loadCatModels() {
+    const status = document.getElementById('cat-usage');
+    const provider = document.getElementById('set-cat-provider')?.value || 'ollama';
+    const key = document.getElementById('set-cat-key')?.value || (await getKey(provider));
+    const baseUrl = document.getElementById('set-cat-baseurl')?.value.trim() || '';
+    if (status) status.textContent = 'fetching models…';
+    try {
+      const models = await listModels({ provider, key, baseUrl, fetch: this.poller.fetch });
+      const dl = document.getElementById('cat-model-list');
+      if (dl) dl.innerHTML = models.map((m) => `<option value="${escapeHtml(m)}"></option>`).join('');
+      const field = document.getElementById('set-cat-model');
+      if (field && !field.value && models.length) field.value = models[0];
+      if (status) status.textContent = `${models.length} model${models.length === 1 ? '' : 's'} — pick one in the box ↑`;
+    } catch (e) { if (status) status.textContent = `couldn't list models: ${e.message}`; }
   }
 
   async checkCatGauge() {

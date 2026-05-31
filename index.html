@@ -623,7 +623,7 @@ body {
       <section class="set-group">
         <h4>AI cataloger (glass)</h4>
         <label class="set-row">provider<select id="set-cat-provider" class="field"><option value="lemonade">Lemonade (Ryzen AI, local)</option><option value="ollama">Ollama (local)</option><option value="nanogpt">NanoGPT</option><option value="groq">Groq</option><option value="custom">Custom</option></select></label>
-        <label class="set-row">model<input type="text" id="set-cat-model" class="field" autocomplete="off" spellcheck="false" placeholder="(provider default)"></label>
+        <label class="set-row">model<span><input type="text" id="set-cat-model" class="field" list="cat-model-list" autocomplete="off" spellcheck="false" placeholder="(provider default)"><datalist id="cat-model-list"></datalist> <button class="btn-link" id="set-cat-models" type="button" title="Fetch available models from the provider">↻ list</button></span></label>
         <label class="set-row">base URL<input type="text" id="set-cat-baseurl" class="field" autocomplete="off" spellcheck="false" placeholder="http://localhost:11434"></label>
         <label class="set-row">API key<input type="password" id="set-cat-key" class="field" autocomplete="off" placeholder="(none)"></label>
         <div class="set-row"><span id="cat-usage">no LLM usage yet</span><button class="btn-link" id="set-cat-gauge" type="button">check allowance</button></div>
@@ -4343,6 +4343,25 @@ async function chat(opts = {}) {
   };
 }
 
+// List a provider's available models via its OpenAI-shaped /models endpoint
+// (derived from the chat path: …/chat/completions → …/models). Returns id
+// strings. Throws on network/HTTP error so the caller can show it.
+async function listModels(opts = {}) {
+  const { provider = 'ollama', key, baseUrl } = opts;
+  const f = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  if (!f) throw new Error('no fetch available');
+  const P = PROVIDERS[provider] || PROVIDERS.custom;
+  const base = (P.local || provider === 'custom') ? (baseUrl || P.base).replace(/\/$/, '') : P.base;
+  const url = base + (P.path || '/v1/chat/completions').replace(/\/chat\/completions$/, '/models');
+  const headers = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const res = await f(url, { headers });
+  if (!res || !res.ok) throw new Error(`models ${res ? res.status : 'fetch failed'}`);
+  const data = await res.json();
+  const list = data.data || data.models || (Array.isArray(data) ? data : []);
+  return [...new Set(list.map((m) => (typeof m === 'string' ? m : (m.id || m.name || m.model))).filter(Boolean))];
+}
+
 // nano-gpt subscription gauge. Docs disagree on shape (see weir-llm-usage-providers
 // memory), so parse defensively: prefer weekly input tokens, fall back to
 // daily/monthly. Returns { kind, used, remaining, percentUsed, resetAt } or null.
@@ -6895,7 +6914,8 @@ class App {
     document.getElementById('bridge-dismiss')?.addEventListener('click', () => { this._bridgeDismissed = true; this._setBridgeBanner(false); });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('set-cat-gauge')?.addEventListener('click', () => this.checkCatGauge());
-    document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } });
+    document.getElementById('set-cat-models')?.addEventListener('click', () => this.loadCatModels());
+    document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } const dl = document.getElementById('cat-model-list'); if (dl) dl.innerHTML = ''; });
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
@@ -8153,6 +8173,22 @@ class App {
       parts.push(`${prov}: ${p.calls} call${p.calls === 1 ? '' : 's'} · ${tok}`);
     }
     el.textContent = parts.length ? parts.join('  ·  ') : 'no LLM usage yet';
+  }
+
+  async loadCatModels() {
+    const status = document.getElementById('cat-usage');
+    const provider = document.getElementById('set-cat-provider')?.value || 'ollama';
+    const key = document.getElementById('set-cat-key')?.value || (await getKey(provider));
+    const baseUrl = document.getElementById('set-cat-baseurl')?.value.trim() || '';
+    if (status) status.textContent = 'fetching models…';
+    try {
+      const models = await listModels({ provider, key, baseUrl, fetch: this.poller.fetch });
+      const dl = document.getElementById('cat-model-list');
+      if (dl) dl.innerHTML = models.map((m) => `<option value="${escapeHtml(m)}"></option>`).join('');
+      const field = document.getElementById('set-cat-model');
+      if (field && !field.value && models.length) field.value = models[0];
+      if (status) status.textContent = `${models.length} model${models.length === 1 ? '' : 's'} — pick one in the box ↑`;
+    } catch (e) { if (status) status.textContent = `couldn't list models: ${e.message}`; }
   }
 
   async checkCatGauge() {

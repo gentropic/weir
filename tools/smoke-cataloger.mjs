@@ -1,7 +1,7 @@
 // Glass Stage-1 cataloger + LLM client tests (mock fetch, NO network).
 // Run: node tools/smoke-cataloger.mjs
 import assert from 'node:assert';
-import { chat, fetchUsageGauge, inputMultiplier } from '../src/js/llm.js';
+import { chat, fetchUsageGauge, inputMultiplier, listModels } from '../src/js/llm.js';
 import { catalogPrompt, parseCatalog, catalogStoreItem, stripToText } from '../src/js/cataloger.js';
 import { buildCard } from '../src/js/glass.js';
 import { VFS } from '../vendor/vfs.js';
@@ -37,6 +37,15 @@ assert.equal(gWeekly.kind, 'weeklyInputTokens'); assert.equal(gWeekly.used, 1500
 const gDaily = await fetchUsageGauge('nanogpt', 'k', { fetch: async () => ({ ok: true, async json() { return { daily: { used: 5, remaining: 1995 } }; } }) });
 assert.equal(gDaily.kind, 'daily', 'falls back to daily shape');
 assert.equal(await fetchUsageGauge('groq', 'k', { fetch: async () => ({}) }), null, 'no gauge for providers without usagePath');
+
+// ── listModels: parse /models shapes, derive URL, error on HTTP fail ──
+const mkModels = (body) => async () => ({ ok: true, async json() { return body; }, async text() { return ''; } });
+assert.deepEqual(await listModels({ provider: 'lemonade', fetch: mkModels({ data: [{ id: 'qwen3-it-4b-FLM' }, { id: 'llama3.1-8b-FLM' }] }) }), ['qwen3-it-4b-FLM', 'llama3.1-8b-FLM'], 'OpenAI data[].id');
+assert.deepEqual(await listModels({ provider: 'ollama', fetch: mkModels({ models: [{ name: 'qwen2.5:7b' }] }) }), ['qwen2.5:7b'], 'ollama models[].name');
+let listedUrl = '';
+await listModels({ provider: 'lemonade', fetch: async (u) => { listedUrl = u; return mkModels({ data: [] })(); } });
+assert.equal(listedUrl, 'http://localhost:13305/api/v1/models', 'derives /models from chat path');
+await assert.rejects(listModels({ provider: 'groq', key: 'k', fetch: async () => ({ ok: false, status: 401 }) }), /models 401/, 'throws on HTTP error');
 
 // ── parseCatalog: merge, keep Stage-0 entity, tolerate fences ──
 const stage0 = buildCard({ id: 'i', feed_id: 'f', type: 'paper', title: 'T', tags: ['kriging'] }, { name: 'F', adapter: 'feed' }, { glass_id: 'glass-20260404-001', cataloged: '2026-04-04' });
