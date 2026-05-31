@@ -609,6 +609,15 @@ body {
         <div class="hint">Import a Takeout watch-affinity digest (yt-watch-counts.json) to order YouTube feeds by how much you actually watch — recency-weighted, so old fads sink.</div>
       </section>
       <section class="set-group">
+        <h4>AI cataloger (glass)</h4>
+        <label class="set-row">provider<select id="set-cat-provider" class="field"><option value="ollama">Ollama (local, free)</option><option value="nanogpt">NanoGPT</option><option value="groq">Groq</option><option value="custom">Custom</option></select></label>
+        <label class="set-row">model<input type="text" id="set-cat-model" class="field" autocomplete="off" spellcheck="false" placeholder="(provider default)"></label>
+        <label class="set-row">base URL<input type="text" id="set-cat-baseurl" class="field" autocomplete="off" spellcheck="false" placeholder="http://localhost:11434"></label>
+        <label class="set-row">API key<input type="password" id="set-cat-key" class="field" autocomplete="off" placeholder="(none)"></label>
+        <div class="set-row"><span id="cat-usage">no LLM usage yet</span><button class="btn-link" id="set-cat-gauge" type="button">check allowance</button></div>
+        <div class="hint">The librarian that fills the language facets. Ollama runs locally (free, nothing leaves your machine). Keys are stored encrypted-out-of-band (OPFS), never in backups or the mounted folder. Cloud providers need their origin added to the bridge allowlist once.</div>
+      </section>
+      <section class="set-group">
         <h4>Updates</h4>
         <label class="set-row check"><input type="checkbox" id="set-autocheck"> check for updates automatically (background)</label>
         <div class="set-row"><span id="update-check-status">—</span><button class="btn-link" id="set-check-update" type="button">check now</button></div>
@@ -4004,6 +4013,9 @@ const DEFAULT_SETTINGS = {
   density: 'comfortable',                // row density: 'comfortable' | 'compact'
   stream_layout: 'list',                 // stream layout: 'list' | 'gallery' (thumbnail grid)
   feed_stale_days: 120,                  // a feed quiet longer than this reads as "stale" in health
+  catalog_provider: 'ollama',            // glass cataloger LLM provider (ollama | nanogpt | groq | custom)
+  catalog_model: '',                     // model id ('' → provider default)
+  catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
@@ -4268,6 +4280,178 @@ function buildCard(item, feed, opts = {}) {
   };
 }
 
+// ── src/js/llm.js ──
+
+// LLM provider client — OpenAI chat-completions shape, one call for all of them.
+// Adopted + adapted from @gcu/patchbay (401/src/providers.js), made weir-native.
+// `fetch` is injected (gcuFetch in the app, so calls go through the bridge and
+// dodge CORS — add api.groq.com / nano-gpt.com to the bridge allowlist once;
+// http://localhost is already allowlisted, so local Ollama works out of the box).
+
+const PROVIDERS = {
+  ollama: { name: 'Ollama', base: 'http://localhost:11434', path: '/v1/chat/completions', needsKey: false, local: true, defaultModel: 'llama3.1' },
+  nanogpt: { name: 'NanoGPT', base: 'https://nano-gpt.com', path: '/api/v1/chat/completions', usagePath: '/api/subscription/v1/usage', needsKey: true, defaultModel: 'kimi-k2.6' },
+  groq: { name: 'Groq', base: 'https://api.groq.com/openai', path: '/v1/chat/completions', needsKey: true, defaultModel: 'llama-3.3-70b-versatile' },
+  custom: { name: 'Custom', base: '', path: '', needsKey: false, defaultModel: '' },
+};
+
+// nano-gpt bills INPUT tokens, ×2 for these models — used by the usage ledger.
+function inputMultiplier(provider, model) {
+  return provider === 'nanogpt' && /glm-?5\.1|deepseek-v4-pro/i.test(model || '') ? 2 : 1;
+}
+
+function endpoint(provider, baseUrl) {
+  const P = PROVIDERS[provider] || PROVIDERS.custom;
+  if (provider === 'custom' || provider === 'ollama') return (baseUrl || P.base).replace(/\/$/, '') + (P.path || '/v1/chat/completions');
+  return P.base + P.path;
+}
+
+// One chat completion. Returns { content, usage, model, provider, latencyMs }.
+async function chat(opts = {}) {
+  const { provider = 'ollama', model, key, baseUrl, messages, temperature = 0, maxTokens, json = false, signal } = opts;
+  const f = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  if (!f) throw new Error('no fetch available');
+  const P = PROVIDERS[provider] || PROVIDERS.custom;
+  const headers = { 'Content-Type': 'application/json' };
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const body = { model: model || P.defaultModel, messages, temperature };
+  if (maxTokens) body.max_tokens = maxTokens;
+  if (json) body.response_format = { type: 'json_object' };
+  const t0 = Date.now();
+  const res = await f(endpoint(provider, baseUrl), { method: 'POST', headers, body: JSON.stringify(body) , signal });
+  if (!res.ok) { const t = await res.text().catch(() => ''); throw new Error(`${P.name} ${res.status}: ${String(t).slice(0, 200)}`); }
+  const data = await res.json();
+  return {
+    content: data.choices?.[0]?.message?.content ?? '',
+    usage: data.usage || {},
+    model: data.model || body.model,
+    provider,
+    latencyMs: Date.now() - t0,
+  };
+}
+
+// nano-gpt subscription gauge. Docs disagree on shape (see weir-llm-usage-providers
+// memory), so parse defensively: prefer weekly input tokens, fall back to
+// daily/monthly. Returns { kind, used, remaining, percentUsed, resetAt } or null.
+async function fetchUsageGauge(provider, key, opts = {}) {
+  const P = PROVIDERS[provider];
+  if (!P || !P.usagePath || !key) return null;
+  const f = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  try {
+    const res = await f(P.base + P.usagePath, { headers: { Authorization: `Bearer ${key}` } });
+    if (!res || !res.ok) return null;
+    const d = await res.json();
+    const pick = (o) => (o && (o.used != null || o.remaining != null)) ? o : null;
+    const w = pick(d?.usage?.weeklyInputTokens) || pick(d?.weeklyInputTokens);
+    if (w) return { kind: 'weeklyInputTokens', ...w };
+    const day = pick(d?.daily) || pick(d?.usage?.daily);
+    if (day) return { kind: 'daily', ...day };
+    const mon = pick(d?.monthly) || pick(d?.usage?.monthly);
+    if (mon) return { kind: 'monthly', ...mon };
+    return null;
+  } catch { return null; }
+}
+
+// ── src/js/cataloger.js ──
+
+// The glass cataloger — a bounded LLM *service* (not an agent): one document in,
+// one enriched catalog card out (GLASS.md §6). It fills the LANGUAGE facets the
+// Stage-0 deterministic card can't (domain/entity/process/method/scale/spatial)
+// + a real abstract, and leaves form/provenance/temporal (which weir knows) alone.
+// Pure logic + an injected `chat`; orchestration over a store at the bottom.
+
+
+
+
+function stripToText(html) {
+  return String(html || '').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;|&#\d+;/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+const LANGUAGE_FACETS = ['domain', 'entity', 'process', 'method', 'scale', 'spatial'];
+
+function catalogPrompt(item, card, body) {
+  const system = 'You are a library cataloger using faceted classification. Read the document and return ONLY a JSON object with these keys, each an array of short lowercase kebab-case terms (or []), plus a one-sentence "description":\n'
+    + '- domain: the field(s) it belongs to\n- entity: the specific things/concepts it is about\n- process: what is being done (e.g. estimation, comparison, review)\n- method: techniques/approaches used\n- scale: one of sample|bench|deposit|district|region|global if applicable, else []\n- spatial: place names if any, else []\n- description: one precise sentence summarizing it.\n'
+    + 'Be precise; do not invent terms that are not supported by the text. Prefer reusing these already-known entity terms when they fit: ' + JSON.stringify(card.facets.entity || []) + '.';
+  const user = `Title: ${item.title || '(untitled)'}\nKind: ${item.type}\nSource: ${card.dublin_core.source || ''}\n\n${String(body || '').slice(0, 6000)}`;
+  return [{ role: 'system', content: system }, { role: 'user', content: user }];
+}
+
+// Merge an LLM JSON response into the Stage-0 card. Robust to code fences / prose
+// around the JSON. Returns { card, ok }.
+function parseCatalog(content, card) {
+  const m = String(content).match(/\{[\s\S]*\}/);
+  let obj; try { obj = JSON.parse(m ? m[0] : content); } catch { return { card, ok: false }; }
+  const arr = (v) => (Array.isArray(v) ? [...new Set(v.map((x) => String(x).toLowerCase().trim()).filter(Boolean))] : []);
+  const facets = { ...card.facets };
+  for (const f of ['domain', 'process', 'method', 'scale', 'spatial']) facets[f] = arr(obj[f]);
+  facets.entity = [...new Set([...(card.facets.entity || []), ...arr(obj.entity)])];   // add to, never lose Stage-0 tags
+  const dublin_core = { ...card.dublin_core };
+  if (obj.description && String(obj.description).trim()) dublin_core.description = String(obj.description).trim();
+  return { card: { ...card, dublin_core, facets, glass: { ...card.glass } }, ok: true };
+}
+
+// One cataloging call. Returns { card (enriched), usage, model, provider, ok }.
+async function catalogItem(opts = {}) {
+  const { item, card, body } = opts;
+  const messages = catalogPrompt(item, card, body);
+  const { content, usage, model, provider } = await chat({
+    provider: opts.provider, model: opts.model, key: opts.key, baseUrl: opts.baseUrl, fetch: opts.fetch,
+    messages, temperature: opts.temperature ?? 0, json: true, maxTokens: opts.maxTokens || 400,
+  });
+  const { card: enriched, ok } = parseCatalog(content, card);
+  enriched.glass = { ...enriched.glass, cataloger: `${provider}:${model}`, confidence: ok ? 0.7 : 0.2, needs_review: !ok };
+  return { card: enriched, usage, model, provider, ok };
+}
+
+// Orchestrate over a store: read item + body + (Stage-0) card → catalog → persist
+// the enriched card + record usage. `opts` carries provider/model/key/baseUrl/fetch.
+async function catalogStoreItem(store, id, opts = {}) {
+  const item = store.getItem(id);
+  if (!item) throw new Error(`no such item: ${id}`);
+  const feed = store.getFeed(item.feed_id);
+  let body = item.excerpt || '';
+  if (item.has_content) { try { const html = await store.getContent(id); if (html) body = stripToText(html).slice(0, opts.maxBodyChars || 6000); } catch { /* excerpt only */ } }
+  const base = (item.glass_id && await store.getCard(item.glass_id)) || buildCard(item, feed);
+  const { card: enriched, usage, model, provider, ok } = await catalogItem({ ...opts, item, card: base, body });
+  const glass_id = await store.writeCard(enriched);
+  await store.recordUsage(provider, model, usage);
+  return { glass_id, usage, ok, card: enriched };
+}
+
+// ── src/js/llmkeys.js ──
+
+// LLM API keys — stored in OPFS (origin-private), deliberately SEPARATE from
+// weir's VFS store: keys never ride along in exportAll backups or the FSA-mounted
+// folder you might sync. Your catalog travels; your secrets don't.
+// (Adopted from @gcu/patchbay's vault posture; passphrase-encryption at rest is a
+// noted follow-up — OPFS origin-isolation is the v1 boundary.)
+
+const FILE = 'weir-llm-keys.json';
+
+async function _read() {
+  try {
+    const dir = await navigator.storage.getDirectory();
+    const fh = await dir.getFileHandle(FILE);
+    return JSON.parse(await (await fh.getFile()).text());
+  } catch { return {}; }
+}
+async function _write(obj) {
+  const dir = await navigator.storage.getDirectory();
+  const fh = await dir.getFileHandle(FILE, { create: true });
+  const w = await fh.createWritable();
+  await w.write(JSON.stringify(obj));
+  await w.close();
+}
+
+async function getKey(provider) { return (await _read())[provider] || ''; }
+async function hasKey(provider) { return !!(await getKey(provider)); }
+async function saveKey(provider, key) {
+  const k = await _read();
+  if (key) k[provider] = key; else delete k[provider];
+  await _write(k);
+}
+
 // ── src/js/store/store.js ──
 
 // The store — weir's only shared mutable surface (SPEC §1). Built on the
@@ -4283,6 +4467,7 @@ function buildCard(item, feed, opts = {}) {
 //   /feeds/<feedKey>.json              one Feed record per file
 //   /items/<feedKey>.ndjson            metadata shard: one Item (sans content) per line
 //   /content/<feedKey>/<itemKey>.html  sanitized body, lazy-loaded
+
 
 
 
@@ -4798,6 +4983,49 @@ class Store {
 
   async getCard(glassId) { return this._readJSON(`/catalog/${String(glassId)}.json`, null); }
   async catalogCount() { try { return (await this.vfs.readdir('/catalog')).filter((f) => f.endsWith('.json')).length; } catch { return 0; } }
+
+  // Next free daily sequence for a glass_id (glass-YYYYMMDD-NNN), collision-safe.
+  async _nextCatalogSeq(day) {
+    const tag = `glass-${String(day).replace(/-/g, '')}-`;
+    let max = 0;
+    try { for (const f of await this.vfs.readdir('/catalog')) { if (f.startsWith(tag)) { const k = parseInt(f.slice(tag.length), 10); if (k > max) max = k; } } } catch { /* none */ }
+    return max + 1;
+  }
+
+  // Persist an (enriched) catalog card: assign a glass_id if missing, write the
+  // file, and stamp the referenced item. Used by the Stage-1 cataloger.
+  async writeCard(card) {
+    await this._ensureDir('/catalog');
+    card.glass = card.glass || {};
+    if (!card.glass.glass_id) {
+      const day = card.glass.cataloged || new Date().toISOString().slice(0, 10);
+      card.glass.glass_id = nextGlassId(day, await this._nextCatalogSeq(day));
+    }
+    const gid = card.glass.glass_id;
+    await this.vfs.writeFile(`/catalog/${gid}.json`, JSON.stringify(card, null, 2));
+    const ref = card.glass.document_ref;
+    if (ref) { const it = this.items.get(ref); if (it && it.glass_id !== gid) { it.glass_id = gid; this._markFeedDirty(it.feed_id); await this.flush(); } }
+    this.emit('catalog', { id: gid });
+    return gid;
+  }
+
+  // LLM usage ledger (/usage.json). Tracks per-provider calls + tokens; for
+  // nano-gpt also the billed INPUT tokens (×2 on multiplier models) — the unit
+  // its weekly subscription pool meters. Never secret; lives in the store.
+  async recordUsage(provider, model, usage = {}) {
+    const u = await this._readJSON('/usage.json', { calls: 0, providers: {} });
+    const p = u.providers[provider] || (u.providers[provider] = { calls: 0, input_tokens: 0, output_tokens: 0, billed_input: 0, since: now() });
+    const inTok = usage.prompt_tokens || 0;
+    p.calls++; u.calls = (u.calls || 0) + 1;
+    p.input_tokens += inTok;
+    p.output_tokens += usage.completion_tokens || 0;
+    p.billed_input += inTok * inputMultiplier(provider, model);
+    p.model = model;
+    await this.vfs.writeFile('/usage.json', JSON.stringify(u, null, 2));
+    this.emit('usage', u);
+    return u;
+  }
+  async getUsage() { return this._readJSON('/usage.json', { calls: 0, providers: {} }); }
 
   async close() { await this.flush(); }
 }
@@ -6535,6 +6763,8 @@ class Poller {
 
 
 
+
+
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
 const RENDER_CAP = 300;
@@ -6642,6 +6872,8 @@ class App {
     document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
     document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
+    document.getElementById('set-cat-gauge')?.addEventListener('click', () => this.checkCatGauge());
+    document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } });
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
@@ -7666,6 +7898,11 @@ class App {
     chk('set-images', s.images_default_allowed);
     chk('set-fullcontent', s.fetch_full_content_default);
     val('set-density', s.density || 'comfortable');
+    val('set-cat-provider', s.catalog_provider || 'ollama');
+    val('set-cat-model', s.catalog_model || '');
+    val('set-cat-baseurl', s.catalog_base_url || '');
+    { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
+    this.renderCatUsage();
     chk('set-retention', s.retention_enabled);
     chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
@@ -7805,6 +8042,9 @@ class App {
       images_default_allowed: chk('set-images'),
       fetch_full_content_default: chk('set-fullcontent'),
       density: document.getElementById('set-density')?.value === 'compact' ? 'compact' : 'comfortable',
+      catalog_provider: document.getElementById('set-cat-provider')?.value || 'ollama',
+      catalog_model: document.getElementById('set-cat-model')?.value.trim() || '',
+      catalog_base_url: document.getElementById('set-cat-baseurl')?.value.trim() || '',
       retention_enabled: chk('set-retention'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
@@ -7814,11 +8054,36 @@ class App {
       ia_secret_key: document.getElementById('set-ia-secret').value.trim(),
     };
     await this.store.setSettings(patch);
+    const keyVal = document.getElementById('set-cat-key')?.value;
+    if (keyVal) { await saveKey(patch.catalog_provider, keyVal); const k = document.getElementById('set-cat-key'); if (k) k.value = ''; }
     this._setDensity(patch.density);
     setAutoCheck(patch.auto_check_updates);   // push the preference to the SW
     if (patch.retention_enabled) this.store.runRetention();   // apply immediately if just enabled
     document.getElementById('settings-msg').textContent = 'saved ✓';
     setTimeout(() => this.closeSettings(), 700);
+  }
+
+  async renderCatUsage() {
+    const el = document.getElementById('cat-usage'); if (!el) return;
+    const u = await this.store.getUsage();
+    const parts = [];
+    for (const [prov, p] of Object.entries(u.providers || {})) {
+      const tok = prov === 'nanogpt' ? `${Math.round(p.billed_input / 1000)}k input billed` : `${Math.round((p.input_tokens + p.output_tokens) / 1000)}k tokens`;
+      parts.push(`${prov}: ${p.calls} call${p.calls === 1 ? '' : 's'} · ${tok}`);
+    }
+    el.textContent = parts.length ? parts.join('  ·  ') : 'no LLM usage yet';
+  }
+
+  async checkCatGauge() {
+    const el = document.getElementById('cat-usage'); if (!el) return;
+    const provider = document.getElementById('set-cat-provider')?.value || 'ollama';
+    const key = document.getElementById('set-cat-key')?.value || (await getKey(provider));
+    el.textContent = 'checking…';
+    const g = await fetchUsageGauge(provider, key, { fetch: this.poller.fetch });
+    if (!g) { el.textContent = 'no subscription gauge for this provider'; return; }
+    const pct = g.percentUsed != null ? ` (${Math.round((g.percentUsed > 1 ? g.percentUsed : g.percentUsed * 100))}%)` : '';
+    const reset = g.resetAt ? ` · resets ${new Date(typeof g.resetAt === 'number' && g.resetAt < 1e12 ? g.resetAt * 1000 : g.resetAt).toLocaleDateString()}` : '';
+    el.textContent = `${g.kind}: ${(g.used ?? 0).toLocaleString()} / ${((g.used ?? 0) + (g.remaining ?? 0)).toLocaleString()}${pct}${reset}`;
   }
 
   async checkUpdates() {
@@ -7874,6 +8139,8 @@ class App {
 
 // Boot — assembles the store, poller, and UI, wires the status bar, and starts
 // polling. The dynamic UI lives in App; boot owns one-time setup + diagnostics.
+
+
 
 
 
@@ -7973,7 +8240,14 @@ async function boot() {
   app.renderDripStatus(drip.status());
   if (drip.queue.length || drip.current) drip.start();
 
-  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), parseFeed, feedAdapter, gcuFetch };
+  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o),
+    catalogItemLLM: async (id, o = {}) => {
+      const s = store.getSettings();
+      const provider = o.provider || s.catalog_provider || 'ollama';
+      const key = o.key || (await getKey(provider));
+      return catalogStoreItem(store, id, { provider, model: o.model || s.catalog_model, baseUrl: o.baseUrl || s.catalog_base_url, key, fetch: gcuFetch, ...o });
+    },
+    parseFeed, feedAdapter, gcuFetch };
 
   try {
     let persisted = false;

@@ -10,6 +10,8 @@ import { FaviconFetcher } from './favicon.js';
 import { App } from './ui/app.js';
 import { initPwa, setAutoCheck } from './pwa.js';
 import { loadHandle, handlePermission } from './fsmount.js';
+import { catalogStoreItem } from './cataloger.js';
+import { getKey } from './llmkeys.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
 import { githubAdapter } from './adapters/github.js';
@@ -99,7 +101,14 @@ async function boot() {
   app.renderDripStatus(drip.status());
   if (drip.queue.length || drip.current) drip.start();
 
-  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), parseFeed, feedAdapter, gcuFetch };
+  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o),
+    catalogItemLLM: async (id, o = {}) => {
+      const s = store.getSettings();
+      const provider = o.provider || s.catalog_provider || 'ollama';
+      const key = o.key || (await getKey(provider));
+      return catalogStoreItem(store, id, { provider, model: o.model || s.catalog_model, baseUrl: o.baseUrl || s.catalog_base_url, key, fetch: gcuFetch, ...o });
+    },
+    parseFeed, feedAdapter, gcuFetch };
 
   try {
     let persisted = false;

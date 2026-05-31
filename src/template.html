@@ -162,6 +162,15 @@
         <div class="hint">Import a Takeout watch-affinity digest (yt-watch-counts.json) to order YouTube feeds by how much you actually watch — recency-weighted, so old fads sink.</div>
       </section>
       <section class="set-group">
+        <h4>AI cataloger (glass)</h4>
+        <label class="set-row">provider<select id="set-cat-provider" class="field"><option value="ollama">Ollama (local, free)</option><option value="nanogpt">NanoGPT</option><option value="groq">Groq</option><option value="custom">Custom</option></select></label>
+        <label class="set-row">model<input type="text" id="set-cat-model" class="field" autocomplete="off" spellcheck="false" placeholder="(provider default)"></label>
+        <label class="set-row">base URL<input type="text" id="set-cat-baseurl" class="field" autocomplete="off" spellcheck="false" placeholder="http://localhost:11434"></label>
+        <label class="set-row">API key<input type="password" id="set-cat-key" class="field" autocomplete="off" placeholder="(none)"></label>
+        <div class="set-row"><span id="cat-usage">no LLM usage yet</span><button class="btn-link" id="set-cat-gauge" type="button">check allowance</button></div>
+        <div class="hint">The librarian that fills the language facets. Ollama runs locally (free, nothing leaves your machine). Keys are stored encrypted-out-of-band (OPFS), never in backups or the mounted folder. Cloud providers need their origin added to the bridge allowlist once.</div>
+      </section>
+      <section class="set-group">
         <h4>Updates</h4>
         <label class="set-row check"><input type="checkbox" id="set-autocheck"> check for updates automatically (background)</label>
         <div class="set-row"><span id="update-check-status">—</span><button class="btn-link" id="set-check-update" type="button">check now</button></div>

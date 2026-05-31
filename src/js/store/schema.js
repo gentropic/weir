@@ -35,6 +35,9 @@ export const DEFAULT_SETTINGS = {
   density: 'comfortable',                // row density: 'comfortable' | 'compact'
   stream_layout: 'list',                 // stream layout: 'list' | 'gallery' (thumbnail grid)
   feed_stale_days: 120,                  // a feed quiet longer than this reads as "stale" in health
+  catalog_provider: 'ollama',            // glass cataloger LLM provider (ollama | nanogpt | groq | custom)
+  catalog_model: '',                     // model id ('' → provider default)
+  catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.

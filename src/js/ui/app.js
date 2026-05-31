@@ -17,6 +17,8 @@ import { assessFeed } from '../health.js';
 import { Store } from '../store/store.js';
 import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle } from '../fsmount.js';
 import { facetsOf, FACETS } from '../glass.js';
+import { getKey, hasKey, saveKey } from '../llmkeys.js';
+import { fetchUsageGauge } from '../llm.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
@@ -125,6 +127,8 @@ export class App {
     document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
     document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
+    document.getElementById('set-cat-gauge')?.addEventListener('click', () => this.checkCatGauge());
+    document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } });
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
@@ -1149,6 +1153,11 @@ export class App {
     chk('set-images', s.images_default_allowed);
     chk('set-fullcontent', s.fetch_full_content_default);
     val('set-density', s.density || 'comfortable');
+    val('set-cat-provider', s.catalog_provider || 'ollama');
+    val('set-cat-model', s.catalog_model || '');
+    val('set-cat-baseurl', s.catalog_base_url || '');
+    { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
+    this.renderCatUsage();
     chk('set-retention', s.retention_enabled);
     chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
@@ -1288,6 +1297,9 @@ export class App {
       images_default_allowed: chk('set-images'),
       fetch_full_content_default: chk('set-fullcontent'),
       density: document.getElementById('set-density')?.value === 'compact' ? 'compact' : 'comfortable',
+      catalog_provider: document.getElementById('set-cat-provider')?.value || 'ollama',
+      catalog_model: document.getElementById('set-cat-model')?.value.trim() || '',
+      catalog_base_url: document.getElementById('set-cat-baseurl')?.value.trim() || '',
       retention_enabled: chk('set-retention'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
@@ -1297,11 +1309,36 @@ export class App {
       ia_secret_key: document.getElementById('set-ia-secret').value.trim(),
     };
     await this.store.setSettings(patch);
+    const keyVal = document.getElementById('set-cat-key')?.value;
+    if (keyVal) { await saveKey(patch.catalog_provider, keyVal); const k = document.getElementById('set-cat-key'); if (k) k.value = ''; }
     this._setDensity(patch.density);
     setAutoCheck(patch.auto_check_updates);   // push the preference to the SW
     if (patch.retention_enabled) this.store.runRetention();   // apply immediately if just enabled
     document.getElementById('settings-msg').textContent = 'saved ✓';
     setTimeout(() => this.closeSettings(), 700);
+  }
+
+  async renderCatUsage() {
+    const el = document.getElementById('cat-usage'); if (!el) return;
+    const u = await this.store.getUsage();
+    const parts = [];
+    for (const [prov, p] of Object.entries(u.providers || {})) {
+      const tok = prov === 'nanogpt' ? `${Math.round(p.billed_input / 1000)}k input billed` : `${Math.round((p.input_tokens + p.output_tokens) / 1000)}k tokens`;
+      parts.push(`${prov}: ${p.calls} call${p.calls === 1 ? '' : 's'} · ${tok}`);
+    }
+    el.textContent = parts.length ? parts.join('  ·  ') : 'no LLM usage yet';
+  }
+
+  async checkCatGauge() {
+    const el = document.getElementById('cat-usage'); if (!el) return;
+    const provider = document.getElementById('set-cat-provider')?.value || 'ollama';
+    const key = document.getElementById('set-cat-key')?.value || (await getKey(provider));
+    el.textContent = 'checking…';
+    const g = await fetchUsageGauge(provider, key, { fetch: this.poller.fetch });
+    if (!g) { el.textContent = 'no subscription gauge for this provider'; return; }
+    const pct = g.percentUsed != null ? ` (${Math.round((g.percentUsed > 1 ? g.percentUsed : g.percentUsed * 100))}%)` : '';
+    const reset = g.resetAt ? ` · resets ${new Date(typeof g.resetAt === 'number' && g.resetAt < 1e12 ? g.resetAt * 1000 : g.resetAt).toLocaleDateString()}` : '';
+    el.textContent = `${g.kind}: ${(g.used ?? 0).toLocaleString()} / ${((g.used ?? 0) + (g.remaining ?? 0)).toLocaleString()}${pct}${reset}`;
   }
 
   async checkUpdates() {

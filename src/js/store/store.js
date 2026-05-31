@@ -18,6 +18,7 @@ import {
   fsKey, deriveExcerpt, deriveSearchText, computeExpiry, now,
 } from './schema.js';
 import { buildCard, nextGlassId } from '../glass.js';
+import { inputMultiplier } from '../llm.js';
 import { channelIdOf } from '../affinity.js';
 
 const FLUSH_DELAY_MS = 250;
@@ -529,6 +530,49 @@ export class Store {
 
   async getCard(glassId) { return this._readJSON(`/catalog/${String(glassId)}.json`, null); }
   async catalogCount() { try { return (await this.vfs.readdir('/catalog')).filter((f) => f.endsWith('.json')).length; } catch { return 0; } }
+
+  // Next free daily sequence for a glass_id (glass-YYYYMMDD-NNN), collision-safe.
+  async _nextCatalogSeq(day) {
+    const tag = `glass-${String(day).replace(/-/g, '')}-`;
+    let max = 0;
+    try { for (const f of await this.vfs.readdir('/catalog')) { if (f.startsWith(tag)) { const k = parseInt(f.slice(tag.length), 10); if (k > max) max = k; } } } catch { /* none */ }
+    return max + 1;
+  }
+
+  // Persist an (enriched) catalog card: assign a glass_id if missing, write the
+  // file, and stamp the referenced item. Used by the Stage-1 cataloger.
+  async writeCard(card) {
+    await this._ensureDir('/catalog');
+    card.glass = card.glass || {};
+    if (!card.glass.glass_id) {
+      const day = card.glass.cataloged || new Date().toISOString().slice(0, 10);
+      card.glass.glass_id = nextGlassId(day, await this._nextCatalogSeq(day));
+    }
+    const gid = card.glass.glass_id;
+    await this.vfs.writeFile(`/catalog/${gid}.json`, JSON.stringify(card, null, 2));
+    const ref = card.glass.document_ref;
+    if (ref) { const it = this.items.get(ref); if (it && it.glass_id !== gid) { it.glass_id = gid; this._markFeedDirty(it.feed_id); await this.flush(); } }
+    this.emit('catalog', { id: gid });
+    return gid;
+  }
+
+  // LLM usage ledger (/usage.json). Tracks per-provider calls + tokens; for
+  // nano-gpt also the billed INPUT tokens (×2 on multiplier models) — the unit
+  // its weekly subscription pool meters. Never secret; lives in the store.
+  async recordUsage(provider, model, usage = {}) {
+    const u = await this._readJSON('/usage.json', { calls: 0, providers: {} });
+    const p = u.providers[provider] || (u.providers[provider] = { calls: 0, input_tokens: 0, output_tokens: 0, billed_input: 0, since: now() });
+    const inTok = usage.prompt_tokens || 0;
+    p.calls++; u.calls = (u.calls || 0) + 1;
+    p.input_tokens += inTok;
+    p.output_tokens += usage.completion_tokens || 0;
+    p.billed_input += inTok * inputMultiplier(provider, model);
+    p.model = model;
+    await this.vfs.writeFile('/usage.json', JSON.stringify(u, null, 2));
+    this.emit('usage', u);
+    return u;
+  }
+  async getUsage() { return this._readJSON('/usage.json', { calls: 0, providers: {} }); }
 
   async close() { await this.flush(); }
 }

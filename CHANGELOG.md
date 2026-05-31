@@ -6,6 +6,27 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Glass: catalog Stage 1 foundation — the cataloger service — 2026-06-01
+
+- **LLM provider client** (`llm.js`, adopted from patchbay): OpenAI chat-shape for
+  Ollama (local/free) / NanoGPT / Groq / custom, one `chat()`; `fetch` injected so
+  calls go through the bridge (dodging CORS). `fetchUsageGauge()` reads NanoGPT's
+  weekly-input-token allowance, **parsed defensively** (the docs disagree on shape).
+- **Key vault** (`llmkeys.js`): API keys in OPFS, **deliberately separate** from
+  the VFS store — never in `exportAll` backups or the FSA-mounted folder.
+- **Cataloger** (`cataloger.js`): the bounded LLM *service* (GLASS.md §6) — item +
+  Stage-0 card → enriched card. Fills the language facets (domain/entity/process/
+  method/scale/spatial) + abstract, **preserves** the Stage-0 facets (form/
+  provenance/temporal) and adds to (never loses) tag-derived entities. Robust JSON
+  parse → `needs_review` on failure. `Store.writeCard` persists + stamps the item.
+- **Usage ledger** (`Store.recordUsage`/`getUsage`, `/usage.json`): per-provider
+  calls + tokens; for NanoGPT the **billed input tokens (×2 on GLM-5.1 /
+  DeepSeek-V4-Pro)** — the unit its subscription meters. Surfaced in Settings →
+  **AI cataloger** (provider/model/base-url/key + a usage readout + a "check
+  allowance" gauge). Try one item: `await __weir.catalogItemLLM('<id>')`. Next:
+  the per-item / batch UI + a `needs_review` review queue, then the catalog
+  browser's empty facets start filling in.
+
 ### Glass: catalog Stage 0 — weir speaks the glass format — 2026-06-01
 
 - **`GLASS.md`** — the `@gcu/glass` spec, rewritten coherent and grounded in weir

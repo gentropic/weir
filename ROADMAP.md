@@ -17,10 +17,13 @@ the trigger/query layer on top.
 - ~~**Stage 0** — catalog format + deterministic cards + faceted browser.~~
   ✅ Shipped 2026-06-01 (`glass.js`, `Store.buildCatalog`, the rail **Catalog**
   facet browser with live intersection).
-- **Stage 1 — the cataloger service.** Vendor patchbay's `providers.js` + `vault.js`
-  (Ollama/nano-gpt/Groq, OpenAI-shaped; OPFS-encrypted keys). Bounded LLM call
-  fills the language facets + proposes typed `related` edges; opt-in, on-keep +
-  batch, `confidence`/`needs_review` review queue. **Ollama-first = zero egress.**
+- **Stage 1 — the cataloger service.** ✅ *Foundation shipped 2026-06-01*
+  (`llm.js` provider client, `llmkeys.js` OPFS vault, `cataloger.js` bounded call
+  filling the language facets + abstract, `Store.writeCard`/usage ledger, Settings
+  → AI cataloger). **Remaining:** the per-item "catalog" action + batch run
+  (on-keep, Ollama-first), a `needs_review` **review queue** to confirm/correct,
+  proposed typed `related` edges, and the catalog browser filling in its empty
+  facets live as items get enriched.
 - **Stage 2 — the query side.** Facet-intersection + thesaurus broaden/narrow (this
   *is* search v2); navigable emergent graph.
 - **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +
