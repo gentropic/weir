@@ -60,6 +60,7 @@
         <span class="stat"><span class="dot" id="vfs-dot" data-state="pending"></span><span id="backend-status">store: …</span></span>
         <span id="poll-status">idle</span>
         <span id="drip-status"></span>
+        <span id="health-status" title="Feeds that may be hijacked, dead, or stale — click to review"></span>
         <span id="notify-status"></span>
       </div>
       <div class="right">
@@ -157,6 +158,17 @@
     <div class="panel-foot">
       <button class="btn" id="settings-save">Save</button>
       <button class="btn" id="settings-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Feed health — flagged feeds (hijacked / dead / stale) with one-click fixes -->
+<div class="overlay" id="health-overlay" hidden>
+  <div class="panel">
+    <div class="panel-head"><span>feed health</span></div>
+    <div class="health-body" id="health-body"></div>
+    <div class="panel-foot">
+      <button class="btn" id="health-close">Close</button>
     </div>
   </div>
 </div>

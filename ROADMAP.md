@@ -40,13 +40,18 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
   effortless and gentle. The default is now a flat 3h; this makes it adaptive.
 - **Source-health view** (SPEC §9 v0.3): per-feed history, last-known-good,
   surfacing slow/failing feeds; auto-archive after a failure threshold.
-- **Feed-hijack / drift detection.** A live feed can be quietly taken over —
-  expired domains and abandoned FeedBurner proxies get repurposed into SEO spam
-  (real case: the PSF FeedBurner feed now emits Vietnamese shoe listings). Signals
-  to flag a feed as *suspect* in the rail: a sudden language shift vs. the feed's
-  history, the `<title>`/`<link>` host diverging from the subscribed origin, every
-  recent author collapsing to one (`admin`), or a burst of near-duplicate titles.
-  Cheap heuristics over the items we already store; pairs with "Edit feed URL".
+- ~~**Feed-hijack / drift detection.**~~ ✅ Shipped 2026-05-31 (`health.js`).
+  `assessFeed` scores each feed from its stored items into **suspect** (hijack/
+  drift), **stale** (long-quiet), **failing** (poller can't fetch), or ok.
+  Suspect needs ≥2 independent tells (generic-`admin` author collapse +2, links
+  uniformly off the feed's own host +1, a repeated brand token across titles +1)
+  so non-English feeds and link blogs don't false-flag. Flagged feeds get a rail
+  badge + class; a status-bar chip (`⚠ N suspect · N stale`) opens a **feed-health
+  overlay** listing each with its reasons and one-click *Edit feed* / *Open site*
+  / *Show items*. Follow-ups: memoize per-feed health (currently recomputed each
+  rail render); a dedicated health filter-view; richer signals (language-shift vs.
+  the feed's own history, near-duplicate-body bursts); auto-suggest the native
+  source when a FeedBurner proxy goes suspect.
 - **Bridge v0.2 conditional GETs.** When `@gcu/bridge` ships ETag/If-Modified-Since
   caching, wire `etag`/`last_modified` (already on the Feed model) for polite polls.
 - **Search v0.2.** Swap the cursor scan for a MiniSearch/`@gcu/librarian` inverted

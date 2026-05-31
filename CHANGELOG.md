@@ -6,6 +6,23 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Feed health: hijack / drift / stale detection — 2026-05-31
+
+- New `health.js` `assessFeed` classifies each feed from the items already stored
+  (no extra network) into **suspect**, **stale**, **failing**, or ok:
+  - **suspect** (likely hijacked/drifted) is *scored* so it needs several tells,
+    not one: author collapse to a generic `admin`-like name (+2), links uniformly
+    pointing off the feed's own host (+1), and a repeated brand/template token
+    across recent titles (+1); flagged at ≥3. This keeps legit non-English feeds
+    and link blogs (offsite by nature) from false-flagging.
+  - **stale** = fetches fine but no new posts in `feed_stale_days` (default 120).
+  - **failing** = the poller can't fetch it (surfaces `feed_health.last_error`).
+- Flagged feeds get a **rail badge + tint** and a tooltip with the reasons. A
+  **status-bar chip** (`⚠ N suspect · N stale`) opens a **feed-health overlay**
+  listing each flagged feed with its reasons and one-click **Edit feed…** /
+  **Open site** / **Show items**. The PSF hijack from earlier today is exactly
+  what this flags — automatically.
+
 ### Favicon: `<link rel="icon">` fallback — 2026-05-31
 
 - Feeds whose `<origin>/favicon.ico` is missing now get a real icon via a second

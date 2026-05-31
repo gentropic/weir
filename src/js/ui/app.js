@@ -13,6 +13,7 @@ import { checkForUpdateNow, setAutoCheck } from '../pwa.js';
 import { recoverFeed } from '../wayback.js';
 import { parseFeed } from '../adapters/feed.js';
 import { monogram } from '../favicon.js';
+import { assessFeed } from '../health.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
@@ -40,6 +41,7 @@ export class App {
     this.expandedId = null;
     this.items = [];
     this._content = new Map();   // id → sanitized html (cache)
+    this._health = new Map();    // feed_id → {status, reasons} for non-ok feeds (hijack/stale/failing)
     this._g = false;
     this.pendingImport = null;   // { feeds, youtube } awaiting confirmation
   }
@@ -106,6 +108,9 @@ export class App {
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
+    document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
+    document.getElementById('health-close')?.addEventListener('click', () => this.closeHealth());
+    document.getElementById('health-body')?.addEventListener('click', (e) => this.onHealthClick(e));
     const affFile = document.getElementById('affinity-file');
     document.getElementById('set-import-affinity')?.addEventListener('click', () => affFile.click());
     affFile?.addEventListener('change', async () => { const f = affFile.files[0]; if (f) await this.importWatchData(await f.text()); affFile.value = ''; });
@@ -190,13 +195,46 @@ export class App {
       : (() => { const m = monogram(f); return `<span class="favi mono" style="--mh:${m.hue}">${escapeHtml(m.ch)}</span>`; })();
     const fav = f.affinity >= 100 ? ' <span class="fav">★</span>' : '';
     const aff = f.affinity ? ` · watch-affinity ${f.affinity}` : '';
-    return `<div class="source ${cls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${aff}${f.feed_health?.last_error ? ' — ' + escapeHtml(f.feed_health.last_error) : ''}">`
-      + `<span class="sicon">${icon}</span><span class="sname">${escapeHtml(f.name)}${fav}</span><span class="spark">${spark}</span><span class="scount">${unread || ''}</span></div>`;
+    const health = this._health.get(f.id);
+    const hcls = health ? ` ${health.status}` : '';
+    const hbadge = health ? `<span class="hbadge ${health.status}">${health.status === 'stale' ? '◌' : '⚠'}</span>` : '';
+    const htip = health ? ` — ${health.status}: ${health.reasons.join('; ')}` : (f.feed_health?.last_error ? ' — ' + f.feed_health.last_error : '');
+    return `<div class="source ${cls}${hcls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${aff}${escapeHtml(htip)}">`
+      + `<span class="sicon">${icon}</span><span class="sname">${escapeHtml(f.name)}${fav}${hbadge}</span><span class="spark">${spark}</span><span class="scount">${unread || ''}</span></div>`;
+  }
+
+  // Classify every feed from its stored items (hijack/drift/stale/failing).
+  // Cheap heuristics, no network; only non-ok results are cached. See health.js.
+  recomputeHealth() {
+    const staleDays = this.store.getSettings().feed_stale_days || 120;
+    this._health.clear();
+    for (const f of this.store.listFeeds()) {
+      const ids = this.store.byFeed.get(f.id) || new Set();
+      const items = [];
+      for (const id of ids) { const r = this.store.items.get(id); if (r) items.push(r); }
+      const h = assessFeed(f, items, Date.now(), { staleDays });
+      if (h.status !== 'ok') this._health.set(f.id, h);
+    }
+  }
+
+  renderHealthStatus() {
+    const el = document.getElementById('health-status'); if (!el) return;
+    let suspect = 0, failing = 0, stale = 0;
+    for (const h of this._health.values()) { if (h.status === 'suspect') suspect++; else if (h.status === 'failing') failing++; else if (h.status === 'stale') stale++; }
+    const parts = [];
+    if (suspect) parts.push(`⚠ ${suspect} suspect`);
+    if (failing) parts.push(`${failing} failing`);
+    if (stale) parts.push(`${stale} stale`);
+    el.textContent = parts.join(' · ');
+    el.classList.toggle('clickable', parts.length > 0);
+    el.classList.toggle('alert', suspect > 0 || failing > 0);
   }
 
   renderRail() {
     const feeds = this.store.listFeeds();
     this.faviconFetcher?.enqueue(feeds);   // lazily backfill site icons (polite, once each)
+    this.recomputeHealth();
+    this.renderHealthStatus();
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
       r.classList.toggle('active', !this.feedFilter && !this.route && this.catFilter == null && r.dataset.view === this.view));
     if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
@@ -547,6 +585,36 @@ export class App {
   openHelp() { document.getElementById('help-overlay').hidden = false; }
   closeHelp() { document.getElementById('help-overlay').hidden = true; }
 
+  // Feed-health overlay — the flagged feeds with their reasons + one-click fix.
+  openHealth() {
+    const rank = { suspect: 0, failing: 1, stale: 2 };
+    const ico = { suspect: '⚠', failing: '⚠', stale: '◌' };
+    const rows = this.store.listFeeds()
+      .map((f) => ({ f, h: this._health.get(f.id) })).filter((x) => x.h)
+      .sort((a, b) => (rank[a.h.status] - rank[b.h.status]) || a.f.name.localeCompare(b.f.name));
+    const body = rows.map(({ f, h }) => `<div class="health-row" data-feed="${escapeHtml(f.id)}">`
+      + `<div class="hr-head"><span class="hbadge ${h.status}">${ico[h.status]}</span>`
+      + `<span class="hr-name">${escapeHtml(f.name)}</span><span class="hr-status ${h.status}">${h.status}</span></div>`
+      + `<div class="hr-why">${escapeHtml(h.reasons.join(' · '))}</div>`
+      + `<div class="hr-actions"><button data-hact="edit">Edit feed…</button>`
+      + ((f.site_url || f.url) ? `<button data-hact="open">Open site ↗</button>` : '')
+      + `<button data-hact="view">Show items</button></div></div>`).join('')
+      || '<div class="hint">All feeds look healthy — nothing flagged.</div>';
+    document.getElementById('health-body').innerHTML = body;
+    document.getElementById('health-overlay').hidden = false;
+  }
+
+  closeHealth() { document.getElementById('health-overlay').hidden = true; }
+
+  onHealthClick(e) {
+    const btn = e.target.closest('[data-hact]'); if (!btn) return;
+    const row = e.target.closest('.health-row'); const feedId = row?.dataset.feed; if (!feedId) return;
+    const feed = this.store.getFeed(feedId); if (!feed) return;
+    if (btn.dataset.hact === 'edit') { this.closeHealth(); this.openFeedEdit(feedId); }
+    else if (btn.dataset.hact === 'open') { window.open(feed.site_url || feed.url, '_blank', 'noopener'); }
+    else if (btn.dataset.hact === 'view') { this.closeHealth(); this.catFilter = null; this.route = null; this.view = 'inbox'; this.feedFilter = feedId; this.renderAll(); }
+  }
+
   catMenu(cat, x, y) {
     showMenu(x, y, [
       { label: 'View this folder', onClick: () => this.setCategory(cat) },
@@ -565,7 +633,7 @@ export class App {
   onKey(e) {
     // Esc closes any open overlay first, from anywhere.
     if (e.key === 'Escape') {
-      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay']) {
+      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; return; }
       }

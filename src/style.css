@@ -74,6 +74,11 @@ body {
 .source .sname { font-size: 13px; color: var(--au-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source .scount { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
 .source .fav { color: var(--au-action); font-size: 9px; vertical-align: middle; }
+.source .hbadge { font-size: 10px; margin-left: 4px; vertical-align: middle; }
+.hbadge.suspect, .hbadge.failing { color: var(--au-error); }
+.hbadge.stale { color: var(--au-warn); opacity: 0.85; }
+.source.suspect .sname { color: var(--au-error); }
+.source.stale .sname { color: var(--au-fg-soft); }
 
 /* ── Main ── */
 .main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; position: relative; }
@@ -228,3 +233,21 @@ body {
 .dot[data-state="pending"] { background: var(--au-warn); box-shadow: 0 0 0 2px var(--au-warn-soft); }
 .dot[data-state="ok"] { background: var(--au-success); box-shadow: 0 0 0 2px var(--au-success-soft); }
 .dot[data-state="fault"] { background: var(--au-error); box-shadow: 0 0 0 2px var(--au-error-soft); }
+#health-status:empty { display: none; }
+#health-status.clickable { cursor: pointer; }
+#health-status.clickable:hover { color: var(--au-fg-muted); }
+#health-status.alert { color: var(--au-error); }
+
+/* ── Feed-health overlay ── */
+.health-body { flex: 1; overflow-y: auto; padding: 8px 16px 16px; }
+.health-row { padding: 12px 0; border-bottom: 1px solid var(--au-border); }
+.health-row:last-child { border-bottom: none; }
+.hr-head { display: flex; align-items: center; gap: 8px; }
+.hr-name { font-size: 14px; font-weight: 600; color: var(--au-fg); }
+.hr-status { font-family: var(--au-font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; padding: 1px 6px; border-radius: var(--au-radius); }
+.hr-status.suspect, .hr-status.failing { background: var(--au-error-soft); color: var(--au-error); }
+.hr-status.stale { background: var(--au-warn-soft); color: var(--au-warn); }
+.hr-why { font-size: 12.5px; color: var(--au-fg-muted); margin: 5px 0 9px; line-height: 1.45; }
+.hr-actions { display: flex; gap: 8px; }
+.hr-actions button { font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg-muted); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 4px 10px; cursor: pointer; }
+.hr-actions button:hover { color: var(--au-action); border-color: var(--au-action); }

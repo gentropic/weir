@@ -218,6 +218,11 @@ body {
 .source .sname { font-size: 13px; color: var(--au-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source .scount { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
 .source .fav { color: var(--au-action); font-size: 9px; vertical-align: middle; }
+.source .hbadge { font-size: 10px; margin-left: 4px; vertical-align: middle; }
+.hbadge.suspect, .hbadge.failing { color: var(--au-error); }
+.hbadge.stale { color: var(--au-warn); opacity: 0.85; }
+.source.suspect .sname { color: var(--au-error); }
+.source.stale .sname { color: var(--au-fg-soft); }
 
 /* ── Main ── */
 .main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; position: relative; }
@@ -372,6 +377,24 @@ body {
 .dot[data-state="pending"] { background: var(--au-warn); box-shadow: 0 0 0 2px var(--au-warn-soft); }
 .dot[data-state="ok"] { background: var(--au-success); box-shadow: 0 0 0 2px var(--au-success-soft); }
 .dot[data-state="fault"] { background: var(--au-error); box-shadow: 0 0 0 2px var(--au-error-soft); }
+#health-status:empty { display: none; }
+#health-status.clickable { cursor: pointer; }
+#health-status.clickable:hover { color: var(--au-fg-muted); }
+#health-status.alert { color: var(--au-error); }
+
+/* ── Feed-health overlay ── */
+.health-body { flex: 1; overflow-y: auto; padding: 8px 16px 16px; }
+.health-row { padding: 12px 0; border-bottom: 1px solid var(--au-border); }
+.health-row:last-child { border-bottom: none; }
+.hr-head { display: flex; align-items: center; gap: 8px; }
+.hr-name { font-size: 14px; font-weight: 600; color: var(--au-fg); }
+.hr-status { font-family: var(--au-font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; padding: 1px 6px; border-radius: var(--au-radius); }
+.hr-status.suspect, .hr-status.failing { background: var(--au-error-soft); color: var(--au-error); }
+.hr-status.stale { background: var(--au-warn-soft); color: var(--au-warn); }
+.hr-why { font-size: 12.5px; color: var(--au-fg-muted); margin: 5px 0 9px; line-height: 1.45; }
+.hr-actions { display: flex; gap: 8px; }
+.hr-actions button { font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg-muted); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 4px 10px; cursor: pointer; }
+.hr-actions button:hover { color: var(--au-action); border-color: var(--au-action); }
 </style>
 </head>
 <body>
@@ -438,6 +461,7 @@ body {
         <span class="stat"><span class="dot" id="vfs-dot" data-state="pending"></span><span id="backend-status">store: …</span></span>
         <span id="poll-status">idle</span>
         <span id="drip-status"></span>
+        <span id="health-status" title="Feeds that may be hijacked, dead, or stale — click to review"></span>
         <span id="notify-status"></span>
       </div>
       <div class="right">
@@ -535,6 +559,17 @@ body {
     <div class="panel-foot">
       <button class="btn" id="settings-save">Save</button>
       <button class="btn" id="settings-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Feed health — flagged feeds (hijacked / dead / stale) with one-click fixes -->
+<div class="overlay" id="health-overlay" hidden>
+  <div class="panel">
+    <div class="panel-head"><span>feed health</span></div>
+    <div class="health-body" id="health-body"></div>
+    <div class="panel-foot">
+      <button class="btn" id="health-close">Close</button>
     </div>
   </div>
 </div>
@@ -3886,6 +3921,7 @@ const DEFAULT_SETTINGS = {
   fetch_full_content_default: false,
   rail_width: 240,                       // source rail width in px (drag to resize)
   density: 'comfortable',                // row density: 'comfortable' | 'compact'
+  feed_stale_days: 120,                  // a feed quiet longer than this reads as "stale" in health
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
@@ -5553,6 +5589,118 @@ class FaviconFetcher {
   stop() { this._stopped = true; this._running = false; if (this._timer) clearTimeout(this._timer); }
 }
 
+// ── src/js/health.js ──
+
+// Feed health assessment (SPEC §9 v0.3, and the roadmap "hijack/drift" item).
+// Pure, DOM-free, node-testable. Classifies a feed from the items weir already
+// stores — no extra network — into one of:
+//
+//   failing  — the poller can't fetch it (network/parse dead)
+//   suspect  — likely hijacked / drifted: an abandoned domain or FeedBurner
+//              proxy repurposed into SEO spam. Scored from SEVERAL independent
+//              signals so legit feeds (incl. non-English + link blogs) don't trip.
+//   stale    — fetches fine but hasn't published in a long time (moved/dormant)
+//   ok       — nothing notable
+//
+// The motivating real case: the PSF FeedBurner feed became Vietnamese shoe spam
+// — every post by "admin", linking off to humttovietnam.com, titles all sharing
+// a "Giày … Humtto …" template. Each tell alone is weak; together they're loud.
+
+const RECENT = 12;                         // assess the newest N items
+const SUSPECT_THRESHOLD = 3;               // points needed to flag suspect
+const DEFAULT_STALE_DAYS = 120;            // quiet longer than this → stale
+const GENERIC_AUTHOR = /^(admin|administrator|webmaster|root|user|wordpress|editor)$/i;
+const STOPWORDS = new Set(['the', 'and', 'for', 'with', 'your', 'you', 'this', 'that', 'from', 'have', 'are', 'was', 'will', 'how', 'what', 'why', 'new', 'all', 'our', 'about', 'into', 'out', 'not']);
+
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch { return null; }
+}
+
+// Approximate registrable-domain compare (eTLD+1 by last two labels). Good
+// enough to tell "links to its own site" from "links somewhere else entirely".
+function sameSite(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const tail = (h) => h.split('.').slice(-2).join('.');
+  return tail(a) === tail(b);
+}
+
+function mode(arr) {
+  const counts = new Map();
+  let best = null, bestN = 0;
+  for (const x of arr) { const n = (counts.get(x) || 0) + 1; counts.set(x, n); if (n > bestN) { bestN = n; best = x; } }
+  return best == null ? null : { value: best, count: bestN };
+}
+
+// A non-stopword token shared by ≥80% of titles (spam templates repeat a brand
+// word in every headline). Returns the token, or null. Diacritic-tolerant.
+function repeatedToken(titles) {
+  const lists = titles.map((t) => String(t || '').toLowerCase().split(/\s+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+    .filter((w) => w.length >= 4 && !/^\d+$/.test(w) && !STOPWORDS.has(w)));
+  const docFreq = new Map();
+  for (const words of lists) for (const w of new Set(words)) docFreq.set(w, (docFreq.get(w) || 0) + 1);
+  const need = Math.ceil(titles.length * 0.8);
+  let hit = null;
+  for (const [w, n] of docFreq) if (n >= need && (!hit || n > hit.n)) hit = { w, n };
+  return hit ? hit.w : null;
+}
+
+// Assess one feed. `items` is that feed's stored item records (any order).
+// Returns { status, score, reasons } — reasons are short human strings.
+function assessFeed(feed, items, now = Date.now(), opts = {}) {
+  // Network-dead trumps content checks — the poller already knows.
+  if (feed && feed.state === 'failing') {
+    return { status: 'failing', score: 0, reasons: [feed.feed_health?.last_error || 'repeated fetch failures'] };
+  }
+
+  const recent = [...(items || [])]
+    .sort((a, b) => (b.published_at || 0) - (a.published_at || 0))
+    .slice(0, RECENT);
+  if (!recent.length) return { status: 'ok', score: 0, reasons: [] };
+
+  const reasons = [];
+  let score = 0;
+
+  // 1) Author collapse to a generic admin-like name (strong tell, +2).
+  const adminPosts = recent.filter((r) => r.author && GENERIC_AUTHOR.test(r.author.trim()));
+  if (recent.length >= 4 && adminPosts.length / recent.length >= 0.8) {
+    score += 2;
+    reasons.push(`every recent post by “${adminPosts[0].author.trim()}”`);
+  }
+
+  // 2) Links uniformly point off the feed's own site (+1).
+  const feedHost = hostOf(feed?.site_url) || hostOf(feed?.url);
+  const linkHosts = recent.map((r) => hostOf(r.url)).filter(Boolean);
+  if (feedHost && linkHosts.length >= 4) {
+    const offsite = linkHosts.filter((h) => !sameSite(h, feedHost));
+    const top = mode(offsite);
+    if (top && top.count / linkHosts.length >= 0.8) {
+      score += 1;
+      reasons.push(`links point to ${top.value}, not ${feedHost}`);
+    }
+  }
+
+  // 3) Titles share a repeated brand/template word (+1).
+  const tok = repeatedToken(recent.map((r) => r.title));
+  if (recent.length >= 4 && tok) {
+    score += 1;
+    reasons.push(`“${tok}” in most recent titles`);
+  }
+
+  if (score >= SUSPECT_THRESHOLD) return { status: 'suspect', score, reasons };
+
+  // Stale: fetches fine but long quiet (moved blog, dormant author).
+  const staleDays = opts.staleDays ?? DEFAULT_STALE_DAYS;
+  const newest = recent[0].published_at || 0;
+  const ageDays = newest ? (now - newest) / 86_400_000 : Infinity;
+  if (ageDays > staleDays) {
+    return { status: 'stale', score, reasons: [`no new posts in ${Math.round(ageDays)} days`] };
+  }
+
+  return { status: 'ok', score, reasons: [] };
+}
+
 // ── src/js/ui/format.js ──
 
 // Pure presentation helpers (SPEC §4). No DOM — node-testable.
@@ -5812,6 +5960,7 @@ class Poller {
 
 
 
+
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
 const RENDER_CAP = 300;
@@ -5838,6 +5987,7 @@ class App {
     this.expandedId = null;
     this.items = [];
     this._content = new Map();   // id → sanitized html (cache)
+    this._health = new Map();    // feed_id → {status, reasons} for non-ok feeds (hijack/stale/failing)
     this._g = false;
     this.pendingImport = null;   // { feeds, youtube } awaiting confirmation
   }
@@ -5904,6 +6054,9 @@ class App {
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
+    document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
+    document.getElementById('health-close')?.addEventListener('click', () => this.closeHealth());
+    document.getElementById('health-body')?.addEventListener('click', (e) => this.onHealthClick(e));
     const affFile = document.getElementById('affinity-file');
     document.getElementById('set-import-affinity')?.addEventListener('click', () => affFile.click());
     affFile?.addEventListener('change', async () => { const f = affFile.files[0]; if (f) await this.importWatchData(await f.text()); affFile.value = ''; });
@@ -5988,13 +6141,46 @@ class App {
       : (() => { const m = monogram(f); return `<span class="favi mono" style="--mh:${m.hue}">${escapeHtml(m.ch)}</span>`; })();
     const fav = f.affinity >= 100 ? ' <span class="fav">★</span>' : '';
     const aff = f.affinity ? ` · watch-affinity ${f.affinity}` : '';
-    return `<div class="source ${cls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${aff}${f.feed_health?.last_error ? ' — ' + escapeHtml(f.feed_health.last_error) : ''}">`
-      + `<span class="sicon">${icon}</span><span class="sname">${escapeHtml(f.name)}${fav}</span><span class="spark">${spark}</span><span class="scount">${unread || ''}</span></div>`;
+    const health = this._health.get(f.id);
+    const hcls = health ? ` ${health.status}` : '';
+    const hbadge = health ? `<span class="hbadge ${health.status}">${health.status === 'stale' ? '◌' : '⚠'}</span>` : '';
+    const htip = health ? ` — ${health.status}: ${health.reasons.join('; ')}` : (f.feed_health?.last_error ? ' — ' + f.feed_health.last_error : '');
+    return `<div class="source ${cls}${hcls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${aff}${escapeHtml(htip)}">`
+      + `<span class="sicon">${icon}</span><span class="sname">${escapeHtml(f.name)}${fav}${hbadge}</span><span class="spark">${spark}</span><span class="scount">${unread || ''}</span></div>`;
+  }
+
+  // Classify every feed from its stored items (hijack/drift/stale/failing).
+  // Cheap heuristics, no network; only non-ok results are cached. See health.js.
+  recomputeHealth() {
+    const staleDays = this.store.getSettings().feed_stale_days || 120;
+    this._health.clear();
+    for (const f of this.store.listFeeds()) {
+      const ids = this.store.byFeed.get(f.id) || new Set();
+      const items = [];
+      for (const id of ids) { const r = this.store.items.get(id); if (r) items.push(r); }
+      const h = assessFeed(f, items, Date.now(), { staleDays });
+      if (h.status !== 'ok') this._health.set(f.id, h);
+    }
+  }
+
+  renderHealthStatus() {
+    const el = document.getElementById('health-status'); if (!el) return;
+    let suspect = 0, failing = 0, stale = 0;
+    for (const h of this._health.values()) { if (h.status === 'suspect') suspect++; else if (h.status === 'failing') failing++; else if (h.status === 'stale') stale++; }
+    const parts = [];
+    if (suspect) parts.push(`⚠ ${suspect} suspect`);
+    if (failing) parts.push(`${failing} failing`);
+    if (stale) parts.push(`${stale} stale`);
+    el.textContent = parts.join(' · ');
+    el.classList.toggle('clickable', parts.length > 0);
+    el.classList.toggle('alert', suspect > 0 || failing > 0);
   }
 
   renderRail() {
     const feeds = this.store.listFeeds();
     this.faviconFetcher?.enqueue(feeds);   // lazily backfill site icons (polite, once each)
+    this.recomputeHealth();
+    this.renderHealthStatus();
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
       r.classList.toggle('active', !this.feedFilter && !this.route && this.catFilter == null && r.dataset.view === this.view));
     if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
@@ -6345,6 +6531,36 @@ class App {
   openHelp() { document.getElementById('help-overlay').hidden = false; }
   closeHelp() { document.getElementById('help-overlay').hidden = true; }
 
+  // Feed-health overlay — the flagged feeds with their reasons + one-click fix.
+  openHealth() {
+    const rank = { suspect: 0, failing: 1, stale: 2 };
+    const ico = { suspect: '⚠', failing: '⚠', stale: '◌' };
+    const rows = this.store.listFeeds()
+      .map((f) => ({ f, h: this._health.get(f.id) })).filter((x) => x.h)
+      .sort((a, b) => (rank[a.h.status] - rank[b.h.status]) || a.f.name.localeCompare(b.f.name));
+    const body = rows.map(({ f, h }) => `<div class="health-row" data-feed="${escapeHtml(f.id)}">`
+      + `<div class="hr-head"><span class="hbadge ${h.status}">${ico[h.status]}</span>`
+      + `<span class="hr-name">${escapeHtml(f.name)}</span><span class="hr-status ${h.status}">${h.status}</span></div>`
+      + `<div class="hr-why">${escapeHtml(h.reasons.join(' · '))}</div>`
+      + `<div class="hr-actions"><button data-hact="edit">Edit feed…</button>`
+      + ((f.site_url || f.url) ? `<button data-hact="open">Open site ↗</button>` : '')
+      + `<button data-hact="view">Show items</button></div></div>`).join('')
+      || '<div class="hint">All feeds look healthy — nothing flagged.</div>';
+    document.getElementById('health-body').innerHTML = body;
+    document.getElementById('health-overlay').hidden = false;
+  }
+
+  closeHealth() { document.getElementById('health-overlay').hidden = true; }
+
+  onHealthClick(e) {
+    const btn = e.target.closest('[data-hact]'); if (!btn) return;
+    const row = e.target.closest('.health-row'); const feedId = row?.dataset.feed; if (!feedId) return;
+    const feed = this.store.getFeed(feedId); if (!feed) return;
+    if (btn.dataset.hact === 'edit') { this.closeHealth(); this.openFeedEdit(feedId); }
+    else if (btn.dataset.hact === 'open') { window.open(feed.site_url || feed.url, '_blank', 'noopener'); }
+    else if (btn.dataset.hact === 'view') { this.closeHealth(); this.catFilter = null; this.route = null; this.view = 'inbox'; this.feedFilter = feedId; this.renderAll(); }
+  }
+
   catMenu(cat, x, y) {
     showMenu(x, y, [
       { label: 'View this folder', onClick: () => this.setCategory(cat) },
@@ -6363,7 +6579,7 @@ class App {
   onKey(e) {
     // Esc closes any open overlay first, from anywhere.
     if (e.key === 'Escape') {
-      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay']) {
+      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; return; }
       }
