@@ -6,6 +6,18 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Gallery thumbnails from inline content images — 2026-05-31
+
+- The feed adapter now falls back to the **first usable `<img>` in an item's
+  content** as its gallery thumbnail when the feed ships no `media:`/enclosure
+  image — so the gallery is image-rich for ordinary RSS articles, not just
+  videos and well-tagged feeds. Pure parse-time, **zero network**; skips data
+  URIs, relative srcs, tracking pixels, avatars, and 1×1 spacers. Explicit media
+  thumbnails still win. Existing items pick this up on their next re-poll (which
+  refreshes `media`). List view is unchanged (it ignores thumbnails for text
+  types). og:image *fetching* for the remaining thumbnail-less articles is still
+  deferred.
+
 ### Gallery view — 2026-05-31
 
 - A **list ↔ gallery** layout toggle in the topbar (`▦`). Gallery renders the

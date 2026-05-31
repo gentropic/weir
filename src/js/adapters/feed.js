@@ -32,6 +32,34 @@ function stableId(feed, candidates) {
   return `${feed.id}:h${hash32(candidates.join('|'))}`;
 }
 
+// First usable <img> URL in a content fragment — a gallery-thumbnail fallback
+// for feeds that embed images inline but ship no media:/enclosure tags. Run on
+// RAW content (pre-sanitize) so it works even when inline images are blocked;
+// the result is a thumbnail URL, not injected content. Skips data URIs,
+// relative srcs, tracking pixels, avatars, and 1×1 spacers.
+function firstImageIn(html) {
+  if (!html) return null;
+  const re = /<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const src = m[1].trim();
+    if (!/^https?:\/\//i.test(src)) continue;
+    if (/\b(width|height)\s*=\s*["']?1\b/i.test(m[0])) continue;   // 1px spacer
+    if (/doubleclick|feedburner|feedsportal|gravatar|\/pixel|1x1|spacer|blank\.gif|\btrack(ing)?\b/i.test(src)) continue;
+    return src;
+  }
+  return null;
+}
+
+// Use an extracted content image as the thumbnail when the item has no explicit
+// media thumbnail. Returns media (possibly augmented), or undefined.
+function withImageFallback(media, rawContent) {
+  if (media && media.thumbnail) return media;
+  const img = firstImageIn(rawContent);
+  if (!img) return media;
+  return { ...(media || {}), thumbnail: img };
+}
+
 function mediaFor(item) {
   // RSS-ish: media:thumbnail / media:content / itunes:image / enclosure image.
   const thumb = item.child('thumbnail')?.attr('url')
@@ -63,7 +91,7 @@ function rssItem(item, feed) {
     published_at: toEpoch(date),
     type: isPodcast ? 'podcast' : 'article',
     content: sanitizeHtml(rawContent, { allowImages: feed.images_allowed }),
-    media: mediaFor(item),
+    media: withImageFallback(mediaFor(item), rawContent),
   };
 }
 
@@ -82,16 +110,17 @@ function atomEntry(entry, feed) {
     published_at: toEpoch(date),
     type: 'article',
     content: sanitizeHtml(rawContent, { allowImages: feed.images_allowed }),
-    media: mediaFor(entry),
+    media: withImageFallback(mediaFor(entry), rawContent),
   };
 }
 
 function jsonItem(it, top, feed) {
   const isPodcast = (it.attachments || []).some((a) => /^audio\//i.test(a.mime_type || ''));
   const audio = (it.attachments || []).find((a) => /^audio\//i.test(a.mime_type || ''));
-  const media = {};
+  let media = {};
   if (it.image || it.banner_image) media.thumbnail = it.image || it.banner_image;
   if (audio) { media.audio_url = audio.url; if (audio.duration_in_seconds) media.duration_seconds = audio.duration_in_seconds; }
+  media = withImageFallback(media, it.content_html) || media;
   return {
     id: stableId(feed, [it.id, it.url, it.title]),
     feed_id: feed.id,

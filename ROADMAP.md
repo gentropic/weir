@@ -40,8 +40,9 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
 - ~~**Gallery view.**~~ ✅ Shipped 2026-05-31 — list ↔ gallery topbar toggle
   (`stream_layout`); thumbnail grid using item `media.thumbnail` (videos) with a
   colored type-tile fallback; tiles are `.item` so click/select/expand are shared.
-  Follow-up: fetch `og:image` (or first content image) for thumbnail-less
-  articles so the grid is image-rich for text feeds too.
+  Follow-up: ~~first content image~~ ✅ (inline `<img>` fallback shipped
+  2026-05-31, zero-network); fetching `og:image` for articles with *no* inline
+  image at all is still deferred (needs a per-item page fetch, like favicons).
 
 ## Medium
 

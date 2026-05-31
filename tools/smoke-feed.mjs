@@ -96,4 +96,21 @@ assert.deepEqual(res, { inserted: 2, updated: 0, skipped: 0 }, 'parsed items sto
 assert.equal(store.counts().inbox, 2, 'two in inbox');
 assert.match(await store.getContent('demo:tag:demo,2026:1'), /Hello/, 'content persisted');
 
+// ── gallery thumbnail fallback: first content <img> when no media tag ──
+const IMGRSS = `<rss version="2.0"><channel><title>Img</title>
+  <item><title>Has media</title><guid>m1</guid>
+    <media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://cdn.example/explicit.jpg"/>
+    <description><![CDATA[<p>text <img src="https://cdn.example/inline.jpg"> more</p>]]></description></item>
+  <item><title>Inline only</title><guid>m2</guid>
+    <description><![CDATA[<p>lead <img src="https://blog.example/cover.png" alt=""> body</p>]]></description></item>
+  <item><title>Tracker only</title><guid>m3</guid>
+    <description><![CDATA[<img src="https://feeds.feedburner.com/~r/x/pixel.gif" width="1" height="1">words]]></description></item>
+  <item><title>No image</title><guid>m4</guid><description>just words</description></item>
+</channel></rss>`;
+const imgItems = parseFeed(IMGRSS, { feed }).items;
+assert.equal(imgItems[0].media.thumbnail, 'https://cdn.example/explicit.jpg', 'explicit media:thumbnail wins over inline img');
+assert.equal(imgItems[1].media.thumbnail, 'https://blog.example/cover.png', 'inline content <img> used as fallback thumbnail');
+assert.equal(imgItems[2].media, undefined, 'tracking pixel skipped → no thumbnail');
+assert.equal(imgItems[3].media, undefined, 'no image → no media');
+
 console.log('feed smoke ok:', JSON.stringify(store.counts()));
