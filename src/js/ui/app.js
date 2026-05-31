@@ -14,6 +14,8 @@ import { recoverFeed } from '../wayback.js';
 import { parseFeed } from '../adapters/feed.js';
 import { monogram } from '../favicon.js';
 import { assessFeed } from '../health.js';
+import { Store } from '../store/store.js';
+import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle } from '../fsmount.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
@@ -116,6 +118,9 @@ export class App {
     const backupFile = document.getElementById('backup-file');
     document.getElementById('set-restore-backup')?.addEventListener('click', () => backupFile?.click());
     backupFile?.addEventListener('change', async () => { const f = backupFile.files[0]; if (f) await this.restoreBackup(await f.text()); backupFile.value = ''; });
+    document.getElementById('set-storage-actions')?.addEventListener('click', (e) => this.onMountAction(e));
+    document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
+    document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
@@ -148,6 +153,7 @@ export class App {
     this.renderAll();
     this.renderNotify();
     this.renderPollStatus();
+    if (this.fsMount && this.fsMount.pending) setTimeout(() => document.getElementById('mount-toast')?.classList.add('on'), 600);
   }
 
   query() {
@@ -1058,6 +1064,7 @@ export class App {
     const aff = this.store.feedsWithAffinity();
     document.getElementById('affinity-status').textContent = aff ? `watch data on ${aff} feeds` : 'no watch data loaded';
     this._refreshStorageInfo();
+    this.renderStorageMount();
     document.getElementById('settings-overlay').hidden = false;
   }
 
@@ -1099,6 +1106,78 @@ export class App {
     if (!confirm(`Restore ${n} files from this backup? This REPLACES weir's current data and reloads.`)) return;
     try { await this.store.importAll(data); location.reload(); }
     catch (e) { if (msg) msg.textContent = `restore failed: ${e.message}`; }
+  }
+
+  // ── filesystem mount (run the store on a real folder; durability) ──
+  renderStorageMount() {
+    const loc = document.getElementById('set-storage-loc');
+    const acts = document.getElementById('set-storage-actions');
+    if (!loc || !acts) return;
+    const m = this.fsMount || { type: 'idb' };
+    const fsaOk = typeof window !== 'undefined' && !!window.showDirectoryPicker;
+    if (m.type === 'fsaa') {
+      loc.textContent = 'folder (filesystem) ✓';
+      acts.innerHTML = '<button class="btn-link" data-mount="unmount">use browser instead…</button>';
+    } else if (m.pending) {
+      loc.textContent = 'folder — needs reconnect';
+      acts.innerHTML = '<button class="btn-link" data-mount="reconnect">reconnect…</button> &nbsp; <button class="btn-link" data-mount="forget">forget</button>';
+    } else {
+      loc.textContent = 'browser (IndexedDB)';
+      acts.innerHTML = fsaOk ? '<button class="btn-link" data-mount="mount">mount to a folder…</button>' : '<span class="hint">needs Edge/Chrome</span>';
+    }
+  }
+
+  onMountAction(e) {
+    const b = e.target.closest('[data-mount]'); if (!b) return;
+    const a = b.dataset.mount;
+    if (a === 'mount') this.mountToFolder();
+    else if (a === 'reconnect') this.reconnectFolder();
+    else if (a === 'unmount') this.unmountFolder();
+    else if (a === 'forget') this.forgetFolder();
+  }
+
+  async mountToFolder() {
+    const msg = document.getElementById('settings-msg');
+    let handle;
+    try { handle = await pickDirectory(); }
+    catch (e) { if (e && e.name === 'AbortError') return; if (msg) msg.textContent = e.message; return; }
+    try {
+      const adopt = await folderHasStore(handle);
+      if (adopt) {
+        if (!confirm(`“${handleName(handle)}” already contains a weir store. Run weir from it? Your current browser data stays as a separate IndexedDB copy.`)) { if (msg) msg.textContent = ''; return; }
+      } else {
+        if (!confirm(`Copy weir's data into “${handleName(handle)}” and run from there? Your IndexedDB copy is kept as a fallback.`)) { if (msg) msg.textContent = ''; return; }
+        if (msg) msg.textContent = 'copying to folder…';
+        const target = await Store.open({ backend: { type: 'fsaa', handle } });
+        await target.importAll(await this.store.exportAll());
+      }
+      await saveHandle(handle);
+      location.reload();
+    } catch (e) { if (msg) msg.textContent = `mount failed: ${e.message}`; }
+  }
+
+  async reconnectFolder() {
+    const h = this.fsMount && this.fsMount.pending; if (!h) return;
+    if ((await handlePermission(h, true)) === 'granted') location.reload();
+    else { const msg = document.getElementById('settings-msg'); if (msg) msg.textContent = 'permission not granted'; }
+  }
+
+  async unmountFolder() {
+    const msg = document.getElementById('settings-msg');
+    if (!confirm('Stop running weir from the folder and copy its data back into the browser (IndexedDB)? The folder is left untouched.')) return;
+    try {
+      if (msg) msg.textContent = 'copying back to browser…';
+      const idb = await Store.open({ backend: { type: 'idb', name: 'weir' } });
+      await idb.importAll(await this.store.exportAll());
+      await clearHandle();
+      location.reload();
+    } catch (e) { if (msg) msg.textContent = `unmount failed: ${e.message}`; }
+  }
+
+  async forgetFolder() {
+    if (!confirm('Forget the mounted folder and keep using the browser copy? The folder is left untouched; any changes made there stay in the folder.')) return;
+    await clearHandle();
+    location.reload();
   }
 
   async saveSettings() {

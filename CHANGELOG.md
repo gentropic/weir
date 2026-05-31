@@ -6,6 +6,25 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Durability: mount weir to a folder (File System Access) — 2026-06-01
+
+- **Settings → Storage → location: mount to a folder…** runs weir's *entire*
+  store on a user-picked real directory (File System Access) instead of
+  IndexedDB — immune to browser eviction, browsable + syncable with your own
+  tools. Pointing at an **existing** weir folder **adopts** it (no overwrite —
+  the new-machine / synced-folder case); pointing at an empty one **copies** the
+  current data in (IndexedDB kept as a fallback). The directory handle persists
+  in a tiny dedicated IDB so weir re-opens the folder on next launch.
+- **Bulletproof boot:** if the grant has lapsed or anything goes wrong opening
+  the folder, weir **always falls back to IndexedDB** and shows a *reconnect*
+  toast (one gesture re-grants permission). "use browser instead…" copies the
+  folder's data back to IDB; "forget" just drops the association. Migration
+  reuses the proven `exportAll`/`importAll`, and mounting never deletes the IDB
+  copy, so a failure can't lose data.
+- `src/js/fsmount.js` (handle persistence, picker, permission, adopt-detection);
+  `boot.js` selects the backend defensively. Boot-defensiveness + the UI state
+  machine are headless-tested; the live picker/migration is verified interactively.
+
 ### Durability: full backup + restore — 2026-06-01
 
 - **Settings → Storage → backup: export… / restore…** A full backup snapshots

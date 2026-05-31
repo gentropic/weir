@@ -9,6 +9,7 @@ import { Retainer } from './retainer.js';
 import { FaviconFetcher } from './favicon.js';
 import { App } from './ui/app.js';
 import { initPwa, setAutoCheck } from './pwa.js';
+import { loadHandle, handlePermission } from './fsmount.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
 import { githubAdapter } from './adapters/github.js';
@@ -35,24 +36,44 @@ async function boot() {
   initPwa();
   probeBridge();
 
+  // Pick the backend: if the user has mounted weir to a folder and the grant is
+  // still live, run on it (File System Access). Anything off — no handle, lapsed
+  // permission, or any error — falls back to IndexedDB so weir ALWAYS loads.
+  let backendCfg = { type: 'idb', name: 'weir' };
+  let pendingMount = null;
+  try {
+    const handle = await loadHandle();
+    if (handle) {
+      if ((await handlePermission(handle, false)) === 'granted') backendCfg = { type: 'fsaa', handle };
+      else pendingMount = handle;   // needs a reconnect gesture; run on IDB meanwhile
+    }
+  } catch { /* stay on IDB */ }
+
   let store;
   try {
-    store = await Store.open({ backend: { type: 'idb', name: 'weir' } });
+    store = await Store.open({ backend: backendCfg });
   } catch (e) {
-    setText('backend-status', `store: unavailable (${e.message})`);
-    const d = $('vfs-dot'); if (d) d.dataset.state = 'fault';
-    return;
+    if (backendCfg.type === 'fsaa') {   // folder failed → fall back to IDB, don't strand the user
+      pendingMount = backendCfg.handle;
+      try { store = await Store.open({ backend: { type: 'idb', name: 'weir' } }); } catch { /* handled below */ }
+    }
+    if (!store) {
+      setText('backend-status', `store: unavailable (${e.message})`);
+      const d = $('vfs-dot'); if (d) d.dataset.state = 'fault';
+      return;
+    }
   }
 
   setAutoCheck(store.getSettings().auto_check_updates);   // sync the SW with the saved preference
 
-  const backend = store.vfs.mounts()[0]?.type || '?';
+  const backendType = store.vfs.mounts()[0]?.type || '?';
+  const backendLabel = backendType === 'fsaa' ? 'folder' : backendType;
   try {
     const ok = await store.ping();
-    setText('backend-status', `store: ${backend}${ok ? '' : ' (mismatch)'}`);
+    setText('backend-status', `store: ${backendLabel}${ok ? '' : ' (mismatch)'}`);
     const d = $('vfs-dot'); if (d) d.dataset.state = ok ? 'ok' : 'fault';
   } catch (e) {
-    setText('backend-status', `store: ${backend} (error)`);
+    setText('backend-status', `store: ${backendLabel} (error)`);
     const d = $('vfs-dot'); if (d) d.dataset.state = 'fault';
   }
 
@@ -64,6 +85,7 @@ async function boot() {
   const poller = new Poller(store, { adapters, fetch: gcuFetch });
   const faviconFetcher = new FaviconFetcher(store, { fetch: gcuFetch });   // lazy rail icons, polite
   const app = new App({ store, poller, router, adapters, faviconFetcher });
+  app.fsMount = { type: backendType, pending: pendingMount };   // filesystem-mount state for the UI
   app.mount();
   poller.start();
 
