@@ -17,6 +17,7 @@ import {
   SCHEMA_VERSION, DEFAULT_SETTINGS, DEFAULT_VIEWS, makeItem, makeFeed, makeTombstone,
   fsKey, deriveExcerpt, deriveSearchText, computeExpiry, now,
 } from './schema.js';
+import { buildCard, nextGlassId } from '../glass.js';
 import { channelIdOf } from '../affinity.js';
 
 const FLUSH_DELAY_MS = 250;
@@ -503,6 +504,31 @@ export class Store {
     }
     return { written: want.size, pruned };
   }
+
+  // ── glass catalog (Stage 0: deterministic cards, no LLM — see GLASS.md) ──
+  // Emit /catalog/<glass_id>.json for items that don't yet have one (or all, with
+  // overwrite), from metadata weir already holds, and stamp each item's glass_id.
+  async buildCatalog({ overwrite = false, cataloged } = {}) {
+    await this._ensureDir('/catalog');
+    const day = cataloged || new Date().toISOString().slice(0, 10);
+    let n = 0, created = 0, skipped = 0;
+    const touched = new Set();
+    for (const item of this.items.values()) {
+      if (item.glass_id && !overwrite) { skipped++; continue; }
+      const glass_id = (overwrite && item.glass_id) ? item.glass_id : nextGlassId(day, ++n);
+      const card = buildCard(item, this.feeds.get(item.feed_id), { glass_id, cataloged: day });
+      await this.vfs.writeFile(`/catalog/${glass_id}.json`, JSON.stringify(card, null, 2));
+      if (item.glass_id !== glass_id) { item.glass_id = glass_id; touched.add(item.feed_id); }
+      created++;
+    }
+    for (const fid of touched) this._markFeedDirty(fid);
+    await this.flush();
+    this.emit('catalog', { created, skipped });
+    return { created, skipped, total: this.items.size };
+  }
+
+  async getCard(glassId) { return this._readJSON(`/catalog/${String(glassId)}.json`, null); }
+  async catalogCount() { try { return (await this.vfs.readdir('/catalog')).filter((f) => f.endsWith('.json')).length; } catch { return 0; } }
 
   async close() { await this.flush(); }
 }

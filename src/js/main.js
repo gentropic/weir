@@ -11,6 +11,7 @@ import '../../vendor/vfs.js';            // → VFS, IDBBackend, OPFSBackend, FS
 import '../../vendor/bridge-client.js';  // → gcuFetch, hasBridge, bridgeVersion, clearBridgeCache
 import './store/schema.js';              // data model + helpers (before store)
 import './affinity.js';                  // → channelIdOf, affinityScore (before store)
+import './glass.js';                     // → buildCard, nextGlassId (glass catalog; before store)
 import './store/store.js';               // → Store (uses VFS + schema globals)
 import './parse/xml.js';                 // → parseXml (before feed)
 import './parse/sanitize.js';            // → sanitizeHtml (before feed)

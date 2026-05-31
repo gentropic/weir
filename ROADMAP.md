@@ -6,6 +6,26 @@ what's shipped (adapters, poller, router, retainer, OPML, search, feed archaeolo
 canonical design intent is [SPEC.md](SPEC.md); this file is the **forward plan**.
 Nothing here is committed scope — it's the candidate list, roughly ordered.
 
+## Glass — weir becomes a knowledge base (the big arc)
+
+weir is becoming the home implementation of **`@gcu/glass`** (library-science
+catalog over its own archive; see [GLASS.md](GLASS.md)). This reframes several
+items below — **search v2** becomes facet-intersection + thesaurus (LIS-shaped),
+**save-to-glass / SPEC §7** is retired into "weir *is* glass," and **webmcp** is
+the trigger/query layer on top.
+
+- ~~**Stage 0** — catalog format + deterministic cards from existing metadata.~~
+  ✅ Shipped 2026-06-01 (`glass.js`, `Store.buildCatalog`).
+- **Stage 1 — the cataloger service.** Vendor patchbay's `providers.js` + `vault.js`
+  (Ollama/nano-gpt/Groq, OpenAI-shaped; OPFS-encrypted keys). Bounded LLM call
+  fills the language facets + proposes typed `related` edges; opt-in, on-keep +
+  batch, `confidence`/`needs_review` review queue. **Ollama-first = zero egress.**
+- **Stage 2 — the query side.** Facet-intersection + thesaurus broaden/narrow (this
+  *is* search v2); navigable emergent graph.
+- **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +
+  annotations; optional force-graph view; webmcp triggers.
+- Near-term Stage-0 follow-up: a **faceted catalog view** (see the corpus by facet).
+
 ## Near term — small UX / polish
 
 - ~~**Views over sources (smart-folders).**~~ ✅ Shipped 2026-05-31 — a rail

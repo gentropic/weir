@@ -131,6 +131,7 @@ export function makeItem(raw, feed) {
     media: raw.media || undefined,
     structured: raw.structured || undefined,
     has_content: !!(raw.content && String(raw.content).length),
+    glass_id: raw.glass_id || undefined,   // catalog card id once cataloged (GLASS.md §3.1)
   };
   rec.search_text = deriveSearchText(rec);
   rec.expires_at = computeExpiry(rec, feed);

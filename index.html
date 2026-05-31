@@ -4082,6 +4082,7 @@ function makeItem(raw, feed) {
     media: raw.media || undefined,
     structured: raw.structured || undefined,
     has_content: !!(raw.content && String(raw.content).length),
+    glass_id: raw.glass_id || undefined,   // catalog card id once cataloged (GLASS.md §3.1)
   };
   rec.search_text = deriveSearchText(rec);
   rec.expires_at = computeExpiry(rec, feed);
@@ -4164,6 +4165,82 @@ function parseWatchDigest(json) {
   return out;
 }
 
+// ── src/js/glass.js ──
+
+// @gcu/glass — Stage 0: deterministic catalog cards from weir items, NO LLM.
+// Maps what weir already knows onto the glass card format (see GLASS.md §4–5):
+// form←type, provenance←feed, temporal←published_at, Dublin Core ← item fields,
+// entity ⊇ tags. The language facets (domain/entity/process/method/scale/spatial)
+// and the abstract are left for the Stage-1 cataloger service. Pure + testable.
+
+const FACETS = ['domain', 'entity', 'process', 'method', 'scale', 'spatial', 'temporal', 'form', 'provenance'];
+
+// weir item.type → glass `form` facet (genre of document).
+const TYPE_TO_FORM = {
+  article: 'article', video: 'video', release: 'release', paper: 'paper',
+  status: 'status', track: 'track', podcast: 'podcast', commit: 'commit',
+  issue: 'issue', note: 'note',
+};
+
+// Coarse origin tier until the real provenance vocabulary is frozen (GLASS §15.3,
+// seeded from Holocene trust tiers). Stage 0 derives it from the adapter/kind.
+function provenanceFor(feed, item) {
+  if (item.type === 'note' || item.feed_id === 'self') return 'self';
+  switch (feed && feed.adapter) {
+    case 'youtube': return 'video-platform';
+    case 'github': return 'code-host';
+    default: return 'web-feed';
+  }
+}
+
+function isoDate(epoch) { if (!epoch) return undefined; try { return new Date(epoch).toISOString().slice(0, 10); } catch { return undefined; } }
+function yearOf(epoch) { if (!epoch) return null; try { return String(new Date(epoch).getUTCFullYear()); } catch { return null; } }
+
+// glass_id = glass-YYYYMMDD-NNN (catalog date + 1-based daily sequence).
+function nextGlassId(cataloged, n) {
+  return `glass-${String(cataloged).replace(/-/g, '')}-${String(n).padStart(3, '0')}`;
+}
+
+// Build the deterministic Stage-0 card for one item (+ its feed). No network.
+function buildCard(item, feed, opts = {}) {
+  const cataloged = opts.cataloged || new Date().toISOString().slice(0, 10);
+  const glass_id = opts.glass_id || nextGlassId(cataloged, 1);
+  const year = yearOf(item.published_at);
+  const entity = Array.isArray(item.tags) ? [...new Set(item.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean))] : [];
+
+  const dublin_core = {
+    title: item.title || '(untitled)',
+    creator: item.author ? [item.author] : [],
+    date: isoDate(item.published_at),
+    type: item.type || 'article',
+    identifier: item.url || undefined,
+    source: (feed && feed.name) || item.feed_id,
+    description: item.excerpt || undefined,
+  };
+
+  const facets = {
+    domain: [], entity, process: [], method: [], scale: [],
+    form: [TYPE_TO_FORM[item.type] || 'article'],
+    provenance: [provenanceFor(feed, item)],
+    spatial: [],
+    temporal: year ? [year] : [],
+  };
+
+  return {
+    dublin_core,
+    facets,
+    glass: {
+      glass_id,
+      document_ref: item.id,
+      cataloged,
+      cataloger: 'stage0-rules',
+      confidence: 0.3,        // metadata-only; the language facets await the cataloger
+      needs_review: true,     // a Stage-1 LLM pass should enrich + confirm
+      related: [],
+    },
+  };
+}
+
 // ── src/js/store/store.js ──
 
 // The store — weir's only shared mutable surface (SPEC §1). Built on the
@@ -4179,6 +4256,7 @@ function parseWatchDigest(json) {
 //   /feeds/<feedKey>.json              one Feed record per file
 //   /items/<feedKey>.ndjson            metadata shard: one Item (sans content) per line
 //   /content/<feedKey>/<itemKey>.html  sanitized body, lazy-loaded
+
 
 
 
@@ -4668,6 +4746,31 @@ class Store {
     }
     return { written: want.size, pruned };
   }
+
+  // ── glass catalog (Stage 0: deterministic cards, no LLM — see GLASS.md) ──
+  // Emit /catalog/<glass_id>.json for items that don't yet have one (or all, with
+  // overwrite), from metadata weir already holds, and stamp each item's glass_id.
+  async buildCatalog({ overwrite = false, cataloged } = {}) {
+    await this._ensureDir('/catalog');
+    const day = cataloged || new Date().toISOString().slice(0, 10);
+    let n = 0, created = 0, skipped = 0;
+    const touched = new Set();
+    for (const item of this.items.values()) {
+      if (item.glass_id && !overwrite) { skipped++; continue; }
+      const glass_id = (overwrite && item.glass_id) ? item.glass_id : nextGlassId(day, ++n);
+      const card = buildCard(item, this.feeds.get(item.feed_id), { glass_id, cataloged: day });
+      await this.vfs.writeFile(`/catalog/${glass_id}.json`, JSON.stringify(card, null, 2));
+      if (item.glass_id !== glass_id) { item.glass_id = glass_id; touched.add(item.feed_id); }
+      created++;
+    }
+    for (const fid of touched) this._markFeedDirty(fid);
+    await this.flush();
+    this.emit('catalog', { created, skipped });
+    return { created, skipped, total: this.items.size };
+  }
+
+  async getCard(glassId) { return this._readJSON(`/catalog/${String(glassId)}.json`, null); }
+  async catalogCount() { try { return (await this.vfs.readdir('/catalog')).filter((f) => f.endsWith('.json')).length; } catch { return 0; } }
 
   async close() { await this.flush(); }
 }
@@ -7747,7 +7850,7 @@ async function boot() {
   app.renderDripStatus(drip.status());
   if (drip.queue.length || drip.current) drip.start();
 
-  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), parseFeed, feedAdapter, gcuFetch };
+  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), parseFeed, feedAdapter, gcuFetch };
 
   try {
     let persisted = false;

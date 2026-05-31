@@ -6,6 +6,23 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Glass: catalog Stage 0 — weir speaks the glass format — 2026-06-01
+
+- **`GLASS.md`** — the `@gcu/glass` spec, rewritten coherent and grounded in weir
+  as the home implementation (supersedes the cross-session merge that leaked into
+  `SPEC.md §7`). Library-science knowledge base: faceted classification + Dublin
+  Core + thesaurus, "dumb pipes / LLM-as-service," cataloging built over weir's
+  own store, notes-as-items, an *emergent* knowledge graph, Ollama-first (local,
+  zero-egress) cataloger. Staged 0→3.
+- **Stage 0 (no LLM):** `src/js/glass.js` `buildCard()` maps metadata weir already
+  has onto the glass catalog card — `form←type`, `provenance←feed`,
+  `temporal←published_at`, Dublin Core ← item fields, `entity ⊇` tags; the
+  language facets (domain/entity/process/method/scale/spatial) + abstract are left
+  for the Stage-1 cataloger. `Store.buildCatalog()` emits `/catalog/<glass_id>.json`
+  for every item and stamps each item's `glass_id` (idempotent; survives reload;
+  if you're FSA-mounted, the cards are real files you can browse). Try it:
+  `await __weir.buildCatalog()`. Next: a faceted catalog view, then the cataloger.
+
 ### Durability: mount weir to a folder (File System Access) — 2026-06-01
 
 - **Settings → Storage → location: mount to a folder…** runs weir's *entire*
