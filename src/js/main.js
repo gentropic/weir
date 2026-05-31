@@ -23,6 +23,7 @@ import './recovery.js';                   // → RecoveryDrip (uses cdxSnapshots
 import './retainer.js';                   // → Retainer (archive-on-expiry; never deletes)
 import './pwa.js';                        // → initPwa (service worker + update toast)
 import './ui/format.js';                 // → relativeTime, sparkPoints, … (before app)
+import './ui/menu.js';                    // → showMenu (context menus)
 import './poller.js';                    // → Poller
 import './ui/app.js';                    // → App (uses format)
 import './boot.js';                      // boots on DOMContentLoaded

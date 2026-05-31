@@ -6,6 +6,18 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Mouse interactivity — actions + context menus — 2026-05-31
+
+- **Per-item hover actions:** each row reveals save / read-toggle / archive /
+  open-original buttons on hover or selection (mirroring the s/r/e/o keys).
+- **Click a row to open it** in the inline reader (clicks inside the open article
+  — links, text — are left alone).
+- **Right-click context menus** (new tiny `src/js/ui/menu.js`):
+  - items → open original, open/close here, save, read-toggle, archive, copy link;
+  - feeds → show only, open site, mark all read, recover history, remove feed;
+  - folders → view / mark all read / collapse; views → mark all read.
+- `store.markAllRead({ feed_id | category | view })` bulk action.
+
 ### Resizable source rail — 2026-05-31
 
 - Drag the divider between the rail and the stream to resize the source rail

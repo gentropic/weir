@@ -114,7 +114,22 @@ body {
 .pill.track, .pill.issue { background: var(--au-error-soft); color: var(--au-error); }
 .pill.podcast { background: var(--au-warn-soft); color: var(--au-warn); }
 
-.ibody { min-width: 0; }
+.ibody { min-width: 0; position: relative; }
+
+/* per-item hover action toolbar */
+.iactions { position: absolute; top: -2px; right: 0; display: flex; gap: 2px; opacity: 0; transition: opacity 0.1s; background: linear-gradient(90deg, transparent, var(--sw-bg-raised) 22%); padding-left: 24px; z-index: 2; }
+.item:hover .iactions, .item.sel .iactions { opacity: 1; }
+.iactions button { font-family: var(--au-font-mono); font-size: 13px; line-height: 1; width: 26px; height: 24px; display: flex; align-items: center; justify-content: center; background: var(--sw-bg-bright); color: var(--au-fg-muted); border: 1px solid var(--au-border); border-radius: var(--au-radius); cursor: pointer; }
+.iactions button:hover { color: var(--au-action); border-color: var(--au-action); }
+
+/* context menu */
+.ctxmenu { position: fixed; z-index: 9000; min-width: 168px; background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg); box-shadow: 0 8px 32px rgba(0,0,0,0.5); padding: 4px; }
+.ctxitem { display: block; width: 100%; text-align: left; font-family: var(--au-font-sans); font-size: 13px; color: var(--au-fg); background: none; border: none; border-radius: var(--au-radius); padding: 6px 10px; cursor: pointer; }
+.ctxitem:hover { background: var(--sw-bg-bright); }
+.ctxitem.danger { color: var(--au-error); }
+.ctxitem.danger:hover { background: var(--au-error-soft); }
+.ctxitem:disabled { color: var(--au-fg-soft); cursor: default; background: none; }
+.ctxsep { height: 1px; margin: 4px 6px; background: var(--au-border); }
 .ititle { font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--au-fg); }
 .ititle .flag { color: var(--au-action); margin-right: 5px; }
 .iexcerpt { font-size: 13px; color: var(--au-fg-muted); margin-top: 5px; line-height: 1.5; max-width: 70ch; }

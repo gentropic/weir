@@ -294,6 +294,23 @@ export class Store {
     return r;
   }
 
+  // Bulk mark-read, scoped by feed / category / view. Returns count.
+  markAllRead(opts = {}) {
+    const { feed_id, category, view } = opts;
+    let n = 0; const touched = new Set();
+    for (const r of this.items.values()) {
+      if (r.read || r.archived) continue;
+      if (view !== 'archived' && r.archived) continue;
+      if (feed_id && r.feed_id !== feed_id) continue;
+      if (category) { const f = this.feeds.get(r.feed_id); if (!f || f.category !== category) continue; }
+      if ((view === 'inbox' || !view) && r.route) continue;
+      r.read = true; touched.add(r.feed_id); n++;
+    }
+    for (const fid of touched) this._markFeedDirty(fid);
+    if (n) this.emit('items', { inserted: 0, updated: n, skipped: 0 });
+    return { read: n };
+  }
+
   // Prune (retainer/manual): remove items + write tombstones so they never come
   // back. Saved items are exempt. `target` is an id array or a predicate.
   async prune(target, reason = 'pruned') {

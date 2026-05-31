@@ -7,6 +7,7 @@ import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, fmtBytes, da
 import { parseOpml, buildOpml } from '../opml.js';
 import { DEFAULT_ROUTING } from '../router.js';
 import { parseWatchDigest } from '../affinity.js';
+import { showMenu } from './menu.js';
 import { recoverFeed } from '../wayback.js';
 import { parseFeed } from '../adapters/feed.js';
 
@@ -47,8 +48,10 @@ export class App {
     this.poller.on('polled', () => this.renderPollStatus());
     this.poller.on('cycle', () => this.renderPollStatus());
 
-    document.querySelectorAll('.navrow[data-view]').forEach((row) =>
-      row.addEventListener('click', () => this.setView(row.dataset.view)));
+    document.querySelectorAll('.navrow[data-view]').forEach((row) => {
+      row.addEventListener('click', () => this.setView(row.dataset.view));
+      row.addEventListener('contextmenu', (e) => { e.preventDefault(); this.viewMenu(row.dataset.view, e.clientX, e.clientY); });
+    });
     this.sources.addEventListener('click', (e) => {
       const head = e.target.closest('.cat-head');
       if (head) {
@@ -62,6 +65,12 @@ export class App {
       this.renderAll();
     });
     this.stream.addEventListener('click', (e) => this.onStreamClick(e));
+    this.stream.addEventListener('contextmenu', (e) => { const row = e.target.closest('.item'); if (!row) return; e.preventDefault(); this.select(row.dataset.id); this.itemMenu(row.dataset.id, e.clientX, e.clientY); });
+    this.sources.addEventListener('contextmenu', (e) => {
+      const s = e.target.closest('.source'); const h = e.target.closest('.cat-head');
+      if (s) { e.preventDefault(); this.feedMenu(s.dataset.feed, e.clientX, e.clientY); }
+      else if (h) { e.preventDefault(); this.catMenu(h.dataset.cat, e.clientX, e.clientY); }
+    });
 
     const form = document.getElementById('addfeed');
     form.addEventListener('submit', (e) => { e.preventDefault(); const v = form.querySelector('input').value.trim(); if (v) this.addFeed(v); });
@@ -237,8 +246,14 @@ export class App {
     } else {
       body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${meta} ${tags}</div>`;
     }
+    const actions = `<div class="iactions">`
+      + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
+      + `<button data-act="read" title="Mark ${it.read ? 'unread' : 'read'} (r)">${it.read ? '○' : '●'}</button>`
+      + `<button data-act="archive" title="Archive (e)">⌫</button>`
+      + (it.url ? `<button data-act="open" title="Open original (o)">↗</button>` : '')
+      + `</div>`;
     return `<article class="${cls}" data-id="${escapeHtml(it.id)}"><div class="pillcol"><span class="pill ${escapeHtml(it.type)}">${escapeHtml(it.type)}</span></div>`
-      + `<div class="ibody">${body}<div class="iexpand">${it.id === this.expandedId ? this.expandedHtml(it) : ''}</div></div></article>`;
+      + `<div class="ibody">${actions}${body}<div class="iexpand">${it.id === this.expandedId ? this.expandedHtml(it) : ''}</div></div></article>`;
   }
 
   expandedHtml(it) {
@@ -297,8 +312,9 @@ export class App {
     if (!row) return;
     const id = row.dataset.id;
     if (btn) { e.stopPropagation(); this.doAct(btn.dataset.act, id); return; }
-    if (e.target.closest('.ititle')) { this.select(id); this.toggleExpand(id); }
-    else this.select(id);
+    if (e.target.closest('.iexpand')) return;   // clicks inside the open article (links, text) — leave alone
+    this.select(id);
+    this.toggleExpand(id);   // click the row to open/close the inline reader
   }
 
   select(id) {
@@ -347,6 +363,45 @@ export class App {
       img.removeAttribute('data-weir-src');
     });
     row.querySelector('[data-act="images"]')?.remove();
+  }
+
+  // ── context menus ──
+  itemMenu(id, x, y) {
+    const it = this.store.getItem(id); if (!it) return;
+    showMenu(x, y, [
+      it.url && { label: 'Open original ↗', onClick: () => window.open(it.url, '_blank', 'noopener') },
+      { label: this.expandedId === id ? 'Close' : 'Open here', onClick: () => this.toggleExpand(id) },
+      { sep: true },
+      { label: it.saved ? 'Unsave' : 'Save', onClick: () => this.doAct('save', id) },
+      { label: it.read ? 'Mark unread' : 'Mark read', onClick: () => this.doAct('read', id) },
+      { label: it.archived ? 'Unarchive' : 'Archive', onClick: () => this.store.setState(id, { archived: !it.archived }) },
+      it.url && { label: 'Copy link', onClick: () => navigator.clipboard?.writeText(it.url).catch(() => {}) },
+    ].filter(Boolean));
+  }
+
+  feedMenu(feedId, x, y) {
+    const feed = this.store.getFeed(feedId); if (!feed) return;
+    showMenu(x, y, [
+      { label: 'Show only this feed', onClick: () => { this.catFilter = null; this.route = null; this.feedFilter = feedId; this.renderAll(); } },
+      (feed.site_url || feed.url) && { label: 'Open site ↗', onClick: () => window.open(feed.site_url || feed.url, '_blank', 'noopener') },
+      { sep: true },
+      { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
+      { label: 'Recover history…', onClick: () => this.recoverHistory(feedId) },
+      { sep: true },
+      { label: 'Remove feed', danger: true, onClick: () => { if (confirm(`Remove "${feed.name}" and its items?`)) { this.store.removeFeed(feedId); if (this.feedFilter === feedId) this.feedFilter = null; this.renderAll(); } } },
+    ].filter(Boolean));
+  }
+
+  catMenu(cat, x, y) {
+    showMenu(x, y, [
+      { label: 'View this folder', onClick: () => this.setCategory(cat || null) },
+      { label: 'Mark all read', onClick: () => this.store.markAllRead({ category: cat }) },
+      { label: this.collapsedCats.has(cat) ? 'Expand' : 'Collapse', onClick: () => this.toggleCat(cat) },
+    ]);
+  }
+
+  viewMenu(view, x, y) {
+    showMenu(x, y, [{ label: 'Mark all read', onClick: () => this.store.markAllRead({ view }) }]);
   }
 
   setView(view) { this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
