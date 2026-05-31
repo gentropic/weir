@@ -831,9 +831,14 @@ export class App {
 
   async addFeed(url) {
     let host = url; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep raw */ }
-    const adapter = this.adapters.find((a) => { try { return a.match(url); } catch { return false; } })?.name || 'feed';
+    const matched = this.adapters.find((a) => { try { return a.match(url); } catch { return false; } });
+    const adapter = matched?.name || 'feed';
+    // Some adapters resolve a friendly URL (a github repo) to its real feed URL
+    // up front, without a fetch, and offer a nicer default name.
+    const resolved = (matched?.resolveUrl && matched.resolveUrl(url)) || url;
+    const name = (matched?.titleFor && matched.titleFor(url)) || host;
     try {
-      const feed = await this.store.putFeed({ url, name: host, adapter });
+      const feed = await this.store.putFeed({ url: resolved, name, adapter });
       this.renderRail();
       this.setView('inbox');
       const input = document.getElementById('addfeed-input'); if (input) input.value = '';

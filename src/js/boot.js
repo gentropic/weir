@@ -11,6 +11,7 @@ import { App } from './ui/app.js';
 import { initPwa, setAutoCheck } from './pwa.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
+import { githubAdapter } from './adapters/github.js';
 import { fmtBytes } from './ui/format.js';
 import { hasBridge, bridgeVersion, gcuFetch } from '../../vendor/bridge-client.js';
 
@@ -59,7 +60,7 @@ async function boot() {
   router.load(await store.getRouting());
   store.router = router;
 
-  const adapters = [youtubeAdapter, feedAdapter];   // specific before the `feed` fallback
+  const adapters = [youtubeAdapter, githubAdapter, feedAdapter];   // specific before the `feed` fallback
   const poller = new Poller(store, { adapters, fetch: gcuFetch });
   const faviconFetcher = new FaviconFetcher(store, { fetch: gcuFetch });   // lazy rail icons, polite
   const app = new App({ store, poller, router, adapters, faviconFetcher });

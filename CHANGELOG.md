@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### GitHub adapter — 2026-06-01
+
+- New `github` adapter over GitHub's native Atom feeds (no API, no auth). Add a
+  friendly **`github.com/{owner}/{repo}`** and it resolves — pure string, no
+  fetch — to `…/releases.atom` by default (or `…/commits.atom` / `…/tags.atom`
+  by path; a bare `github.com/{owner}` → that user/org's activity feed). Releases
+  and tags map to **`release`** items, commits to **`commit`** — lighting up item
+  types the schema defined but nothing produced yet. Structured fields carry the
+  `repo` and the `ref` (tag, or short commit SHA); content is sanitized. Resolves
+  + names the feed at add-time (`owner/repo releases`); a `detectFeedUrl` safety
+  net handles repo URLs that arrive via OPML. Verified against live
+  `nodejs/node` releases.
+
 ### Search v2 groundwork — corpus export + vendor pipe — 2026-06-01
 
 - **`__weir.exportCorpus()`** (dev/handoff): dumps one doc per stored item in

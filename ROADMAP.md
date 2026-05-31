@@ -79,8 +79,10 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
 
 ## Larger / research
 
-- **More adapters:** `scrape` (public-page change tracking → `track` items), arXiv,
-  GitHub, Mastodon, Bluesky.
+- **More adapters:** ~~GitHub~~ ✅ Shipped 2026-06-01 (releases/commits/tags Atom
+  → `release`/`commit` items; add-time URL resolution). Remaining: `scrape`
+  (public-page change tracking → `track` items), arXiv (→ `paper`), Mastodon,
+  Bluesky.
 - **Storage tiers.** OPFS/FSA content backend (the store is already backend-agnostic
   — mostly a config swap); a **cold-store** tier that offloads archived items out
   of the hot in-memory index — still never deleting ([[weir-never-delete]]).

@@ -16,6 +16,7 @@ import './parse/xml.js';                 // → parseXml (before feed)
 import './parse/sanitize.js';            // → sanitizeHtml (before feed)
 import './adapters/feed.js';             // → parseFeed, feedAdapter (uses xml/sanitize/schema)
 import './adapters/youtube.js';          // → parseYoutube, youtubeAdapter (uses parseXml)
+import './adapters/github.js';           // → parseGithub, githubAdapter (releases/commits/tags)
 import './extract.js';                   // → extractArticle (readability; browser DOMParser)
 import './opml.js';                      // → parseOpml, buildOpml (uses parseXml)
 import './router.js';                    // → Router, compileRules, DEFAULT_ROUTING
