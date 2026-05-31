@@ -69,7 +69,12 @@ export class App {
 
     const fileEl = document.getElementById('opml-file');
     document.getElementById('btn-import')?.addEventListener('click', () => fileEl.click());
-    fileEl?.addEventListener('change', async () => { const f = fileEl.files[0]; if (f) this.importOpml(await f.text()); fileEl.value = ''; });
+    fileEl?.addEventListener('change', async () => {
+      const texts = [];
+      for (const f of fileEl.files) texts.push(await f.text());
+      fileEl.value = '';
+      if (texts.length) this.importOpmlFiles(texts);
+    });
     document.getElementById('btn-export')?.addEventListener('click', () => this.exportOpml());
 
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
@@ -255,15 +260,20 @@ export class App {
   }
 
   importReviewHtml() {
-    const { feeds, youtube } = this.pendingImport;
+    const { feeds, youtube, files } = this.pendingImport;
     const total = feeds.length, feedsOnly = total - youtube;
+    const desc = (youtube && feedsOnly)
+      ? `${feedsOnly} feeds + ${youtube} YouTube subscriptions${files > 1 ? ` from ${files} files` : ''}. You can leave the YouTube subs out for now and add them later.`
+      : youtube
+        ? `${youtube} YouTube channels${files > 1 ? ` from ${files} files` : ''}.`
+        : `${total} feeds${files > 1 ? ` from ${files} files` : ''}, ready to import.`;
     return `<section class="onboard">
       <div class="onboard-glyph">⬓</div>
       <h2>Import ${total} feed${total === 1 ? '' : 's'}</h2>
-      <p>${youtube ? `${feedsOnly} feeds + ${youtube} YouTube subscriptions. YouTube subs are bulky — you can leave them out for now and add them later.` : 'Ready to import.'}</p>
+      <p>${desc}</p>
       <div class="onboard-actions">
         <button class="btn" data-import="all">Import all (${total})</button>
-        ${youtube ? `<button class="btn" data-import="feeds">Feeds only (${feedsOnly})</button>` : ''}
+        ${(youtube && feedsOnly) ? `<button class="btn" data-import="feeds">Feeds only (${feedsOnly})</button>` : ''}
         <button class="btn" data-import="cancel">Cancel</button>
       </div>
     </section>`;
@@ -385,10 +395,17 @@ export class App {
   }
 
   // ── OPML ──
-  importOpml(text) {
-    const feeds = parseOpml(text);
-    if (!feeds.length) { document.getElementById('view-sub').textContent = 'OPML had no feeds'; return; }
-    this.pendingImport = { feeds, youtube: feeds.filter((f) => f.kind === 'youtube').length };
+  importOpml(text) { return this.importOpmlFiles([text]); }
+
+  // Combine one or more OPML files into a single review (dedup by feed URL across
+  // files), so the whole curated set imports in one go.
+  importOpmlFiles(texts) {
+    const seen = new Set(); const feeds = [];
+    for (const t of texts) {
+      for (const f of parseOpml(t)) { if (seen.has(f.xmlUrl)) continue; seen.add(f.xmlUrl); feeds.push(f); }
+    }
+    if (!feeds.length) { document.getElementById('view-sub').textContent = 'no feeds in those file(s)'; return; }
+    this.pendingImport = { feeds, youtube: feeds.filter((f) => f.kind === 'youtube').length, files: texts.length };
     this.renderStream();
   }
 

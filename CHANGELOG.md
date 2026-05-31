@@ -6,6 +6,14 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### multi-file OPML import — 2026-05-31
+
+- The import file picker now accepts **multiple OPML files at once**; they're
+  combined (deduped by feed URL) into a single review, so a curated set split
+  across files (active + yt-core + …) imports in one step.
+- Fixed a footgun: "Feeds only" now only appears when there are actually non-YT
+  feeds to separate — previously clicking it on an all-YouTube OPML imported zero.
+
 ### watch-affinity (YouTube Takeout signal) — 2026-05-31
 
 - `src/js/affinity.js`: turns a Google Takeout watch-history digest
