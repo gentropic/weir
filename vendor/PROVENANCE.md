@@ -2,7 +2,10 @@
 
 Everything here is vendored **as source** from the sibling repo
 [`@gcu/auditable`](https://github.com/endarthur/auditable) — fully ours, no npm
-install. Re-vendor by copying from `../auditable` and updating the rows below.
+install. Re-vendor by running **`node tools/sync-vendor.mjs`** (auto-locates
+`../auditable`) and updating the rows below. Per the librarian vendoring contract
+(`auditable/ext/librarian/SPEC.md` § Vendoring): **never hand-edit a vendored
+file** — fix upstream in canon, then re-sync.
 
 Source snapshot: `auditable@bba50e15`, vendored 2026-05-30.
 
@@ -31,5 +34,13 @@ milestone arrives:
 
 - `ext/menu` + `ext/dialog` — context menus, modals (add-feed / OPML / confirm). v0.1 UI.
 - `ext/sideact` — signals + `h` templates for the reactive two-pane UI. v0.1 UI (optional).
-- `ext/librarian` — BM25 inverted-index search. v0.2 (stronger than the planned MiniSearch).
+- `ext/librarian` — BM25 inverted-index search. v0.2. **Sync pipe is set up**
+  (`tools/sync-vendor.mjs`, verified end-to-end against current librarian) but the
+  `FILES` row is commented out and it is **not yet wired into the build** — we're
+  waiting on **librarian v2** (lean CSR engine; see
+  `auditable/spec_inbox/librarian-search-spec.md` + `…/ext/librarian/SPEC.md`
+  § v2-direction, and the weir requirements at
+  `auditable/spec_inbox/weir-search-requirements.md`). When v2 ships: uncomment the
+  `FILES` row, `node tools/sync-vendor.mjs`, add `vendor/librarian.js` to
+  `src/js/main.js`, and add a row above.
 - `ext/reader-core` — architecture reference for the render/state pipeline; adapt, don't copy wholesale.

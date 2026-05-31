@@ -739,6 +739,45 @@ export class App {
 
   closeReorder() { document.getElementById('reorder-overlay').hidden = true; this._reorder = null; }
 
+  // Dev/handoff: dump the search corpus (one doc per stored item, librarian's
+  // field shape: title + author + body) and download it as JSON. Used to hand
+  // a real-world corpus to @gcu/librarian v2 development. Run from the console:
+  //   await __weir.exportCorpus()           // includes full bodies
+  //   await __weir.exportCorpus({ bodies:false })
+  async exportCorpus({ bodies = true, download = true } = {}) {
+    const strip = (html) => String(html || '')
+      .replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;|&#\d+;/gi, ' ').replace(/\s+/g, ' ').trim();
+    const docs = [];
+    const types = {};
+    let withBody = 0, bodyChars = 0;
+    for (const it of this.store.items.values()) {
+      let body = it.excerpt || '';
+      if (bodies && it.has_content) {
+        try { const html = await this.store.getContent(it.id); if (html) { body = strip(html); withBody++; } } catch { /* skip */ }
+      }
+      bodyChars += body.length;
+      types[it.type] = (types[it.type] || 0) + 1;
+      docs.push({ id: it.id, type: it.type, title: it.title || '', author: it.author || '', body });
+    }
+    const corpus = {
+      meta: {
+        generator: 'weir.exportCorpus', generated: new Date().toISOString(),
+        fields: { title: { boost: 4 }, author: { boost: 2 }, body: { boost: 1 } },
+        count: docs.length, withFullBody: withBody, avgBodyChars: docs.length ? Math.round(bodyChars / docs.length) : 0, types,
+      },
+      docs,
+    };
+    if (download && typeof document !== 'undefined') {
+      const blob = new Blob([JSON.stringify(corpus)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `weir-search-corpus-${docs.length}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+    return corpus.meta;
+  }
+
   viewMenu(view, x, y) {
     showMenu(x, y, [{ label: 'Mark all read', onClick: () => this.store.markAllRead({ view }) }]);
   }

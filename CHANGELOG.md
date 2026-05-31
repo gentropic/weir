@@ -6,6 +6,22 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Search v2 groundwork — corpus export + vendor pipe — 2026-06-01
+
+- **`__weir.exportCorpus()`** (dev/handoff): dumps one doc per stored item in
+  librarian's field shape (`{ id, type, title, author, body }`; body = excerpt or
+  the stripped full-article text) and downloads it as JSON. Used to hand a
+  real-world corpus to `@gcu/librarian` v2 development. No UI surface — console
+  only (`await __weir.exportCorpus()`).
+- **`tools/sync-vendor.mjs`** — sync-vendoring pipe from canonical `../auditable`
+  (mirrors `gcu-library`'s pattern), per the librarian vendoring contract (never
+  hand-edit vendored copies; upstream-first). Verified end-to-end against current
+  librarian; the `FILES` row stays commented until **librarian v2** ships, and
+  it's not wired into the build yet. See `vendor/PROVENANCE.md`.
+- Requirements for the engine handed to the auditable side as
+  `auditable/spec_inbox/weir-search-requirements.md` (config flags, incremental +
+  pack/unpack + scan API shapes, query patterns, targets, the corpus, acceptance).
+
 ### Conditional GETs — skip re-parsing unchanged feeds — 2026-06-01
 
 - The poller now does **conditional GETs**: it stores each feed's `etag` /
