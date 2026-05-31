@@ -37,6 +37,11 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
   affinity/name fallback). Drag-to-reorder still deferred.
 - **Manual prune control.** Retention is archive-only and off by default; add a
   "prune/archive expired now" action for when you do want a sweep.
+- ~~**Gallery view.**~~ ✅ Shipped 2026-05-31 — list ↔ gallery topbar toggle
+  (`stream_layout`); thumbnail grid using item `media.thumbnail` (videos) with a
+  colored type-tile fallback; tiles are `.item` so click/select/expand are shared.
+  Follow-up: fetch `og:image` (or first content image) for thumbnail-less
+  articles so the grid is image-rich for text feeds too.
 
 ## Medium
 

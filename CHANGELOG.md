@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Gallery view — 2026-05-31
+
+- A **list ↔ gallery** layout toggle in the topbar (`▦`). Gallery renders the
+  stream as a responsive thumbnail grid: video items use their existing
+  thumbnails (with play overlay + duration); items without an image get a
+  colored type-tile (the monogram trick). Clicking a tile expands it full-width
+  into the same inline reader; per-item hover actions and keyboard nav are
+  unchanged (tiles are still `.item`, so the click/select/reflect plumbing is
+  shared). Persisted as `stream_layout`. og:image fetching for thumbnail-less
+  articles is deferred.
+
 ### Reorder feeds within a folder — 2026-05-31
 
 - Folder context menu → **Reorder feeds…** opens a move-up/down list. Saving

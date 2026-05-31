@@ -33,6 +33,7 @@ export const DEFAULT_SETTINGS = {
   fetch_full_content_default: false,
   rail_width: 240,                       // source rail width in px (drag to resize)
   density: 'comfortable',                // row density: 'comfortable' | 'compact'
+  stream_layout: 'list',                 // stream layout: 'list' | 'gallery' (thumbnail grid)
   feed_stale_days: 120,                  // a feed quiet longer than this reads as "stale" in health
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never

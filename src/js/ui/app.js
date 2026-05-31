@@ -34,6 +34,7 @@ export class App {
     this.route = null;          // active routed view (#name), or null
     this.catFilter = null;      // active folder/category view, or null
     this.smartView = null;      // active saved view (smart folder), or null
+    this.layout = 'list';       // stream layout: 'list' | 'gallery'
     this.collapsedCats = new Set();
     this._loadingFull = new Set();   // items with a full-content fetch in flight
     this._fullTried = new Set();     // items whose auto full-fetch already failed (don't retry on every open)
@@ -134,6 +135,9 @@ export class App {
 
     this._initRailResize();
     this._setDensity(this.store.getSettings().density);
+    this.layout = this.store.getSettings().stream_layout === 'gallery' ? 'gallery' : 'list';
+    { const b = document.getElementById('btn-layout'); if (b) { b.textContent = this.layout === 'gallery' ? '☰' : '▦'; b.title = this.layout === 'gallery' ? 'List view' : 'Gallery view'; } }
+    document.getElementById('btn-layout')?.addEventListener('click', () => this.setLayout(this.layout === 'gallery' ? 'list' : 'gallery'));
     document.addEventListener('keydown', (e) => this.onKey(e));
     setInterval(() => this.renderPollStatus(), 30_000);
 
@@ -163,7 +167,7 @@ export class App {
   _refreshRow(id) {
     const row = this.rowEl(id); const it = this.store.getItem(id);
     if (!row || !it) return;
-    const wrap = document.createElement('div'); wrap.innerHTML = this.rowHtml(it);
+    const wrap = document.createElement('div'); wrap.innerHTML = this.itemHtml(it);
     const fresh = wrap.firstElementChild; if (fresh) row.replaceWith(fresh);
   }
 
@@ -301,9 +305,10 @@ export class App {
     if (this.selectedId && !this.items.some((x) => x.id === this.selectedId)) this.selectedId = null;
     if (!this.selectedId && this.items.length) this.selectedId = this.items[0].id;
 
+    this.stream.classList.toggle('gallery', this.layout === 'gallery');
     if (!this.items.length) { this.stream.innerHTML = this.emptyHtml(); return; }
     const shown = this.items.slice(0, RENDER_CAP);
-    let html = shown.map((it) => this.rowHtml(it)).join('');
+    let html = shown.map((it) => this.itemHtml(it)).join('');
     if (this.items.length > RENDER_CAP) html += `<div class="more">+ ${this.items.length - RENDER_CAP} more not shown</div>`;
     this.stream.innerHTML = html;
     this.stream.scrollTop = scrollTop;
@@ -326,6 +331,44 @@ export class App {
         <button class="btn" data-sample="https://www.theverge.com/rss/index.xml">The Verge</button>
       </div>
     </section>`;
+  }
+
+  itemHtml(it) { return this.layout === 'gallery' ? this.tileHtml(it) : this.rowHtml(it); }
+
+  setLayout(mode) {
+    this.layout = mode === 'gallery' ? 'gallery' : 'list';
+    this.store.setSettings({ stream_layout: this.layout });
+    const b = document.getElementById('btn-layout');
+    if (b) { b.textContent = this.layout === 'gallery' ? '☰' : '▦'; b.title = this.layout === 'gallery' ? 'List view' : 'Gallery view'; }
+    this.renderStream();
+  }
+
+  // Gallery tile — kept as `.item` (plus `.tile`) so the click/select/reflect
+  // plumbing is shared with rows. Thumbnail where the item carries one (videos
+  // always do); otherwise a colored type-tile. Expanding spans the full row.
+  tileHtml(it) {
+    const feed = this.store.getFeed(it.feed_id);
+    const expanded = it.id === this.expandedId;
+    const cls = `item tile${it.id === this.selectedId ? ' sel' : ''}${it.read ? ' read' : ''}${expanded ? ' expanded' : ''}`;
+    const thumb = it.media && it.media.thumbnail;
+    const dur = it.media?.duration_seconds ? `<span class="dur">${fmtDuration(it.media.duration_seconds)}</span>` : '';
+    const cover = thumb
+      ? `<img class="tcover" loading="lazy" src="${escapeHtml(thumb)}" alt="">`
+      : `<span class="tcover ph" style="--mh:${monogram(feed || { name: it.title }).hue}">${escapeHtml((it.type || '?')[0].toUpperCase())}</span>`;
+    const play = it.type === 'video' ? '<span class="playover">▶</span>' : '';
+    const flag = it.saved ? '<span class="tflag">★</span>' : '';
+    const actions = `<div class="iactions">`
+      + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
+      + `<button data-act="read" title="Mark ${it.read ? 'unread' : 'read'} (r)">${it.read ? '○' : '●'}</button>`
+      + `<button data-act="archive" title="Archive (e)">⌫</button>`
+      + (it.url ? `<button data-act="open" title="Open original (o)">↗</button>` : '')
+      + `</div>`;
+    return `<article class="${cls}" data-id="${escapeHtml(it.id)}">`
+      + `<div class="tthumb">${cover}${play}${dur}${flag}${actions}</div>`
+      + `<div class="tinfo"><span class="pill ${escapeHtml(it.type)}">${escapeHtml(it.type)}</span>`
+      + `<div class="ttitle">${escapeHtml(it.title)}</div>`
+      + `<div class="tsub">${feed ? escapeHtml(feed.name) : ''}<span class="dot-sep">·</span>${relativeTime(it.published_at)}</div></div>`
+      + `<div class="iexpand">${expanded ? this.expandedHtml(it) : ''}</div></article>`;
   }
 
   rowHtml(it) {

@@ -310,6 +310,28 @@ body {
 [data-density="compact"] .ivideo { gap: 10px; }
 [data-density="compact"] .thumb { width: 88px; height: 50px; }
 
+/* ── Gallery layout (thumbnail grid; toggle in topbar) ── */
+.stream.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(208px, 1fr)); gap: 16px; padding: 18px 22px 48px; align-content: start; }
+.stream.gallery .item { display: flex; flex-direction: column; gap: 8px; padding: 0; border-bottom: none; }
+.stream.gallery .item:hover, .stream.gallery .item.sel { background: none; }
+.stream.gallery .item.sel::before { display: none; }
+.tthumb { position: relative; aspect-ratio: 16 / 9; border-radius: var(--au-radius); overflow: hidden; background: linear-gradient(135deg, var(--sw-bg-bright), var(--sw-bg-raised)); border: 1px solid var(--au-border); }
+.stream.gallery .item.sel .tthumb { border-color: var(--au-action); box-shadow: 0 0 0 1px var(--au-action); }
+.tcover { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tcover.ph { display: flex; align-items: center; justify-content: center; font-family: var(--au-font-mono); font-weight: 700; font-size: 30px; color: #fff; background: hsl(var(--mh, 210), 42%, 40%); }
+.tthumb .playover { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 26px; color: #fff; text-shadow: 0 1px 6px rgba(0,0,0,0.6); opacity: 0.92; pointer-events: none; }
+.tthumb .dur { position: absolute; bottom: 5px; right: 5px; background: rgba(0,0,0,0.78); color: #fff; font-family: var(--au-font-mono); font-size: 10px; padding: 1px 4px; border-radius: 3px; }
+.tthumb .tflag { position: absolute; top: 5px; left: 6px; color: var(--au-action); font-size: 13px; text-shadow: 0 1px 3px rgba(0,0,0,0.7); }
+.stream.gallery .tthumb .iactions { position: absolute; top: 5px; right: 5px; background: none; padding: 0; }
+.tinfo { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tinfo .pill { align-self: flex-start; }
+.ttitle { font-size: 13px; font-weight: 600; line-height: 1.3; color: var(--au-fg); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.item.read .ttitle { color: var(--au-fg-muted); font-weight: 400; }
+.tsub { font-family: var(--au-font-mono); font-size: 10.5px; color: var(--au-fg-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stream.gallery .item.expanded { grid-column: 1 / -1; display: grid; grid-template-columns: 240px 1fr; gap: 12px 16px; align-items: start; background: var(--sw-bg-raised); padding: 14px; border-radius: var(--au-radius-lg); cursor: default; }
+.stream.gallery .item.expanded .iexpand { grid-column: 1 / -1; }
+.stream.gallery .iexpand:empty { display: none; }
+
 /* ── Expanded reading view ── */
 .item.expanded { background: var(--sw-bg-raised); cursor: default; }
 .iexpand:empty { display: none; }
@@ -457,6 +479,7 @@ body {
         <form id="addfeed" autocomplete="off">
           <input id="addfeed-input" class="field" type="text" placeholder="add feed URL…" autocomplete="off" spellcheck="false">
         </form>
+        <button id="btn-layout" class="btn-link" type="button" title="Gallery view">▦</button>
         <button id="btn-recover" class="btn-link" type="button" hidden title="Recover this feed's lost history from the Internet Archive">⏪ recover</button>
         <button id="btn-import" class="btn-link" type="button" title="Import OPML">import</button>
         <button id="btn-export" class="btn-link" type="button" title="Export OPML">export</button>
@@ -3949,6 +3972,7 @@ const DEFAULT_SETTINGS = {
   fetch_full_content_default: false,
   rail_width: 240,                       // source rail width in px (drag to resize)
   density: 'comfortable',                // row density: 'comfortable' | 'compact'
+  stream_layout: 'list',                 // stream layout: 'list' | 'gallery' (thumbnail grid)
   feed_stale_days: 120,                  // a feed quiet longer than this reads as "stale" in health
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
@@ -6095,6 +6119,7 @@ class App {
     this.route = null;          // active routed view (#name), or null
     this.catFilter = null;      // active folder/category view, or null
     this.smartView = null;      // active saved view (smart folder), or null
+    this.layout = 'list';       // stream layout: 'list' | 'gallery'
     this.collapsedCats = new Set();
     this._loadingFull = new Set();   // items with a full-content fetch in flight
     this._fullTried = new Set();     // items whose auto full-fetch already failed (don't retry on every open)
@@ -6195,6 +6220,9 @@ class App {
 
     this._initRailResize();
     this._setDensity(this.store.getSettings().density);
+    this.layout = this.store.getSettings().stream_layout === 'gallery' ? 'gallery' : 'list';
+    { const b = document.getElementById('btn-layout'); if (b) { b.textContent = this.layout === 'gallery' ? '☰' : '▦'; b.title = this.layout === 'gallery' ? 'List view' : 'Gallery view'; } }
+    document.getElementById('btn-layout')?.addEventListener('click', () => this.setLayout(this.layout === 'gallery' ? 'list' : 'gallery'));
     document.addEventListener('keydown', (e) => this.onKey(e));
     setInterval(() => this.renderPollStatus(), 30_000);
 
@@ -6224,7 +6252,7 @@ class App {
   _refreshRow(id) {
     const row = this.rowEl(id); const it = this.store.getItem(id);
     if (!row || !it) return;
-    const wrap = document.createElement('div'); wrap.innerHTML = this.rowHtml(it);
+    const wrap = document.createElement('div'); wrap.innerHTML = this.itemHtml(it);
     const fresh = wrap.firstElementChild; if (fresh) row.replaceWith(fresh);
   }
 
@@ -6362,9 +6390,10 @@ class App {
     if (this.selectedId && !this.items.some((x) => x.id === this.selectedId)) this.selectedId = null;
     if (!this.selectedId && this.items.length) this.selectedId = this.items[0].id;
 
+    this.stream.classList.toggle('gallery', this.layout === 'gallery');
     if (!this.items.length) { this.stream.innerHTML = this.emptyHtml(); return; }
     const shown = this.items.slice(0, RENDER_CAP);
-    let html = shown.map((it) => this.rowHtml(it)).join('');
+    let html = shown.map((it) => this.itemHtml(it)).join('');
     if (this.items.length > RENDER_CAP) html += `<div class="more">+ ${this.items.length - RENDER_CAP} more not shown</div>`;
     this.stream.innerHTML = html;
     this.stream.scrollTop = scrollTop;
@@ -6387,6 +6416,44 @@ class App {
         <button class="btn" data-sample="https://www.theverge.com/rss/index.xml">The Verge</button>
       </div>
     </section>`;
+  }
+
+  itemHtml(it) { return this.layout === 'gallery' ? this.tileHtml(it) : this.rowHtml(it); }
+
+  setLayout(mode) {
+    this.layout = mode === 'gallery' ? 'gallery' : 'list';
+    this.store.setSettings({ stream_layout: this.layout });
+    const b = document.getElementById('btn-layout');
+    if (b) { b.textContent = this.layout === 'gallery' ? '☰' : '▦'; b.title = this.layout === 'gallery' ? 'List view' : 'Gallery view'; }
+    this.renderStream();
+  }
+
+  // Gallery tile — kept as `.item` (plus `.tile`) so the click/select/reflect
+  // plumbing is shared with rows. Thumbnail where the item carries one (videos
+  // always do); otherwise a colored type-tile. Expanding spans the full row.
+  tileHtml(it) {
+    const feed = this.store.getFeed(it.feed_id);
+    const expanded = it.id === this.expandedId;
+    const cls = `item tile${it.id === this.selectedId ? ' sel' : ''}${it.read ? ' read' : ''}${expanded ? ' expanded' : ''}`;
+    const thumb = it.media && it.media.thumbnail;
+    const dur = it.media?.duration_seconds ? `<span class="dur">${fmtDuration(it.media.duration_seconds)}</span>` : '';
+    const cover = thumb
+      ? `<img class="tcover" loading="lazy" src="${escapeHtml(thumb)}" alt="">`
+      : `<span class="tcover ph" style="--mh:${monogram(feed || { name: it.title }).hue}">${escapeHtml((it.type || '?')[0].toUpperCase())}</span>`;
+    const play = it.type === 'video' ? '<span class="playover">▶</span>' : '';
+    const flag = it.saved ? '<span class="tflag">★</span>' : '';
+    const actions = `<div class="iactions">`
+      + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
+      + `<button data-act="read" title="Mark ${it.read ? 'unread' : 'read'} (r)">${it.read ? '○' : '●'}</button>`
+      + `<button data-act="archive" title="Archive (e)">⌫</button>`
+      + (it.url ? `<button data-act="open" title="Open original (o)">↗</button>` : '')
+      + `</div>`;
+    return `<article class="${cls}" data-id="${escapeHtml(it.id)}">`
+      + `<div class="tthumb">${cover}${play}${dur}${flag}${actions}</div>`
+      + `<div class="tinfo"><span class="pill ${escapeHtml(it.type)}">${escapeHtml(it.type)}</span>`
+      + `<div class="ttitle">${escapeHtml(it.title)}</div>`
+      + `<div class="tsub">${feed ? escapeHtml(feed.name) : ''}<span class="dot-sep">·</span>${relativeTime(it.published_at)}</div></div>`
+      + `<div class="iexpand">${expanded ? this.expandedHtml(it) : ''}</div></article>`;
   }
 
   rowHtml(it) {
