@@ -9,8 +9,10 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 ### Glass: catalog Stage 1 foundation — the cataloger service — 2026-06-01
 
 - **LLM provider client** (`llm.js`, adopted from patchbay): OpenAI chat-shape for
-  Ollama (local/free) / NanoGPT / Groq / custom, one `chat()`; `fetch` injected so
-  calls go through the bridge (dodging CORS). `fetchUsageGauge()` reads NanoGPT's
+  **Lemonade (Ryzen AI — NPU+iGPU)** / Ollama / NanoGPT / Groq / custom, one
+  `chat()`; `fetch` injected so calls go through the bridge (dodging CORS).
+  JSON-mode is gated per provider (`jsonMode`) so local servers that don't support
+  `response_format` don't error — the parser extracts JSON from prose regardless. `fetchUsageGauge()` reads NanoGPT's
   weekly-input-token allowance, **parsed defensively** (the docs disagree on shape).
 - **Key vault** (`llmkeys.js`): API keys in OPFS, **deliberately separate** from
   the VFS store — never in `exportAll` backups or the FSA-mounted folder.

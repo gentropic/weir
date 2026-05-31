@@ -5,10 +5,11 @@
 // http://localhost is already allowlisted, so local Ollama works out of the box).
 
 export const PROVIDERS = {
-  ollama: { name: 'Ollama', base: 'http://localhost:11434', path: '/v1/chat/completions', needsKey: false, local: true, defaultModel: 'llama3.1' },
-  nanogpt: { name: 'NanoGPT', base: 'https://nano-gpt.com', path: '/api/v1/chat/completions', usagePath: '/api/subscription/v1/usage', needsKey: true, defaultModel: 'kimi-k2.6' },
-  groq: { name: 'Groq', base: 'https://api.groq.com/openai', path: '/v1/chat/completions', needsKey: true, defaultModel: 'llama-3.3-70b-versatile' },
-  custom: { name: 'Custom', base: '', path: '', needsKey: false, defaultModel: '' },
+  ollama: { name: 'Ollama', base: 'http://localhost:11434', path: '/v1/chat/completions', needsKey: false, local: true, jsonMode: true, defaultModel: 'qwen2.5:7b' },
+  lemonade: { name: 'Lemonade (Ryzen AI)', base: 'http://localhost:13305', path: '/api/v1/chat/completions', needsKey: false, local: true, jsonMode: false, defaultModel: 'Llama-3.2-3B-Instruct-Hybrid' },
+  nanogpt: { name: 'NanoGPT', base: 'https://nano-gpt.com', path: '/api/v1/chat/completions', usagePath: '/api/subscription/v1/usage', needsKey: true, jsonMode: true, defaultModel: 'kimi-k2.6' },
+  groq: { name: 'Groq', base: 'https://api.groq.com/openai', path: '/v1/chat/completions', needsKey: true, jsonMode: true, defaultModel: 'llama-3.3-70b-versatile' },
+  custom: { name: 'Custom', base: '', path: '', needsKey: false, jsonMode: false, defaultModel: '' },
 };
 
 // nano-gpt bills INPUT tokens, ×2 for these models — used by the usage ledger.
@@ -18,7 +19,7 @@ export function inputMultiplier(provider, model) {
 
 function endpoint(provider, baseUrl) {
   const P = PROVIDERS[provider] || PROVIDERS.custom;
-  if (provider === 'custom' || provider === 'ollama') return (baseUrl || P.base).replace(/\/$/, '') + (P.path || '/v1/chat/completions');
+  if (P.local || provider === 'custom') return (baseUrl || P.base).replace(/\/$/, '') + (P.path || '/v1/chat/completions');
   return P.base + P.path;
 }
 
@@ -32,7 +33,7 @@ export async function chat(opts = {}) {
   if (key) headers.Authorization = `Bearer ${key}`;
   const body = { model: model || P.defaultModel, messages, temperature };
   if (maxTokens) body.max_tokens = maxTokens;
-  if (json) body.response_format = { type: 'json_object' };
+  if (json && P.jsonMode) body.response_format = { type: 'json_object' };   // only where supported; parser extracts JSON from prose otherwise
   const t0 = Date.now();
   const res = await f(endpoint(provider, baseUrl), { method: 'POST', headers, body: JSON.stringify(body) , signal });
   if (!res.ok) { const t = await res.text().catch(() => ''); throw new Error(`${P.name} ${res.status}: ${String(t).slice(0, 200)}`); }
