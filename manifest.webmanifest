@@ -1,0 +1,16 @@
+{
+  "name": "@gcu/weir — feed reader",
+  "short_name": "weir",
+  "description": "A unified, local-first reader for timestamped streams.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#15171A",
+  "theme_color": "#D4672E",
+  "categories": ["productivity", "news", "utilities"],
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "./icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

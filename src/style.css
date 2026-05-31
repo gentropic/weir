@@ -151,6 +151,10 @@ body {
 .rules-text { flex: 1; resize: none; border: none; outline: none; background: var(--sw-bg-deep); color: var(--au-fg); font-family: var(--au-font-mono); font-size: 12.5px; line-height: 1.55; padding: 14px 16px; tab-size: 2; }
 .panel-foot { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--au-border); }
 
+/* ── Update toast (PWA) ── */
+.toast { position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%) translateY(140%); display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg); box-shadow: 0 8px 32px rgba(0,0,0,0.5); font-size: 13px; color: var(--au-fg); z-index: 200; opacity: 0; transition: transform 0.2s, opacity 0.2s; pointer-events: none; }
+.toast.on { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
+
 /* ── Status bar ── */
 .statusbar { position: absolute; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 7px 22px; font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); background: var(--sw-bg); border-top: 1px solid var(--au-border); }
 .statusbar .left, .statusbar .right { display: flex; gap: 16px; align-items: center; }

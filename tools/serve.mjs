@@ -18,6 +18,7 @@ const TYPES = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.woff2': 'font/woff2',
   '.svg': 'image/svg+xml',
   '.map': 'application/json',

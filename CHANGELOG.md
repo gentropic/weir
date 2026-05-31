@@ -6,6 +6,24 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### PWA — install, offline, durable storage — 2026-05-31
+
+Adapted from `@gcu/ep`'s service-worker pattern. Being a controlled PWA is what
+makes the browser readily grant persistent storage — so nothing is lost.
+
+- `sw.js` (root): cache-first + stale-while-revalidate over the `weir.html` shell
+  — instant load, full offline, and byte-comparison update detection that posts
+  `weir:update-available` to the page. `manifest.webmanifest` + `icon.svg` /
+  `icon-maskable.svg` (the weir glyph) make it installable.
+- `src/js/pwa.js`: registers the SW (no-op on file://) and shows a "Reload to
+  update" toast when a new build is detected. boot calls `initPwa()`; the build's
+  `<head>` links the manifest + theme-color + icon; `serve.mjs` serves the
+  manifest type.
+- The single-file `weir.html` still works standalone (file://); served alongside
+  these assets it becomes an installable, offline, persistent PWA.
+- Verified in headless Chromium (SW registers + activates, manifest loads, no
+  errors).
+
 ### retainer (archive, never delete) — 2026-05-31
 
 - `store.runRetention()` + `src/js/retainer.js`: the retention sweep ARCHIVES

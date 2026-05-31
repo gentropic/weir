@@ -7,6 +7,7 @@ import { Router } from './router.js';
 import { RecoveryDrip } from './recovery.js';
 import { Retainer } from './retainer.js';
 import { App } from './ui/app.js';
+import { initPwa } from './pwa.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
 import { fmtBytes } from './ui/format.js';
@@ -29,6 +30,7 @@ async function probeBridge() {
 async function boot() {
   setText('weir-version', `weir ${VERSION}`);
   document.title = `@gcu/weir`;
+  initPwa();
   probeBridge();
 
   let store;

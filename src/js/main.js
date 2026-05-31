@@ -20,6 +20,7 @@ import './router.js';                    // → Router, compileRules, DEFAULT_RO
 import './wayback.js';                    // → cdxSnapshots, recoverFeed (uses parseFeed at call time)
 import './recovery.js';                   // → RecoveryDrip (uses cdxSnapshots)
 import './retainer.js';                   // → Retainer (archive-on-expiry; never deletes)
+import './pwa.js';                        // → initPwa (service worker + update toast)
 import './ui/format.js';                 // → relativeTime, sparkPoints, … (before app)
 import './poller.js';                    // → Poller
 import './ui/app.js';                    // → App (uses format)

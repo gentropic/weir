@@ -70,6 +70,13 @@
   </main>
 </div>
 
+<!-- Update toast (PWA) — shown when the service worker sees a new build -->
+<div class="toast" id="update-toast">
+  <span>A new version of weir is ready.</span>
+  <button class="btn" id="update-reload">Reload</button>
+  <button class="btn-link" id="update-dismiss">later</button>
+</div>
+
 <!-- Routing rules editor (SPEC §6) -->
 <div class="overlay" id="rules-overlay" hidden>
   <div class="panel">

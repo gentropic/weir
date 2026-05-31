@@ -140,6 +140,9 @@ ${licensesComment()}<html lang="en" data-theme="dark">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>@gcu/weir</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#D4672E">
+<link rel="icon" type="image/svg+xml" href="./icon.svg">
 <style>
 ${css}
 </style>
