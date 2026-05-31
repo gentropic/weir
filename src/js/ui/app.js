@@ -3,7 +3,7 @@
 // re-render on store events (fine at v0.1 scale); selection/expansion are app
 // state, content is cached to avoid re-reading on every keystroke.
 
-import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, dailyCounts, sparkPoints } from './format.js';
+import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, fmtBytes, dailyCounts, sparkPoints } from './format.js';
 import { parseOpml, buildOpml } from '../opml.js';
 import { DEFAULT_ROUTING } from '../router.js';
 import { recoverFeed } from '../wayback.js';
@@ -74,6 +74,10 @@ export class App {
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
     document.getElementById('btn-recover')?.addEventListener('click', () => { if (this.feedFilter) this.recoverHistory(this.feedFilter); });
     document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
+    document.getElementById('open-settings')?.addEventListener('click', () => this.openSettings());
+    document.getElementById('settings-save')?.addEventListener('click', () => this.saveSettings());
+    document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
+    document.getElementById('set-request-persist')?.addEventListener('click', () => this.requestPersist());
     document.getElementById('rules-save')?.addEventListener('click', () => this.saveRules());
     document.getElementById('rules-rerun')?.addEventListener('click', () => this.uiRerunRules());
     document.getElementById('rules-close')?.addEventListener('click', () => this.closeRules());
@@ -330,6 +334,7 @@ export class App {
       if (e.key === 'Escape') {
         if (e.target === this.searchEl) { e.target.value = ''; this.searchText = ''; this.renderStream(); }
         else if (e.target.id === 'rules-text') { this.closeRules(); }
+        else if (e.target.closest('#settings-overlay')) { this.closeSettings(); }
         e.target.blur();
       }
       return;
@@ -455,6 +460,66 @@ export class App {
     } finally {
       if (btn) btn.disabled = false;
     }
+  }
+
+  // ── settings ──
+  async openSettings() {
+    const s = this.store.getSettings();
+    const val = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+    val('set-poll-interval', s.default_poll_interval_minutes);
+    val('set-poll-concurrency', s.poll_concurrency);
+    chk('set-pause-hidden', s.pause_polling_when_hidden);
+    chk('set-images', s.images_default_allowed);
+    chk('set-fullcontent', s.fetch_full_content_default);
+    chk('set-retention', s.retention_enabled);
+    val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
+    val('set-wb-interval', Math.round(s.wayback_min_interval_ms / 1000));
+    val('set-wb-max', s.wayback_max_snapshots);
+    val('set-ia-access', s.ia_access_key || '');
+    val('set-ia-secret', s.ia_secret_key || '');
+    document.getElementById('settings-msg').textContent = '';
+    this._refreshStorageInfo();
+    document.getElementById('settings-overlay').hidden = false;
+  }
+
+  async _refreshStorageInfo() {
+    try { const p = navigator.storage?.persisted ? await navigator.storage.persisted() : false; const el = document.getElementById('set-persist'); if (el) el.textContent = p ? 'persistent' : 'best-effort'; } catch { /* unsupported */ }
+    try { const est = await this.store.estimate(); if (est) { const el = document.getElementById('set-usage'); if (el) el.textContent = `${fmtBytes(est.usage)} / ${fmtBytes(est.quota)}`; } } catch { /* unsupported */ }
+  }
+
+  closeSettings() { document.getElementById('settings-overlay').hidden = true; }
+
+  async saveSettings() {
+    const cur = this.store.getSettings();
+    const num = (id, def) => { const v = parseFloat(document.getElementById(id).value); return Number.isFinite(v) ? v : def; };
+    const chk = (id) => document.getElementById(id).checked;
+    const patch = {
+      default_poll_interval_minutes: Math.max(1, num('set-poll-interval', cur.default_poll_interval_minutes)),
+      poll_concurrency: Math.max(1, Math.min(32, num('set-poll-concurrency', cur.poll_concurrency))),
+      pause_polling_when_hidden: chk('set-pause-hidden'),
+      images_default_allowed: chk('set-images'),
+      fetch_full_content_default: chk('set-fullcontent'),
+      retention_enabled: chk('set-retention'),
+      recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
+      wayback_min_interval_ms: Math.max(1000, num('set-wb-interval', 5) * 1000),
+      wayback_max_snapshots: Math.max(1, Math.round(num('set-wb-max', 40))),
+      ia_access_key: document.getElementById('set-ia-access').value.trim(),
+      ia_secret_key: document.getElementById('set-ia-secret').value.trim(),
+    };
+    await this.store.setSettings(patch);
+    if (patch.retention_enabled) this.store.runRetention();   // apply immediately if just enabled
+    document.getElementById('settings-msg').textContent = 'saved ✓';
+    setTimeout(() => this.closeSettings(), 700);
+  }
+
+  async requestPersist() {
+    try {
+      const ok = navigator.storage?.persist ? await navigator.storage.persist() : false;
+      const label = ok ? 'persistent' : 'best-effort';
+      const a = document.getElementById('set-persist'); if (a) a.textContent = label;
+      const b = document.getElementById('persist-status'); if (b) b.textContent = label;
+    } catch { /* unsupported */ }
   }
 
   // ── routing rules editor ──

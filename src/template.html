@@ -27,7 +27,8 @@
     </div>
 
     <div class="rail-section">
-      <div class="navrow" id="open-rules"><span class="lbl"><span class="ico">⚙</span> routing.js</span><span class="ico arrow">→</span></div>
+      <div class="navrow" id="open-rules"><span class="lbl"><span class="ico">λ</span> routing.js</span><span class="ico arrow">→</span></div>
+      <div class="navrow" id="open-settings"><span class="lbl"><span class="ico">⚙</span> settings</span><span class="ico arrow">→</span></div>
     </div>
   </aside>
 
@@ -75,6 +76,49 @@
   <span>A new version of weir is ready.</span>
   <button class="btn" id="update-reload">Reload</button>
   <button class="btn-link" id="update-dismiss">later</button>
+</div>
+
+<!-- Settings -->
+<div class="overlay" id="settings-overlay" hidden>
+  <div class="panel">
+    <div class="panel-head"><span>settings</span><span class="rules-error" id="settings-msg"></span></div>
+    <div class="settings-body">
+      <section class="set-group">
+        <h4>Polling</h4>
+        <label class="set-row">default poll interval (min)<input type="number" id="set-poll-interval" min="1" step="1"></label>
+        <label class="set-row">max concurrent fetches<input type="number" id="set-poll-concurrency" min="1" max="32" step="1"></label>
+        <label class="set-row check"><input type="checkbox" id="set-pause-hidden"> pause polling when the tab is hidden</label>
+      </section>
+      <section class="set-group">
+        <h4>Reading</h4>
+        <label class="set-row check"><input type="checkbox" id="set-images"> load images by default on new feeds</label>
+        <label class="set-row check"><input type="checkbox" id="set-fullcontent"> fetch full content by default</label>
+      </section>
+      <section class="set-group">
+        <h4>Retention</h4>
+        <label class="set-row check"><input type="checkbox" id="set-retention"> enable retention</label>
+        <div class="hint">Archives expired items into the Archived view — never deletes anything.</div>
+      </section>
+      <section class="set-group">
+        <h4>Archive recovery (Internet Archive)</h4>
+        <label class="set-row">drip interval (min)<input type="number" id="set-drip-interval" min="1" step="1"></label>
+        <label class="set-row">min request spacing (s)<input type="number" id="set-wb-interval" min="1" step="1"></label>
+        <label class="set-row">max snapshots per feed<input type="number" id="set-wb-max" min="1" step="1"></label>
+        <label class="set-row">IA access key<input type="text" id="set-ia-access" autocomplete="off" spellcheck="false" placeholder="optional"></label>
+        <label class="set-row">IA secret key<input type="password" id="set-ia-secret" autocomplete="off" placeholder="optional"></label>
+        <div class="hint">Keys are not needed for recovery — only for future Save-Page-Now.</div>
+      </section>
+      <section class="set-group">
+        <h4>Storage</h4>
+        <div class="set-row"><span>persistence: <b id="set-persist">—</b></span><button class="btn-link" id="set-request-persist" type="button">request persistence</button></div>
+        <div class="set-row"><span>usage</span><span id="set-usage">—</span></div>
+      </section>
+    </div>
+    <div class="panel-foot">
+      <button class="btn" id="settings-save">Save</button>
+      <button class="btn" id="settings-close">Close</button>
+    </div>
+  </div>
 </div>
 
 <!-- Routing rules editor (SPEC §6) -->

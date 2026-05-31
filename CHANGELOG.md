@@ -6,6 +6,16 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### settings panel — 2026-05-31
+
+- A `settings ⚙` rail entry opens a panel surfacing what was console-only:
+  polling (interval, concurrency, pause-when-hidden), reading (images, full
+  content), **retention** (the archive-never-delete toggle, applied immediately
+  on enable), **archive recovery** (drip interval, IA request spacing, max
+  snapshots, optional IA keys), and **storage** (live persistence state + a
+  "request persistence" button + usage). Unit conversions (min↔ms, s↔ms) handled.
+- Verified in-browser (open → edit → save → persist → reopen reflects state).
+
 ### PWA — install, offline, durable storage — 2026-05-31
 
 Adapted from `@gcu/ep`'s service-worker pattern. Being a controlled PWA is what
