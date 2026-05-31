@@ -32,12 +32,27 @@ export function nextGlassId(cataloged, n) {
   return `glass-${String(cataloged).replace(/-/g, '')}-${String(n).padStart(3, '0')}`;
 }
 
+// Deterministic Stage-0 facets for an item (+ its feed) — a pure function of what
+// weir already knows. The language facets (domain/process/method/scale/spatial)
+// stay empty until the Stage-1 cataloger. Used by buildCard AND the live catalog
+// view (so the browser is instant + always current; Stage 1 will source enriched
+// facets from the persisted card index instead).
+export function facetsOf(item, feed) {
+  const year = yearOf(item.published_at);
+  const entity = Array.isArray(item.tags) ? [...new Set(item.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean))] : [];
+  return {
+    domain: [], entity, process: [], method: [], scale: [],
+    form: [TYPE_TO_FORM[item.type] || 'article'],
+    provenance: [provenanceFor(feed, item)],
+    spatial: [],
+    temporal: year ? [year] : [],
+  };
+}
+
 // Build the deterministic Stage-0 card for one item (+ its feed). No network.
 export function buildCard(item, feed, opts = {}) {
   const cataloged = opts.cataloged || new Date().toISOString().slice(0, 10);
   const glass_id = opts.glass_id || nextGlassId(cataloged, 1);
-  const year = yearOf(item.published_at);
-  const entity = Array.isArray(item.tags) ? [...new Set(item.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean))] : [];
 
   const dublin_core = {
     title: item.title || '(untitled)',
@@ -49,13 +64,7 @@ export function buildCard(item, feed, opts = {}) {
     description: item.excerpt || undefined,
   };
 
-  const facets = {
-    domain: [], entity, process: [], method: [], scale: [],
-    form: [TYPE_TO_FORM[item.type] || 'article'],
-    provenance: [provenanceFor(feed, item)],
-    spatial: [],
-    temporal: year ? [year] : [],
-  };
+  const facets = facetsOf(item, feed);
 
   return {
     dublin_core,

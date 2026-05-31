@@ -21,7 +21,14 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
   for the Stage-1 cataloger. `Store.buildCatalog()` emits `/catalog/<glass_id>.json`
   for every item and stamps each item's `glass_id` (idempotent; survives reload;
   if you're FSA-mounted, the cards are real files you can browse). Try it:
-  `await __weir.buildCatalog()`. Next: a faceted catalog view, then the cataloger.
+  `await __weir.buildCatalog()`.
+- **Stage 0 view — the faceted catalog browser.** A **Catalog** entry in the rail
+  swaps the Sources list for a **facet browser**: `form` / `provenance` /
+  `temporal` / `entity` with live term counts (the empty LLM facets stay hidden
+  until Stage 1). Click terms to filter the stream; intersect across facets
+  (`form:paper ∩ entity:kriging`) — real LIS facet-intersection, computed live
+  from items (`glass.js facetsOf`), instant, always current. This is also the
+  first taste of glass's query side (GLASS.md §8). Next: the Stage-1 cataloger.
 
 ### Durability: mount weir to a folder (File System Access) — 2026-06-01
 

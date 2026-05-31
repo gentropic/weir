@@ -52,6 +52,18 @@ body {
 #smart-views:not(:empty) { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--au-border); }
 .navrow.view .ico { color: var(--au-fg-soft); font-size: 11px; }
 
+/* ── Glass catalog: facet browser ── */
+.facet-group { margin-bottom: 10px; }
+.facet-head { display: flex; align-items: center; gap: 7px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 600; color: var(--au-fg-soft); padding: 2px 8px 4px; }
+.facet-head .ico { font-size: 11px; }
+.facet-term { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 8px 3px 22px; border-radius: var(--au-radius); cursor: pointer; }
+.facet-term:hover { background: var(--sw-bg-bright); }
+.facet-term.active { background: var(--sw-bg-bright); box-shadow: inset 2px 0 0 var(--au-action); }
+.facet-term .ft-name { font-size: 12.5px; color: var(--au-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facet-term.active .ft-name { color: var(--au-action); }
+.facet-term .ft-count { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); flex-shrink: 0; }
+.facet-more { padding: 2px 8px 2px 22px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
+
 /* folder headers in the source rail */
 .cat-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px 4px; margin-top: 6px; cursor: pointer; user-select: none; border-radius: var(--au-radius); }
 .cat-head:hover { background: var(--sw-bg-bright); }

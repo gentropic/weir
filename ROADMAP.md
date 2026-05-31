@@ -14,8 +14,9 @@ items below — **search v2** becomes facet-intersection + thesaurus (LIS-shaped
 **save-to-glass / SPEC §7** is retired into "weir *is* glass," and **webmcp** is
 the trigger/query layer on top.
 
-- ~~**Stage 0** — catalog format + deterministic cards from existing metadata.~~
-  ✅ Shipped 2026-06-01 (`glass.js`, `Store.buildCatalog`).
+- ~~**Stage 0** — catalog format + deterministic cards + faceted browser.~~
+  ✅ Shipped 2026-06-01 (`glass.js`, `Store.buildCatalog`, the rail **Catalog**
+  facet browser with live intersection).
 - **Stage 1 — the cataloger service.** Vendor patchbay's `providers.js` + `vault.js`
   (Ollama/nano-gpt/Groq, OpenAI-shaped; OPFS-encrypted keys). Bounded LLM call
   fills the language facets + proposes typed `related` edges; opt-in, on-keep +

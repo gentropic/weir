@@ -16,6 +16,7 @@ import { monogram } from '../favicon.js';
 import { assessFeed } from '../health.js';
 import { Store } from '../store/store.js';
 import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle } from '../fsmount.js';
+import { facetsOf, FACETS } from '../glass.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
@@ -36,6 +37,7 @@ export class App {
     this.route = null;          // active routed view (#name), or null
     this.catFilter = null;      // active folder/category view, or null
     this.smartView = null;      // active saved view (smart folder), or null
+    this.catalog = null;        // glass catalog mode: { filters: { facet: Set<term> } } or null
     this.layout = 'list';       // stream layout: 'list' | 'gallery'
     this.collapsedCats = new Set();
     this._loadingFull = new Set();   // items with a full-content fetch in flight
@@ -75,7 +77,7 @@ export class App {
         return;
       }
       const s = e.target.closest('.source'); if (!s) return;
-      this.catFilter = null; this.route = null; this.smartView = null;
+      this.catFilter = null; this.route = null; this.smartView = null; this.catalog = null;
       this.feedFilter = this.feedFilter === s.dataset.feed ? null : s.dataset.feed;
       this.renderAll();
     });
@@ -103,6 +105,7 @@ export class App {
     document.getElementById('btn-export')?.addEventListener('click', () => this.exportOpml());
 
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
+    document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -157,6 +160,7 @@ export class App {
   }
 
   query() {
+    if (this.catalog) return this.catalogQuery();
     if (this.smartView) return this.store.query({ ...this.smartView.query, text: this.searchText || this.smartView.query.text || undefined });
     if (this.route) return this.store.query({ route: this.route, text: this.searchText || undefined });
     if (this.catFilter != null) return this.store.query({ category: this.catFilter, text: this.searchText || undefined });   // '' = ungrouped
@@ -190,11 +194,14 @@ export class App {
   renderTopbar() {
     const feed = this.feedFilter && this.store.getFeed(this.feedFilter);
     const rb = document.getElementById('btn-recover'); if (rb) rb.hidden = !this.feedFilter;
-    document.getElementById('view-title').textContent = this.smartView ? this.smartView.name : this.catFilter != null ? (this.catFilter || 'ungrouped') : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
+    document.getElementById('view-title').textContent = this.catalog ? 'Catalog' : this.smartView ? this.smartView.name : this.catFilter != null ? (this.catFilter || 'ungrouped') : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
     const n = this.items.length;
     const feeds = this.store.listFeeds().length;
     let sub;
-    if (this.searchText) sub = `${n} match${n === 1 ? '' : 'es'} for “${this.searchText}”`;
+    if (this.catalog) {
+      const active = Object.entries(this.catalog.filters).flatMap(([fc, s]) => [...s].map((t) => `${fc}:${t}`));
+      sub = `${n} item${n === 1 ? '' : 's'}` + (active.length ? ` · ${active.join(' ∩ ')}` : ' · pick a facet →');
+    } else if (this.searchText) sub = `${n} match${n === 1 ? '' : 'es'} for “${this.searchText}”`;
     else if (!feeds) sub = 'no feeds yet';
     else sub = `${n} item${n === 1 ? '' : 's'}${feed ? '' : ` · ${feeds} source${feeds === 1 ? '' : 's'}`}`;
     document.getElementById('view-sub').textContent = sub;
@@ -261,7 +268,22 @@ export class App {
     this.recomputeHealth();
     this.renderHealthStatus();
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
-      r.classList.toggle('active', !this.feedFilter && !this.route && !this.smartView && this.catFilter == null && r.dataset.view === this.view));
+      r.classList.toggle('active', r.dataset.view === 'catalog'
+        ? !!this.catalog
+        : (!this.feedFilter && !this.route && !this.smartView && !this.catalog && this.catFilter == null && r.dataset.view === this.view)));
+
+    // Catalog mode swaps the Sources rail for the facet browser.
+    const srcSec = document.getElementById('sources')?.closest('.rail-section');
+    const facSec = document.getElementById('facets-section');
+    if (this.catalog) {
+      if (srcSec) srcSec.style.display = 'none';
+      if (facSec) facSec.style.display = '';
+      this.renderCatalogFacets();
+      return;
+    }
+    if (srcSec) srcSec.style.display = '';
+    if (facSec) facSec.style.display = 'none';
+
     if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
 
     const groups = new Map();
@@ -296,16 +318,90 @@ export class App {
     this.sources.innerHTML = html;
   }
 
-  setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.smartView = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   toggleCat(c) { if (this.collapsedCats.has(c)) this.collapsedCats.delete(c); else this.collapsedCats.add(c); this.renderRail(); }
 
   setSmartView(id) {
     const v = this.store.getViews().find((x) => x.id === id);
     if (!v) return;
     this.smartView = v;
-    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null;
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null;
     this.selectedId = null; this.expandedId = null;
     this.renderAll();
+  }
+
+  // ── glass catalog: faceted browse (GLASS.md §8 facet intersection, Stage 0) ──
+  setCatalog() {
+    this.catalog = this.catalog || { filters: {} };
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null;
+    this.selectedId = null; this.expandedId = null;
+    this.renderAll();
+  }
+
+  // In-memory inverted index over the live (Stage-0, deterministic) facets:
+  // facet → term → Set<item id>. Recomputed per render (cheap; same scale as the
+  // rail). Stage 1 will source enriched facets from the persisted card index.
+  buildCatalogIndex() {
+    const idx = {}; for (const f of FACETS) idx[f] = new Map();
+    for (const item of this.store.items.values()) {
+      if (item.archived) continue;
+      const f = facetsOf(item, this.store.getFeed(item.feed_id));
+      for (const facet of FACETS) for (const term of (f[facet] || [])) {
+        let s = idx[facet].get(term); if (!s) idx[facet].set(term, s = new Set());
+        s.add(item.id);
+      }
+    }
+    this._catalogIndex = idx;
+  }
+
+  catalogQuery() {
+    const idx = this._catalogIndex || (this.buildCatalogIndex(), this._catalogIndex);
+    const unions = [];   // one Set per active facet (OR within facet, AND across)
+    for (const [facet, terms] of Object.entries(this.catalog.filters)) {
+      if (!terms.size) continue;
+      const u = new Set();
+      for (const t of terms) for (const id of (idx[facet].get(t) || [])) u.add(id);
+      unions.push(u);
+    }
+    let ids;
+    if (!unions.length) ids = new Set([...this.store.items.values()].filter((i) => !i.archived).map((i) => i.id));
+    else { ids = unions[0]; for (let k = 1; k < unions.length; k++) ids = new Set([...ids].filter((id) => unions[k].has(id))); }
+    const needle = this.searchText ? this.searchText.toLowerCase() : null;
+    const out = [];
+    for (const id of ids) { const it = this.store.items.get(id); if (it && (!needle || it.search_text.includes(needle))) out.push(it); }
+    out.sort((a, b) => (b.published_at || 0) - (a.published_at || 0));
+    return out;
+  }
+
+  toggleFacet(facet, term) {
+    const f = this.catalog.filters;
+    if (!f[facet]) f[facet] = new Set();
+    if (f[facet].has(term)) { f[facet].delete(term); if (!f[facet].size) delete f[facet]; }
+    else f[facet].add(term);
+    this.renderAll();
+  }
+
+  renderCatalogFacets() {
+    const el = document.getElementById('facets'); if (!el) return;
+    this.buildCatalogIndex();
+    const order = ['form', 'provenance', 'temporal', 'entity', 'domain', 'method', 'process', 'scale', 'spatial'];
+    const ICONS = { form: '⬡', provenance: '✦', temporal: '◷', entity: '◆', domain: '▤', method: '⚙', process: '↻', scale: '⤢', spatial: '⌖' };
+    let html = '';
+    for (const facet of order) {
+      const map = this._catalogIndex[facet];
+      if (!map || !map.size) continue;   // empty facets (the LLM ones in Stage 0) stay hidden
+      const terms = [...map.entries()].sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]));
+      const sel = this.catalog.filters[facet] || new Set();
+      html += `<div class="facet-group"><div class="facet-head"><span class="ico">${ICONS[facet] || '·'}</span>${escapeHtml(facet)}</div>`;
+      for (const [term, set] of terms.slice(0, 40)) {
+        const active = sel.has(term) ? ' active' : '';
+        html += `<div class="facet-term${active}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`
+          + `<span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`;
+      }
+      if (terms.length > 40) html += `<div class="facet-more">+ ${terms.length - 40} more</div>`;
+      html += '</div>';
+    }
+    el.innerHTML = html || '<div class="rail-empty">No catalog facets yet</div>';
   }
 
   renderStream() {
@@ -794,8 +890,8 @@ export class App {
 
   _reflectSearch() { const b = document.getElementById('btn-saveview'); if (b) b.hidden = !this.searchText || !!this.smartView; }
 
-  setView(view) { this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
-  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setView(view) { if (view === 'catalog') return this.setCatalog(); this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
 
   onKey(e) {
     // Esc closes any open overlay first, from anywhere.
