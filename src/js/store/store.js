@@ -299,6 +299,22 @@ export class Store {
     return { pruned };
   }
 
+  // Retention sweep — ARCHIVE (never delete) expired, non-saved, non-routed items
+  // so the inbox stays processable but nothing is ever lost (SPEC §5, but
+  // archive-not-prune per project decision). Off unless retention_enabled.
+  runRetention(nowMs = now()) {
+    if (!this.settings.retention_enabled) return { archived: 0 };
+    const touched = new Set();
+    let archived = 0;
+    for (const r of this.items.values()) {
+      if (r.saved || r.archived || r.route) continue;
+      if (r.expires_at && r.expires_at < nowMs) { r.archived = true; touched.add(r.feed_id); archived++; }
+    }
+    for (const fid of touched) this._markFeedDirty(fid);
+    if (archived) this.emit('items', { inserted: 0, updated: archived, skipped: 0 });
+    return { archived };
+  }
+
   // ── settings / tags / routing ──
   getSettings() { return { ...this.settings }; }
   async setSettings(patch) {

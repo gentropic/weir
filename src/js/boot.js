@@ -5,6 +5,7 @@ import { Store } from './store/store.js';
 import { Poller } from './poller.js';
 import { Router } from './router.js';
 import { RecoveryDrip } from './recovery.js';
+import { Retainer } from './retainer.js';
 import { App } from './ui/app.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
@@ -59,6 +60,9 @@ async function boot() {
   app.mount();
   poller.start();
 
+  const retainer = new Retainer(store);   // archives expired items (never deletes); off until enabled
+  retainer.start();
+
   // Background IA recovery drip — resumes if there's pending work from last time.
   const drip = new RecoveryDrip(store, { fetch: gcuFetch, parseFeed, intervalMs: store.getSettings().recovery_drip_interval_ms });
   await drip.load();
@@ -66,7 +70,7 @@ async function boot() {
   app.renderDripStatus(drip.status());
   if (drip.queue.length || drip.current) drip.start();
 
-  window.__weir = { store, poller, router, drip, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), parseFeed, feedAdapter, gcuFetch };
+  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), parseFeed, feedAdapter, gcuFetch };
 
   try {
     let persisted = false;

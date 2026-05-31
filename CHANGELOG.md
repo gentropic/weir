@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### retainer (archive, never delete) — 2026-05-31
+
+- `store.runRetention()` + `src/js/retainer.js`: the retention sweep ARCHIVES
+  expired, non-saved, non-routed items into the archived view — it never deletes
+  (project decision: cold-store eventually, never lose). Uses the `expires_at`
+  already computed at insert. Saved/routed/archived items are exempt. Runs on open
+  and hourly. **Off by default** (`settings.retention_enabled = false`) so nothing
+  expires until you opt in (`__weir.store.setSettings({ retention_enabled: true })`).
+- Tests: `tools/smoke-retainer.mjs` (archives-not-deletes, off-switch, saved
+  exempt, moves to archived view, idempotent).
+
 ### IA recovery drip — 2026-05-31
 
 - `src/js/recovery.js`: `RecoveryDrip` — a very slow background trickle that
