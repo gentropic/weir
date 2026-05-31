@@ -11,8 +11,10 @@ Nothing here is committed scope — it's the candidate list, roughly ordered.
 - **Views over sources (smart-folders).** Saved filters over feeds and items —
   by folder, feed-health, or watch-affinity; saved item searches as `#views`
   (SPEC §6). The rail's "Routed" section is the seed of this.
-- **Feed favicons** in the rail for visual scanning.
-- **Density toggle** (compact ↔ comfortable item rows).
+- ~~**Feed favicons** in the rail for visual scanning.~~ ✅ Shipped 2026-05-31 —
+  lazy/polite fetch via the bridge, cached as `data:` URLs, deterministic letter
+  monogram fallback.
+- ~~**Density toggle** (compact ↔ comfortable item rows).~~ ✅ Shipped 2026-05-31.
 - **Manual reorder within a folder.** Regroup (move-to-folder) + rename already
   exist via the feed context menu; this adds a manual `feed.order` to override the
   affinity/name sort. (Drag deferred — context-menu "move up/down" likely enough.)

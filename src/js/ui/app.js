@@ -12,6 +12,7 @@ import { extractArticle } from '../extract.js';
 import { checkForUpdateNow, setAutoCheck } from '../pwa.js';
 import { recoverFeed } from '../wayback.js';
 import { parseFeed } from '../adapters/feed.js';
+import { monogram } from '../favicon.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
@@ -21,11 +22,12 @@ const RAIL_CAP = 60;
 const CAT_ORDER = ['dev', 'hardware', 'ideas', 'tech', 'games', 'comics-art', 'fiction', 'data', 'cloud', 'news', 'geo', 'personal'];
 
 export class App {
-  constructor({ store, poller, router, adapters }) {
+  constructor({ store, poller, router, adapters, faviconFetcher }) {
     this.store = store;
     this.poller = poller;
     this.router = router;
     this.adapters = adapters || [];
+    this.faviconFetcher = faviconFetcher || null;
     this.view = 'inbox';
     this.feedFilter = null;
     this.route = null;          // active routed view (#name), or null
@@ -112,7 +114,10 @@ export class App {
     document.getElementById('rules-close')?.addEventListener('click', () => this.closeRules());
     this.store.on('notify', () => this.renderNotify());
 
+    document.getElementById('set-density')?.addEventListener('change', (e) => this._setDensity(e.target.value));
+
     this._initRailResize();
+    this._setDensity(this.store.getSettings().density);
     document.addEventListener('keydown', (e) => this.onKey(e));
     setInterval(() => this.renderPollStatus(), 30_000);
 
@@ -177,15 +182,19 @@ export class App {
     const pts = sparkPoints(dailyCounts(times, 7));
     const cls = f.state === 'failing' || f.state === 'archived' ? 'dead' : f.state === 'slow' ? 'slow' : 'up';
     const active = this.feedFilter === f.id ? ' active' : '';
-    const spark = pts ? `<svg width="44" height="13" viewBox="0 0 44 13"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>` : '';
+    const spark = pts ? `<svg width="40" height="12" viewBox="0 0 44 13"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>` : '';
+    const icon = f.favicon
+      ? `<img class="favi" src="${escapeHtml(f.favicon)}" alt="" loading="lazy">`
+      : (() => { const m = monogram(f); return `<span class="favi mono" style="--mh:${m.hue}">${escapeHtml(m.ch)}</span>`; })();
     const fav = f.affinity >= 100 ? ' <span class="fav">★</span>' : '';
     const aff = f.affinity ? ` · watch-affinity ${f.affinity}` : '';
     return `<div class="source ${cls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${aff}${f.feed_health?.last_error ? ' — ' + escapeHtml(f.feed_health.last_error) : ''}">`
-      + `<span class="spark">${spark}</span><span class="sname">${escapeHtml(f.name)}${fav}</span><span class="scount">${unread || ''}</span></div>`;
+      + `<span class="sicon">${icon}</span><span class="sname">${escapeHtml(f.name)}${fav}</span><span class="spark">${spark}</span><span class="scount">${unread || ''}</span></div>`;
   }
 
   renderRail() {
     const feeds = this.store.listFeeds();
+    this.faviconFetcher?.enqueue(feeds);   // lazily backfill site icons (polite, once each)
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
       r.classList.toggle('active', !this.feedFilter && !this.route && this.catFilter == null && r.dataset.view === this.view));
     if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
@@ -477,8 +486,8 @@ export class App {
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
       { label: 'Move to folder…', onClick: () => this.moveFeedToFolder(feedId) },
       { label: 'Rename…', onClick: () => this.renameFeed(feedId) },
-      { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: async () => { feed.images_allowed = !feed.images_allowed; await this.store.putFeed(feed); } },
-      { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: async () => { feed.fetch_full_content = !feed.fetch_full_content; await this.store.putFeed(feed); } },
+      { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: () => this.store.updateFeed(feedId, { images_allowed: !feed.images_allowed }) },
+      { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: () => this.store.updateFeed(feedId, { fetch_full_content: !feed.fetch_full_content }) },
       { label: 'Recover history…', onClick: () => this.recoverHistory(feedId) },
       { sep: true },
       { label: 'Remove feed', danger: true, onClick: () => { if (confirm(`Remove "${feed.name}" and its items?`)) { this.store.removeFeed(feedId); if (this.feedFilter === feedId) this.feedFilter = null; this.renderAll(); } } },
@@ -489,8 +498,7 @@ export class App {
     const feed = this.store.getFeed(feedId); if (!feed) return;
     const cat = prompt('Move to folder (leave blank for none):', feed.category || '');
     if (cat === null) return;
-    feed.category = cat.trim() || undefined;
-    await this.store.putFeed(feed);
+    await this.store.updateFeed(feedId, { category: cat.trim() || undefined });
     this.renderRail();
   }
 
@@ -498,8 +506,7 @@ export class App {
     const feed = this.store.getFeed(feedId); if (!feed) return;
     const name = prompt('Rename feed:', feed.name);
     if (name === null || !name.trim()) return;
-    feed.name = name.trim();
-    await this.store.putFeed(feed);
+    await this.store.updateFeed(feedId, { name: name.trim() });
     this.renderRail();
   }
 
@@ -622,6 +629,7 @@ export class App {
   }
 
   _setRailWidth(px) { document.documentElement.style.setProperty('--rail-w', `${Math.round(px)}px`); }
+  _setDensity(v) { document.documentElement.dataset.density = v === 'compact' ? 'compact' : 'comfortable'; }
 
   _initRailResize() {
     this._setRailWidth(this.store.getSettings().rail_width || 240);
@@ -700,6 +708,7 @@ export class App {
     chk('set-pause-hidden', s.pause_polling_when_hidden);
     chk('set-images', s.images_default_allowed);
     chk('set-fullcontent', s.fetch_full_content_default);
+    val('set-density', s.density || 'comfortable');
     chk('set-retention', s.retention_enabled);
     chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
@@ -739,6 +748,7 @@ export class App {
       pause_polling_when_hidden: chk('set-pause-hidden'),
       images_default_allowed: chk('set-images'),
       fetch_full_content_default: chk('set-fullcontent'),
+      density: document.getElementById('set-density')?.value === 'compact' ? 'compact' : 'comfortable',
       retention_enabled: chk('set-retention'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
@@ -748,6 +758,7 @@ export class App {
       ia_secret_key: document.getElementById('set-ia-secret').value.trim(),
     };
     await this.store.setSettings(patch);
+    this._setDensity(patch.density);
     setAutoCheck(patch.auto_check_updates);   // push the preference to the SW
     if (patch.retention_enabled) this.store.runRetention();   // apply immediately if just enabled
     document.getElementById('settings-msg').textContent = 'saved ✓';

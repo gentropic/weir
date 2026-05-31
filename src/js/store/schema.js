@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS = {
   theme: 'switchboard-dark',
   fetch_full_content_default: false,
   rail_width: 240,                       // source rail width in px (drag to resize)
+  density: 'comfortable',                // row density: 'comfortable' | 'compact'
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
@@ -131,6 +132,8 @@ export function makeFeed(raw) {
     name: raw.name || id,
     site_url: raw.site_url || undefined,
     icon_url: raw.icon_url || undefined,
+    favicon: raw.favicon || undefined,            // cached site favicon as a data: URL (lazy-fetched)
+    favicon_checked_at: raw.favicon_checked_at || undefined,
     poll_interval_minutes: raw.poll_interval_minutes ?? DEFAULT_SETTINGS.default_poll_interval_minutes,
     last_polled_at: raw.last_polled_at || undefined,
     next_poll_at: raw.next_poll_at ?? now(),

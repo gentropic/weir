@@ -6,6 +6,7 @@ import { Poller } from './poller.js';
 import { Router } from './router.js';
 import { RecoveryDrip } from './recovery.js';
 import { Retainer } from './retainer.js';
+import { FaviconFetcher } from './favicon.js';
 import { App } from './ui/app.js';
 import { initPwa, setAutoCheck } from './pwa.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
@@ -60,7 +61,8 @@ async function boot() {
 
   const adapters = [youtubeAdapter, feedAdapter];   // specific before the `feed` fallback
   const poller = new Poller(store, { adapters, fetch: gcuFetch });
-  const app = new App({ store, poller, router, adapters });
+  const faviconFetcher = new FaviconFetcher(store, { fetch: gcuFetch });   // lazy rail icons, polite
+  const app = new App({ store, poller, router, adapters, faviconFetcher });
   app.mount();
   poller.start();
 

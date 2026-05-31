@@ -60,9 +60,13 @@ body {
 .cat-head .cat-count { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
 .cat-feeds { padding-left: 4px; }
 
-.source { display: grid; grid-template-columns: 46px 1fr auto; align-items: center; gap: 9px; padding: 5px 8px; border-radius: var(--au-radius-lg); cursor: pointer; transition: background 0.12s; }
+.source { display: grid; grid-template-columns: 18px 1fr auto auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--au-radius-lg); cursor: pointer; transition: background 0.12s; }
 .source:hover { background: var(--sw-bg-bright); }
 .source.active { background: var(--sw-bg-bright); box-shadow: inset 2px 0 0 var(--au-action); }
+.source .sicon { display: flex; align-items: center; justify-content: center; }
+.favi { width: 16px; height: 16px; border-radius: 4px; display: block; object-fit: contain; }
+.favi.mono { font-family: var(--au-font-mono); font-size: 9px; font-weight: 700; line-height: 16px; text-align: center; color: #fff; background: hsl(var(--mh, 210), 42%, 44%); text-transform: uppercase; }
+.source.dead .favi { opacity: 0.4; filter: grayscale(1); }
 .source .spark { color: var(--au-fg-soft); display: flex; }
 .source.up .spark { color: var(--au-success); }
 .source.slow .spark { color: var(--au-warn); }
@@ -144,6 +148,16 @@ body {
 .thumbimg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .thumb .playover { position: relative; z-index: 1; color: #fff; font-size: 18px; text-shadow: 0 1px 4px rgba(0,0,0,0.6); opacity: 0.9; }
 .vbody { flex: 1; min-width: 0; }
+
+/* ── Compact density — tighter rows, less chrome (Settings → Reading) ── */
+[data-density="compact"] .source { padding: 3px 8px; }
+[data-density="compact"] .source .spark { display: none; }
+[data-density="compact"] .cat-feeds { padding-left: 4px; }
+[data-density="compact"] .item { padding: 7px 22px; gap: 12px; }
+[data-density="compact"] .iexcerpt { display: none; }
+[data-density="compact"] .imeta { margin-top: 4px; }
+[data-density="compact"] .ivideo { gap: 10px; }
+[data-density="compact"] .thumb { width: 88px; height: 50px; }
 
 /* ── Expanded reading view ── */
 .item.expanded { background: var(--sw-bg-raised); cursor: default; }

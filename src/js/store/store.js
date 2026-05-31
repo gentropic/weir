@@ -120,6 +120,19 @@ export class Store {
     return feed;
   }
 
+  // Shallow-merge a patch into an existing feed and persist it. Lighter than
+  // putFeed (which rebuilds the record through makeFeed); for in-place edits
+  // like rename, move-to-folder, and cached favicons. No-op if the feed is gone.
+  async updateFeed(id, patch) {
+    const cur = this.feeds.get(id);
+    if (!cur) return null;
+    const feed = { ...cur, ...patch };
+    this.feeds.set(id, feed);
+    await this.vfs.writeFile(this._feedPath(id), JSON.stringify(feed, null, 2));
+    this.emit('feed', { id });
+    return feed;
+  }
+
   // Stamp watch-affinity scores onto matching YouTube feeds (from a Takeout
   // digest). Returns how many feeds matched.
   async applyAffinity(scoreMap) {

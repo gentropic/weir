@@ -204,9 +204,13 @@ body {
 .cat-head .cat-count { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
 .cat-feeds { padding-left: 4px; }
 
-.source { display: grid; grid-template-columns: 46px 1fr auto; align-items: center; gap: 9px; padding: 5px 8px; border-radius: var(--au-radius-lg); cursor: pointer; transition: background 0.12s; }
+.source { display: grid; grid-template-columns: 18px 1fr auto auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--au-radius-lg); cursor: pointer; transition: background 0.12s; }
 .source:hover { background: var(--sw-bg-bright); }
 .source.active { background: var(--sw-bg-bright); box-shadow: inset 2px 0 0 var(--au-action); }
+.source .sicon { display: flex; align-items: center; justify-content: center; }
+.favi { width: 16px; height: 16px; border-radius: 4px; display: block; object-fit: contain; }
+.favi.mono { font-family: var(--au-font-mono); font-size: 9px; font-weight: 700; line-height: 16px; text-align: center; color: #fff; background: hsl(var(--mh, 210), 42%, 44%); text-transform: uppercase; }
+.source.dead .favi { opacity: 0.4; filter: grayscale(1); }
 .source .spark { color: var(--au-fg-soft); display: flex; }
 .source.up .spark { color: var(--au-success); }
 .source.slow .spark { color: var(--au-warn); }
@@ -288,6 +292,16 @@ body {
 .thumbimg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .thumb .playover { position: relative; z-index: 1; color: #fff; font-size: 18px; text-shadow: 0 1px 4px rgba(0,0,0,0.6); opacity: 0.9; }
 .vbody { flex: 1; min-width: 0; }
+
+/* ── Compact density — tighter rows, less chrome (Settings → Reading) ── */
+[data-density="compact"] .source { padding: 3px 8px; }
+[data-density="compact"] .source .spark { display: none; }
+[data-density="compact"] .cat-feeds { padding-left: 4px; }
+[data-density="compact"] .item { padding: 7px 22px; gap: 12px; }
+[data-density="compact"] .iexcerpt { display: none; }
+[data-density="compact"] .imeta { margin-top: 4px; }
+[data-density="compact"] .ivideo { gap: 10px; }
+[data-density="compact"] .thumb { width: 88px; height: 50px; }
 
 /* ── Expanded reading view ── */
 .item.expanded { background: var(--sw-bg-raised); cursor: default; }
@@ -483,6 +497,7 @@ body {
       </section>
       <section class="set-group">
         <h4>Reading</h4>
+        <label class="set-row">row density<select id="set-density" class="field"><option value="comfortable">comfortable</option><option value="compact">compact</option></select></label>
         <label class="set-row check"><input type="checkbox" id="set-images"> load images by default on new feeds</label>
         <label class="set-row check"><input type="checkbox" id="set-fullcontent"> fetch full content by default</label>
       </section>
@@ -3850,6 +3865,7 @@ const DEFAULT_SETTINGS = {
   theme: 'switchboard-dark',
   fetch_full_content_default: false,
   rail_width: 240,                       // source rail width in px (drag to resize)
+  density: 'comfortable',                // row density: 'comfortable' | 'compact'
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
@@ -3950,6 +3966,8 @@ function makeFeed(raw) {
     name: raw.name || id,
     site_url: raw.site_url || undefined,
     icon_url: raw.icon_url || undefined,
+    favicon: raw.favicon || undefined,            // cached site favicon as a data: URL (lazy-fetched)
+    favicon_checked_at: raw.favicon_checked_at || undefined,
     poll_interval_minutes: raw.poll_interval_minutes ?? DEFAULT_SETTINGS.default_poll_interval_minutes,
     last_polled_at: raw.last_polled_at || undefined,
     next_poll_at: raw.next_poll_at ?? now(),
@@ -4132,6 +4150,19 @@ class Store {
     await this._ensureDir('/feeds');
     await this.vfs.writeFile(this._feedPath(feed.id), JSON.stringify(feed, null, 2));
     this.emit('feed', { id: feed.id });
+    return feed;
+  }
+
+  // Shallow-merge a patch into an existing feed and persist it. Lighter than
+  // putFeed (which rebuilds the record through makeFeed); for in-place edits
+  // like rename, move-to-folder, and cached favicons. No-op if the feed is gone.
+  async updateFeed(id, patch) {
+    const cur = this.feeds.get(id);
+    if (!cur) return null;
+    const feed = { ...cur, ...patch };
+    this.feeds.set(id, feed);
+    await this.vfs.writeFile(this._feedPath(id), JSON.stringify(feed, null, 2));
+    this.emit('feed', { id });
     return feed;
   }
 
@@ -5302,6 +5333,121 @@ function initPwa() {
   });
 }
 
+// ── src/js/favicon.js ──
+
+// Lazy, polite favicon fetching for the source rail. Each feed's site icon is
+// fetched once (through the bridge so cross-origin works), cached as a data:
+// URL on the feed record, and rendered in the rail. Until one arrives — or for
+// feeds that turn out to have none — a deterministic letter monogram stands in,
+// so the rail is scannable instantly and offline.
+
+const MAX_FAVICON_BYTES = 24_000;          // skip oversized icons; hundreds of feeds add up
+const RECHECK_MS = 30 * 86_400_000;        // re-try a missing favicon at most monthly
+
+// Origin to fetch a favicon from: prefer the human site over the feed URL
+// (feed URLs often live on a feedproxy/CDN host with no favicon of their own).
+function faviconOrigin(feed) {
+  for (const u of [feed.site_url, feed.url]) {
+    if (!u) continue;
+    try { return new URL(u).origin; } catch { /* not a URL */ }
+  }
+  return null;
+}
+
+// Deterministic monogram chip for a feed: first alphanumeric letter + a hue
+// derived from the host, so a feed always gets the same colored square. Pure —
+// used by the rail renderer and exercised directly by the smoke test.
+function monogram(feed) {
+  const name = (feed.name || feed.id || '?').trim();
+  const m = name.match(/[A-Za-z0-9]/);
+  const ch = (m ? m[0] : '#').toUpperCase();
+  const seed = faviconOrigin(feed) || name;
+  let h = 0; for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return { ch, hue: h % 360 };
+}
+
+function bytesToDataUrl(bytes, type) {
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return `data:${type};base64,${btoa(bin)}`;
+}
+
+// Does this feed still need a favicon fetched? No cached icon, and either never
+// checked or the recheck window has elapsed (so a one-off network miss heals).
+function needsFavicon(feed, nowMs) {
+  if (feed.favicon) return false;
+  if (!feed.favicon_checked_at) return true;
+  return nowMs - feed.favicon_checked_at > RECHECK_MS;
+}
+
+class FaviconFetcher {
+  constructor(store, { fetch, intervalMs = 1500, now = () => Date.now() } = {}) {
+    this.store = store;
+    this.fetch = fetch;
+    this.intervalMs = intervalMs;
+    this._now = now;
+    this._queue = [];
+    this._seen = new Set();      // feed ids queued/resolved this session — no dup work
+    this._running = false;
+    this._stopped = false;
+    this._timer = null;
+  }
+
+  // Enqueue any of these feeds that still need an icon. Callers pass what
+  // they're about to render, so visible feeds get fetched first; de-duped
+  // across the session so re-renders don't re-queue.
+  enqueue(feeds) {
+    const n = this._now();
+    for (const f of feeds) {
+      if (this._seen.has(f.id)) continue;
+      this._seen.add(f.id);
+      if (needsFavicon(f, n) && faviconOrigin(f)) this._queue.push(f.id);
+    }
+    this._kick();
+  }
+
+  _kick() {
+    if (this._running || this._stopped || !this._queue.length) return;
+    this._running = true;
+    this._tick();
+  }
+
+  async _tick() {
+    const id = this._queue.shift();
+    if (id == null) { this._running = false; return; }
+    try { await this._fetchOne(id); } catch { /* network/parse — leave the monogram standing */ }
+    if (this._stopped) { this._running = false; return; }
+    // Space requests out — one per origin, gently.
+    this._timer = setTimeout(() => this._tick(), this.intervalMs);
+  }
+
+  async _fetchOne(id) {
+    const feed = this.store.getFeed(id);
+    if (!feed) return;
+    const origin = faviconOrigin(feed);
+    if (!origin) return;
+    let favicon;
+    try {
+      const res = await this.fetch(`${origin}/favicon.ico`);
+      if (res && res.ok) {
+        const type = (res.headers?.get?.('content-type') || '').split(';')[0].trim() || 'image/x-icon';
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        // Guard against 200-but-HTML error pages and oversized blobs.
+        if (bytes.length && bytes.length <= MAX_FAVICON_BYTES && type.startsWith('image/')) {
+          favicon = bytesToDataUrl(bytes, type);
+        }
+      }
+    } catch { /* fall through — still stamp the attempt so we don't hammer */ }
+    // Always record the attempt (success or miss); only set favicon on success.
+    const patch = { favicon_checked_at: this._now() };
+    if (favicon) patch.favicon = favicon;
+    await this.store.updateFeed(id, patch);
+  }
+
+  stop() { this._stopped = true; this._running = false; if (this._timer) clearTimeout(this._timer); }
+}
+
 // ── src/js/ui/format.js ──
 
 // Pure presentation helpers (SPEC §4). No DOM — node-testable.
@@ -5560,6 +5706,7 @@ class Poller {
 
 
 
+
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
 const RENDER_CAP = 300;
@@ -5568,11 +5715,12 @@ const RAIL_CAP = 60;
 const CAT_ORDER = ['dev', 'hardware', 'ideas', 'tech', 'games', 'comics-art', 'fiction', 'data', 'cloud', 'news', 'geo', 'personal'];
 
 class App {
-  constructor({ store, poller, router, adapters }) {
+  constructor({ store, poller, router, adapters, faviconFetcher }) {
     this.store = store;
     this.poller = poller;
     this.router = router;
     this.adapters = adapters || [];
+    this.faviconFetcher = faviconFetcher || null;
     this.view = 'inbox';
     this.feedFilter = null;
     this.route = null;          // active routed view (#name), or null
@@ -5659,7 +5807,10 @@ class App {
     document.getElementById('rules-close')?.addEventListener('click', () => this.closeRules());
     this.store.on('notify', () => this.renderNotify());
 
+    document.getElementById('set-density')?.addEventListener('change', (e) => this._setDensity(e.target.value));
+
     this._initRailResize();
+    this._setDensity(this.store.getSettings().density);
     document.addEventListener('keydown', (e) => this.onKey(e));
     setInterval(() => this.renderPollStatus(), 30_000);
 
@@ -5724,15 +5875,19 @@ class App {
     const pts = sparkPoints(dailyCounts(times, 7));
     const cls = f.state === 'failing' || f.state === 'archived' ? 'dead' : f.state === 'slow' ? 'slow' : 'up';
     const active = this.feedFilter === f.id ? ' active' : '';
-    const spark = pts ? `<svg width="44" height="13" viewBox="0 0 44 13"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>` : '';
+    const spark = pts ? `<svg width="40" height="12" viewBox="0 0 44 13"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" stroke-linecap="round"/></svg>` : '';
+    const icon = f.favicon
+      ? `<img class="favi" src="${escapeHtml(f.favicon)}" alt="" loading="lazy">`
+      : (() => { const m = monogram(f); return `<span class="favi mono" style="--mh:${m.hue}">${escapeHtml(m.ch)}</span>`; })();
     const fav = f.affinity >= 100 ? ' <span class="fav">★</span>' : '';
     const aff = f.affinity ? ` · watch-affinity ${f.affinity}` : '';
     return `<div class="source ${cls}${active}" data-feed="${escapeHtml(f.id)}" title="${escapeHtml(f.name)}${aff}${f.feed_health?.last_error ? ' — ' + escapeHtml(f.feed_health.last_error) : ''}">`
-      + `<span class="spark">${spark}</span><span class="sname">${escapeHtml(f.name)}${fav}</span><span class="scount">${unread || ''}</span></div>`;
+      + `<span class="sicon">${icon}</span><span class="sname">${escapeHtml(f.name)}${fav}</span><span class="spark">${spark}</span><span class="scount">${unread || ''}</span></div>`;
   }
 
   renderRail() {
     const feeds = this.store.listFeeds();
+    this.faviconFetcher?.enqueue(feeds);   // lazily backfill site icons (polite, once each)
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
       r.classList.toggle('active', !this.feedFilter && !this.route && this.catFilter == null && r.dataset.view === this.view));
     if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
@@ -6024,8 +6179,8 @@ class App {
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
       { label: 'Move to folder…', onClick: () => this.moveFeedToFolder(feedId) },
       { label: 'Rename…', onClick: () => this.renameFeed(feedId) },
-      { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: async () => { feed.images_allowed = !feed.images_allowed; await this.store.putFeed(feed); } },
-      { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: async () => { feed.fetch_full_content = !feed.fetch_full_content; await this.store.putFeed(feed); } },
+      { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: () => this.store.updateFeed(feedId, { images_allowed: !feed.images_allowed }) },
+      { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: () => this.store.updateFeed(feedId, { fetch_full_content: !feed.fetch_full_content }) },
       { label: 'Recover history…', onClick: () => this.recoverHistory(feedId) },
       { sep: true },
       { label: 'Remove feed', danger: true, onClick: () => { if (confirm(`Remove "${feed.name}" and its items?`)) { this.store.removeFeed(feedId); if (this.feedFilter === feedId) this.feedFilter = null; this.renderAll(); } } },
@@ -6036,8 +6191,7 @@ class App {
     const feed = this.store.getFeed(feedId); if (!feed) return;
     const cat = prompt('Move to folder (leave blank for none):', feed.category || '');
     if (cat === null) return;
-    feed.category = cat.trim() || undefined;
-    await this.store.putFeed(feed);
+    await this.store.updateFeed(feedId, { category: cat.trim() || undefined });
     this.renderRail();
   }
 
@@ -6045,8 +6199,7 @@ class App {
     const feed = this.store.getFeed(feedId); if (!feed) return;
     const name = prompt('Rename feed:', feed.name);
     if (name === null || !name.trim()) return;
-    feed.name = name.trim();
-    await this.store.putFeed(feed);
+    await this.store.updateFeed(feedId, { name: name.trim() });
     this.renderRail();
   }
 
@@ -6169,6 +6322,7 @@ class App {
   }
 
   _setRailWidth(px) { document.documentElement.style.setProperty('--rail-w', `${Math.round(px)}px`); }
+  _setDensity(v) { document.documentElement.dataset.density = v === 'compact' ? 'compact' : 'comfortable'; }
 
   _initRailResize() {
     this._setRailWidth(this.store.getSettings().rail_width || 240);
@@ -6247,6 +6401,7 @@ class App {
     chk('set-pause-hidden', s.pause_polling_when_hidden);
     chk('set-images', s.images_default_allowed);
     chk('set-fullcontent', s.fetch_full_content_default);
+    val('set-density', s.density || 'comfortable');
     chk('set-retention', s.retention_enabled);
     chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
@@ -6286,6 +6441,7 @@ class App {
       pause_polling_when_hidden: chk('set-pause-hidden'),
       images_default_allowed: chk('set-images'),
       fetch_full_content_default: chk('set-fullcontent'),
+      density: document.getElementById('set-density')?.value === 'compact' ? 'compact' : 'comfortable',
       retention_enabled: chk('set-retention'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
@@ -6295,6 +6451,7 @@ class App {
       ia_secret_key: document.getElementById('set-ia-secret').value.trim(),
     };
     await this.store.setSettings(patch);
+    this._setDensity(patch.density);
     setAutoCheck(patch.auto_check_updates);   // push the preference to the SW
     if (patch.retention_enabled) this.store.runRetention();   // apply immediately if just enabled
     document.getElementById('settings-msg').textContent = 'saved ✓';
@@ -6365,6 +6522,7 @@ class App {
 
 
 
+
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
 
@@ -6412,7 +6570,8 @@ async function boot() {
 
   const adapters = [youtubeAdapter, feedAdapter];   // specific before the `feed` fallback
   const poller = new Poller(store, { adapters, fetch: gcuFetch });
-  const app = new App({ store, poller, router, adapters });
+  const faviconFetcher = new FaviconFetcher(store, { fetch: gcuFetch });   // lazy rail icons, polite
+  const app = new App({ store, poller, router, adapters, faviconFetcher });
   app.mount();
   poller.start();
 

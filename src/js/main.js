@@ -23,6 +23,7 @@ import './wayback.js';                    // → cdxSnapshots, recoverFeed (uses
 import './recovery.js';                   // → RecoveryDrip (uses cdxSnapshots)
 import './retainer.js';                   // → Retainer (archive-on-expiry; never deletes)
 import './pwa.js';                        // → initPwa (service worker + update toast)
+import './favicon.js';                    // → FaviconFetcher, monogram (before app)
 import './ui/format.js';                 // → relativeTime, sparkPoints, … (before app)
 import './ui/menu.js';                    // → showMenu (context menus)
 import './poller.js';                    // → Poller

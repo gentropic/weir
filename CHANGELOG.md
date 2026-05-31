@@ -6,6 +6,24 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Rail polish: favicons + density toggle — 2026-05-31
+
+- **Feed favicons in the source rail.** Each feed's site icon is fetched once —
+  through the bridge so cross-origin works — and cached as a `data:` URL on the
+  feed record (`favicon` / `favicon_checked_at`). Fetching is lazy and polite:
+  one request per origin, spaced ~1.5s, visible feeds first, de-duped, and a
+  missing icon is re-tried at most monthly. Until a real icon arrives (or for
+  feeds that have none) a deterministic **letter monogram** — first letter +
+  a host-hashed hue — stands in, so the rail is scannable instantly and offline.
+  Dead/failing feeds dim their icon. The health sparkline moved beside the count.
+- **Row density toggle** (Settings → Reading): `comfortable` (default) ↔
+  `compact`. Compact tightens rail + stream padding, hides item excerpts and the
+  rail sparkline, and shrinks video thumbnails. Persisted as `density`, applied
+  on load.
+- Added `Store.updateFeed(id, patch)` — a shallow-merge persist for in-place feed
+  edits; rename / move-to-folder / image+full-text toggles now use it instead of
+  rebuilding the record through `putFeed`.
+
 ### SW: fix stale-README on reload; manual update check — 2026-05-31
 
 - The service worker had cached the Jekyll README as the navigation root during the
