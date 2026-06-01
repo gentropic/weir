@@ -65,8 +65,18 @@ the trigger/query layer on top.
   (`stream_layout`); thumbnail grid using item `media.thumbnail` (videos) with a
   colored type-tile fallback; tiles are `.item` so click/select/expand are shared.
   Follow-up: ~~first content image~~ ✅ (inline `<img>` fallback shipped
-  2026-05-31, zero-network); fetching `og:image` for articles with *no* inline
-  image at all is still deferred (needs a per-item page fetch, like favicons).
+  2026-05-31, zero-network); ~~thumbnails in **list** view too~~ ✅ Shipped
+  2026-05-31 (rows show any item's `media.thumbnail`, not just videos — lazy,
+  browser-cached, no play overlay for articles). Fetching `og:image` for articles
+  with *no* inline image at all is still deferred (needs a per-item page fetch).
+- **Virtual scrolling (list + gallery).** Render only the visible window + a
+  buffer and recycle rows on scroll, replacing the 300-row `RENDER_CAP` so the
+  whole corpus is scrollable and the gallery stays smooth as thumbnail count
+  grows. Complicated by **variable row heights** (expand-in-place, video vs text
+  vs thumbnail) — needs measured/estimated heights, and must keep keyboard nav,
+  selection, and the expand-in-place pipeline correct. Worth a dedicated, tested
+  pass (ideally when no catalog run is mid-flight, since a reload interrupts it).
+  Supersedes the 300-cap tech-debt note below.
 
 ## Medium
 
@@ -114,11 +124,31 @@ the trigger/query layer on top.
   of the hot in-memory index to compacted on-disk storage — still never deleting
   ([[weir-never-delete]]). Possible follow-ups on the mount: auto-mirror to a
   second folder, OPFS as a zero-prompt middle tier.
+- **Storage size report (breakdown).** Today Settings + the status bar show only a
+  global usage/quota (browser `estimate()`). Add a **per-area breakdown** — feed
+  metadata, item index, stored content HTML, catalog cards, favicons, (and images,
+  below) — computed via a VFS walk (`store._walk` already enumerates the tree).
+  Shows what's actually eating space and informs the retention / cold-store calls.
+  This is the "size report in general" we want regardless.
+- **Self-hosted thumbnails / cover images (opt-in).** Today thumbnails are remote
+  URLs — browser-cached only, so list/gallery re-fetch after cache eviction and
+  break offline. Optionally cache them locally (OPFS or the FSA folder) behind a
+  **toggle**, with a **size report + cap** so the cost is visible and bounded.
+  Tension to honor: the "no media caching" non-goal (SPEC §8) rules out audio/video
+  *enclosures* (streamed); small cover images are a different, measured trade and
+  stay opt-in. Pairs with the storage breakdown above (and the cold-store tier).
 - **Save-Page-Now.** Proactively archive live feeds to the Internet Archive (uses
   the IA keys already in Settings) so future [feed archaeology](CHANGELOG.md)
   always has snapshots. Plus link-rot recovery (dead item URL → archived page).
-- **webmcp.** Vendor `../auditable/ext/webmcp` so Claude can drive weir directly —
-  curation, triage, bulk ops.
+- ~~**webmcp.**~~ ✅ Shipped 2026-05-31 — weir speaks **WebMCP** via
+  **`@gcu/webmcp`** (repo `gentropic/webmcp`): vendored `webmcp-shim.js` +
+  `src/js/webmcp.js` adapter, `.mcp.json` (port 7801), gcuFetch transport for the
+  public-origin PWA. Read tools (`weir_queryItems` w/ keyset pagination,
+  `weir_getItem`, `weir_listFacets` w/ caps) + mutation/control tools
+  (`weir_setState`, `weir_catalogItem`, `weir_catalogControl` start/stop/clear/
+  status). Claude Code can query, triage, and drive cataloging over localhost.
+  **Next:** deeper "trigger LLM processing" hooks (notes, thesaurus drafting via
+  the term distribution); per-call confirmation if a shared scenario ever needs it.
 - **Sync** (the open question, SPEC §10). Lean on the FSA archive dir +
   syncthing/rclone, or a `@gcu/pointer`/Trystero CRDT for read-state. Deferred
   until the need is real (multi-device).
@@ -130,7 +160,7 @@ the trigger/query layer on top.
   acceptable for a single-user local tool; revisit before any shared scenario.
 - **Feed-health thresholds** are guesses (SPEC §10) — tune against real behavior.
 - The rail/stream render eagerly; very large sets (1000+) lean on folder-collapse
-  + the 300-row cap. Virtualize if it ever feels heavy.
+  + the 300-row cap. **Virtual scrolling** is now a tracked near-term item (above).
 - The built `index.html` is committed (deterministic build) for GitHub Pages.
 - **Cleanup from the 2026-05-31 code review** (bugs fixed; these are the
   refactors): the six overlay open/close pairs + Esc id-list want one overlay
