@@ -164,11 +164,22 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     const action = (input.action || 'status');
     if (action === 'start') return app.catalogAll();
     if (action === 'stop') return { stopped: app.stopCatalog() };
+    if (action === 'clear') {
+      // Discard all cards + un-file every item (items/content/reading state kept),
+      // so a fresh pass starts clean. No confirm dialog (that's the UI's job) —
+      // gated only by the caller asking. Stops any running batch first.
+      if (app.stopCatalog) app.stopCatalog();
+      const r = await store.clearCatalog();
+      app._cardFacets = new Map();
+      if (app.catalog && app.renderAll) app.renderAll();
+      if (app.renderCatUsage) app.renderCatUsage();
+      return { cleared: r.cleared };
+    }
     if (action === 'status') {
       const st = app.catalogStatus ? app.catalogStatus() : { running: false };
       return { ...st, cataloged: await store.catalogCount(), total: store.items.size };
     }
-    throw new Error('action must be one of: start | stop | status');
+    throw new Error('action must be one of: start | stop | clear | status');
   }
 
   return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl };
@@ -226,9 +237,9 @@ const TOOLS = [
   },
   {
     name: 'weir_catalogControl', fn: 'catalogControl',
-    description: 'Start / stop / inspect the background catalog batch. action:"start" catalogs all un-cataloged non-archived items (paced, runs in the page); "stop" cancels; "status" (default) reports running state, progress {total,done,failed}, and cataloged/total counts.',
-    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['start', 'stop', 'status'], description: 'Default: status' } } },
-    annotations: { title: 'Control cataloging' },
+    description: 'Start / stop / clear / inspect the catalog batch. action:"start" catalogs all un-cataloged non-archived items (paced, runs in the page); "stop" cancels; "clear" discards ALL cards + un-files every item (items/content/reading state untouched; reversible by re-cataloging) for a clean restart; "status" (default) reports running state, progress {total,done,failed}, and cataloged/total counts.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['start', 'stop', 'clear', 'status'], description: 'Default: status' } } },
+    annotations: { title: 'Control cataloging', destructiveHint: true },
   },
   {
     name: 'weir_listFacets', fn: 'listFacets',

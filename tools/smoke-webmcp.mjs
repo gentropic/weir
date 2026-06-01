@@ -91,7 +91,13 @@ assert.deepEqual(await ctlTools.catalogControl({ action: 'start' }), { running: 
 const status = await ctlTools.catalogControl({});   // default status
 assert.equal(status.running, false); assert.equal(status.total, 2); assert.ok('cataloged' in status, 'status has counts');
 assert.deepEqual(await ctlTools.catalogControl({ action: 'stop' }), { stopped: true }, 'stop');
-await assert.rejects(ctlTools.catalogControl({ action: 'nope' }), /start \| stop \| status/);
+// clear: writes a card, then clears it
+await store.writeCard({ glass: { document_ref: 'a1', cataloged: '2026-06-01' }, facets: {}, dublin_core: {} });
+assert.ok((await store.catalogCount()) >= 1, 'a card exists');
+const cleared = await ctlTools.catalogControl({ action: 'clear' });
+assert.ok(cleared.cleared >= 1, 'clear removed cards');
+assert.equal(await store.catalogCount(), 0, 'catalog empty after clear');
+await assert.rejects(ctlTools.catalogControl({ action: 'nope' }), /start \| stop \| clear \| status/);
 // catalogItem requires app
 await assert.rejects(tools.catalogItem({ id: 'a1' }), /only available/, 'catalogItem needs app');
 
