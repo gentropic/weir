@@ -5996,7 +5996,7 @@ const LANGUAGE_FACETS = ['domain', 'entity', 'process', 'method', 'scale', 'spat
 function catalogPrompt(item, card, body) {
   const system = 'You are a library cataloger using faceted classification, over a general feed of articles and videos. Read the document and return ONLY a JSON object with these keys — each an array of short, lowercase, GENERAL terms — plus a one-sentence "description":\n'
     + '- domain: the field(s) / subject area(s) it belongs to (e.g. gaming, technology, politics, cooking, science, finance)\n'
-    + '- entity: the specific subjects, works, products, or concepts it is ABOUT (e.g. a game, a gadget, a person in the news, a topic). NEVER the author, channel, uploader, or show/series title — those are not entities.\n'
+    + '- entity: the few PRIMARY subjects/works/products the document is genuinely ABOUT — what you would file it under — NOT every name it mentions in passing. Aim for ~2–6; skip tangential or list-only mentions (e.g. competitors named once). NEVER the author, channel, uploader, or show/series title.\n'
     + '- process: what is being done (e.g. review, analysis, tutorial, interview, announcement, commentary)\n'
     + '- method: notable techniques/approaches, only if salient — else []\n'
     + '- scale: scope, ONLY if clearly applicable — one of personal|local|national|global — else []\n'
