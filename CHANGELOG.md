@@ -6,6 +6,15 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Storage size-report breakdown — 2026-06-01
+
+- **Settings → Storage → breakdown → compute…** shows a per-area byte breakdown
+  (content, catalog, items, feeds, views, …), biggest first, via
+  `store.storageBreakdown()` — summed from `stat()` metadata (no content reads),
+  flushing pending writes first so the numbers are exact. Complements the global
+  usage/quota total: shows what's actually eating space, handy right before an
+  FSA folder migration.
+
 ### Glass: catalog review queue — 2026-06-01
 
 - A **`needs_review` queue** surfaces cards the cataloger flagged low-confidence

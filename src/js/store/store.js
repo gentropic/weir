@@ -453,6 +453,25 @@ export class Store {
 
   async estimate() { try { return await this.vfs.estimate('/'); } catch { return null; } }
 
+  // Per-area storage breakdown: bytes summed by top-level path segment (content,
+  // catalog, items, feeds, …) from stat() metadata — cheap, no content reads.
+  async storageBreakdown() {
+    await this.flush();   // land pending item shards so the numbers are accurate
+    const areas = {};
+    const walk = async (dir) => {
+      let names; try { names = await this.vfs.readdir(dir); } catch { return; }
+      for (const name of names) {
+        const p = dir === '/' ? `/${name}` : `${dir}/${name}`;
+        let st; try { st = await this.vfs.stat(p); } catch { continue; }
+        if (st.type === 'directory') await walk(p);
+        else if (name !== '.health') { const area = p.split('/')[1] || '(root)'; areas[area] = (areas[area] || 0) + (st.size || 0); }
+      }
+    };
+    await walk('/');
+    let total = 0; for (const k in areas) total += areas[k];
+    return { total, areas };
+  }
+
   // Read/write round-trip health probe (proves the backend works end to end).
   async ping() {
     const stamp = String(now());

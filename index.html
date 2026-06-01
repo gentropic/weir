@@ -682,6 +682,7 @@ body {
         <div class="hint">Mount weir to a real folder (File System Access) so the whole store lives on your filesystem — immune to the browser clearing IndexedDB, and syncable with your own tools. Adopts an existing weir folder if you point at one.</div>
         <div class="set-row"><span>persistence: <b id="set-persist">—</b></span><button class="btn-link" id="set-request-persist" type="button">request persistence</button></div>
         <div class="set-row"><span>usage</span><span id="set-usage">—</span></div>
+        <div class="set-row"><span>breakdown</span><span id="set-breakdown"><button class="btn-link" id="set-breakdown-btn" type="button">compute…</button></span></div>
         <div class="set-row"><span>backup</span><span><button class="btn-link" id="set-export-backup" type="button">export…</button> &nbsp; <button class="btn-link" id="set-restore-backup" type="button">restore…</button></span></div>
         <input type="file" id="backup-file" accept=".json,application/json" hidden>
         <div class="hint">Export a full backup — every feed, item, and its content in one file — your safety net against the browser clearing IndexedDB. Restore replaces weir's current data with the backup, then reloads.</div>
@@ -5258,6 +5259,25 @@ class Store {
 
   async estimate() { try { return await this.vfs.estimate('/'); } catch { return null; } }
 
+  // Per-area storage breakdown: bytes summed by top-level path segment (content,
+  // catalog, items, feeds, …) from stat() metadata — cheap, no content reads.
+  async storageBreakdown() {
+    await this.flush();   // land pending item shards so the numbers are accurate
+    const areas = {};
+    const walk = async (dir) => {
+      let names; try { names = await this.vfs.readdir(dir); } catch { return; }
+      for (const name of names) {
+        const p = dir === '/' ? `/${name}` : `${dir}/${name}`;
+        let st; try { st = await this.vfs.stat(p); } catch { continue; }
+        if (st.type === 'directory') await walk(p);
+        else if (name !== '.health') { const area = p.split('/')[1] || '(root)'; areas[area] = (areas[area] || 0) + (st.size || 0); }
+      }
+    };
+    await walk('/');
+    let total = 0; for (const k in areas) total += areas[k];
+    return { total, areas };
+  }
+
   // Read/write round-trip health probe (proves the backend works end to end).
   async ping() {
     const stamp = String(now());
@@ -7257,6 +7277,7 @@ class App {
     document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
     document.getElementById('set-request-persist')?.addEventListener('click', () => this.requestPersist());
     document.getElementById('set-export-backup')?.addEventListener('click', () => this.exportBackup());
+    document.getElementById('set-breakdown-btn')?.addEventListener('click', () => this.computeBreakdown());
     const backupFile = document.getElementById('backup-file');
     document.getElementById('set-restore-backup')?.addEventListener('click', () => backupFile?.click());
     backupFile?.addEventListener('change', async () => { const f = backupFile.files[0]; if (f) await this.restoreBackup(await f.text()); backupFile.value = ''; });
@@ -8625,6 +8646,18 @@ class App {
   }
 
   // ── filesystem mount (run the store on a real folder; durability) ──
+  // On-demand per-area storage breakdown (walks the tree; run it manually so it
+  // doesn't compete with a catalog run). Biggest areas first.
+  async computeBreakdown() {
+    const el = document.getElementById('set-breakdown'); if (!el) return;
+    el.textContent = 'computing…';
+    try {
+      const r = await this.store.storageBreakdown();
+      const parts = Object.entries(r.areas).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${escapeHtml(k)} ${fmtBytes(v)}`);
+      el.innerHTML = `<b>${fmtBytes(r.total)}</b> — ${parts.join(' · ') || 'empty'}`;
+    } catch (e) { el.textContent = `failed: ${e.message}`; }
+  }
+
   renderStorageMount() {
     const loc = document.getElementById('set-storage-loc');
     const acts = document.getElementById('set-storage-actions');

@@ -139,4 +139,17 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.ok(c.getViews().some((v) => v.id === 'v-x'), 'views restored');
 }
 
+// ── storage breakdown: per-area byte sums from stat() ──
+{
+  const s = new Store(await VFS.create()); await s._hydrate();
+  await s.putFeed({ id: 'sb', name: 'SB', adapter: 'feed', url: 'http://sb/f' });
+  await s.upsertItems([{ id: 'sb-1', feed_id: 'sb', type: 'article', title: 'T', content: '<p>' + 'x'.repeat(500) + '</p>' }]);
+  const bd = await s.storageBreakdown();
+  assert.ok(bd.total > 0, 'breakdown total > 0');
+  assert.ok(bd.areas.feeds > 0, 'feeds area counted');
+  assert.ok(bd.areas.items > 0, 'items area counted');
+  assert.ok(bd.areas.content > 0, 'content area counted');
+  assert.equal(bd.total, Object.values(bd.areas).reduce((a, b) => a + b, 0), 'total = sum of areas');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

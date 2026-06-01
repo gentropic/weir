@@ -129,6 +129,7 @@ export class App {
     document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
     document.getElementById('set-request-persist')?.addEventListener('click', () => this.requestPersist());
     document.getElementById('set-export-backup')?.addEventListener('click', () => this.exportBackup());
+    document.getElementById('set-breakdown-btn')?.addEventListener('click', () => this.computeBreakdown());
     const backupFile = document.getElementById('backup-file');
     document.getElementById('set-restore-backup')?.addEventListener('click', () => backupFile?.click());
     backupFile?.addEventListener('change', async () => { const f = backupFile.files[0]; if (f) await this.restoreBackup(await f.text()); backupFile.value = ''; });
@@ -1497,6 +1498,18 @@ export class App {
   }
 
   // ── filesystem mount (run the store on a real folder; durability) ──
+  // On-demand per-area storage breakdown (walks the tree; run it manually so it
+  // doesn't compete with a catalog run). Biggest areas first.
+  async computeBreakdown() {
+    const el = document.getElementById('set-breakdown'); if (!el) return;
+    el.textContent = 'computing…';
+    try {
+      const r = await this.store.storageBreakdown();
+      const parts = Object.entries(r.areas).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${escapeHtml(k)} ${fmtBytes(v)}`);
+      el.innerHTML = `<b>${fmtBytes(r.total)}</b> — ${parts.join(' · ') || 'empty'}`;
+    } catch (e) { el.textContent = `failed: ${e.message}`; }
+  }
+
   renderStorageMount() {
     const loc = document.getElementById('set-storage-loc');
     const acts = document.getElementById('set-storage-actions');
