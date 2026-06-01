@@ -7612,6 +7612,7 @@ class App {
     this._batch = true;
     this._catalogProgress = { total: todo.length, done: 0, failed: 0 };
     this._renderCatRun();
+    if (this._pipWin) this._renderFlightDeck();   // flip the deck to "cataloging…" immediately, not after item #1
     this._acquireWakeLock();                 // keep the display awake for the run
     let n = 0, ok = 0, fails = 0, streak = 0, bailed = false;
     try {
@@ -7635,13 +7636,13 @@ class App {
     } finally {
       this._batch = false;
       this._cataloging = null;
+      this._catalogProgress = { total: todo.length, done: ok, failed: fails, finished: true };   // before the render so the deck shows "done N/N", not idle
       this._releaseWakeLock();
       this._renderCatRun();
       if (this._pipWin) this._renderFlightDeck();
       if (this.catalog) this.renderAll();
       this.renderCatUsage();
     }
-    this._catalogProgress = { total: todo.length, done: ok, failed: fails, finished: true };
     if (!bailed) this._catStatus(`cataloged ${ok}/${todo.length}${fails ? `, ${fails} failed` : ''}${job.cancel ? ' (stopped)' : ''}`);
   }
 
