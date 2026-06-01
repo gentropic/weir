@@ -14,9 +14,15 @@ export function stripToText(html) {
 const LANGUAGE_FACETS = ['domain', 'entity', 'process', 'method', 'scale', 'spatial'];
 
 export function catalogPrompt(item, card, body) {
-  const system = 'You are a library cataloger using faceted classification. Read the document and return ONLY a JSON object with these keys, each an array of short lowercase kebab-case terms (or []), plus a one-sentence "description":\n'
-    + '- domain: the field(s) it belongs to\n- entity: the specific things/concepts it is about\n- process: what is being done (e.g. estimation, comparison, review)\n- method: techniques/approaches used\n- scale: one of sample|bench|deposit|district|region|global if applicable, else []\n- spatial: place names if any, else []\n- description: one precise sentence summarizing it.\n'
-    + 'Be precise; do not invent terms that are not supported by the text. Prefer reusing these already-known entity terms when they fit: ' + JSON.stringify(card.facets.entity || []) + '.';
+  const system = 'You are a library cataloger using faceted classification, over a general feed of articles and videos. Read the document and return ONLY a JSON object with these keys — each an array of short, lowercase, GENERAL terms — plus a one-sentence "description":\n'
+    + '- domain: the field(s) / subject area(s) it belongs to (e.g. gaming, technology, politics, cooking, science, finance)\n'
+    + '- entity: the specific subjects, works, products, or concepts it is ABOUT (e.g. a game, a gadget, a person in the news, a topic). NEVER the author, channel, uploader, or show/series title — those are not entities.\n'
+    + '- process: what is being done (e.g. review, analysis, tutorial, interview, announcement, commentary)\n'
+    + '- method: notable techniques/approaches, only if salient — else []\n'
+    + '- scale: scope, ONLY if clearly applicable — one of personal|local|national|global — else []\n'
+    + '- spatial: real-world place names if any, else []\n'
+    + '- description: one precise sentence summarizing it.\n'
+    + 'Use [] for any facet not clearly supported by the text — never force a value (most items have no meaningful scale or spatial). Prefer concise, reusable canonical terms over near-synonyms (use "streaming", not also "live-stream"). Prefer reusing these already-known entity terms when they fit: ' + JSON.stringify(card.facets.entity || []) + '.';
   const user = `Title: ${item.title || '(untitled)'}\nKind: ${item.type}\nSource: ${card.dublin_core.source || ''}\n\n${String(body || '').slice(0, 6000)}`;
   return [{ role: 'system', content: system }, { role: 'user', content: user }];
 }

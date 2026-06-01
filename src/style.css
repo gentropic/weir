@@ -64,6 +64,8 @@ body {
 .facet-term .ft-count { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); flex-shrink: 0; }
 .facet-more { padding: 2px 8px 2px 22px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
 .rail-label #cat-run { float: right; font-size: 10px; text-transform: none; letter-spacing: 0; }
+.rail-label #cat-run.running { color: var(--au-action); animation: cat-pulse 1.4s ease-in-out infinite; }
+@keyframes cat-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 #catalog-status { color: var(--au-action); }
 
 /* folder headers in the source rail */

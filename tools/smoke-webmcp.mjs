@@ -69,4 +69,30 @@ assert.ok(!(f2.form.terms.find((t) => t.term === 'video')), 'archived item dropp
 const inbox = await tools.queryItems({});
 assert.equal(inbox.count, 1, 'archived item dropped from default query');
 
-console.log('webmcp tools smoke ok:', JSON.stringify({ items: all.count, facets: Object.keys(f).length }));
+// ── mutations: setState (read/saved/archived, reversible) ──
+const upd = await tools.setState({ id: 'a1', saved: true, read: true });
+assert.equal(upd.saved, true); assert.equal(upd.read, true, 'setState applied');
+assert.equal(store.getItem('a1').saved, true, 'persisted to store');
+await tools.setState({ id: 'a1', saved: false });
+assert.equal(store.getItem('a1').saved, false, 'reversible');
+await assert.rejects(tools.setState({ id: 'a1' }), /at least one/, 'needs a field');
+await assert.rejects(tools.setState({ id: 'ghost', read: true }), /No item/);
+
+// ── catalog control (mock app) ──
+const calls = [];
+const mockApp = {
+  catalogAll: () => { calls.push('start'); return { running: true, todo: 3 }; },
+  stopCatalog: () => { calls.push('stop'); return true; },
+  catalogStatus: () => ({ running: false, progress: { total: 3, done: 1, failed: 0 } }),
+  catalogItem: async (id) => { calls.push('item:' + id); store.getItem(id).glass_id = 'glass-x'; return { ok: true, card: { facets: { domain: ['x'] } } }; },
+};
+const ctlTools = buildWeirTools({ store, app: mockApp });
+assert.deepEqual(await ctlTools.catalogControl({ action: 'start' }), { running: true, todo: 3 }, 'start');
+const status = await ctlTools.catalogControl({});   // default status
+assert.equal(status.running, false); assert.equal(status.total, 2); assert.ok('cataloged' in status, 'status has counts');
+assert.deepEqual(await ctlTools.catalogControl({ action: 'stop' }), { stopped: true }, 'stop');
+await assert.rejects(ctlTools.catalogControl({ action: 'nope' }), /start \| stop \| status/);
+// catalogItem requires app
+await assert.rejects(tools.catalogItem({ id: 'a1' }), /only available/, 'catalogItem needs app');
+
+console.log('webmcp tools smoke ok:', JSON.stringify({ items: all.count, facets: Object.keys(f).length, mutations: calls.length }));

@@ -51,7 +51,7 @@ function decCursor(s) {
 // Tool implementations over a store. `cardFacets` (optional) returns the app's
 // live item→facets cache (enriched, when catalog cards are loaded); `ensureCards`
 // (optional) warms it. Without them, facets fall back to deterministic Stage-0.
-export function buildWeirTools({ store, cardFacets, ensureCards } = {}) {
+export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   const facetsFor = (it) => {
     const live = cardFacets && cardFacets();
     return (live && live.get(it.id)) || facetsOf(it, store.getFeed(it.feed_id));
@@ -130,7 +130,48 @@ export function buildWeirTools({ store, cardFacets, ensureCards } = {}) {
     return out;
   }
 
-  return { queryItems, getItem, listFacets };
+  // ── mutations (the user opted into wide access for their own local data) ──
+
+  // Set item flags. All reversible — weir's "archived" archives, never deletes.
+  async function setState(input = {}) {
+    const it = input.id != null && store.getItem(String(input.id));
+    if (!it) throw new Error(`No item with id "${input.id}".`);
+    const patch = {};
+    if (input.read !== undefined) patch.read = !!input.read;
+    if (input.saved !== undefined) patch.saved = !!input.saved;
+    if (input.archived !== undefined) patch.archived = !!input.archived;
+    if (!Object.keys(patch).length) throw new Error('Provide at least one of: read, saved, archived.');
+    store.setState(it.id, patch);
+    return projItem(store, store.getItem(it.id), true);
+  }
+
+  // Catalog one item with the configured LLM now → returns its enriched facets.
+  async function catalogItem(input = {}) {
+    if (!app || !app.catalogItem) throw new Error('cataloging is only available in the running app');
+    const it = input.id != null && store.getItem(String(input.id));
+    if (!it) throw new Error(`No item with id "${input.id}".`);
+    const r = await app.catalogItem(it.id);
+    if (!r) throw new Error('catalog failed — is the cataloger configured and Lemonade/the bridge reachable?');
+    const fresh = store.getItem(it.id);
+    let facets = r.card && r.card.facets, description;
+    if (fresh.glass_id) { try { const c = await store.getCard(fresh.glass_id); if (c) { facets = c.facets; description = c.dublin_core && c.dublin_core.description; } } catch { /* card unreadable */ } }
+    return { glass_id: fresh.glass_id, ok: r.ok !== false, facets, description };
+  }
+
+  // Start / stop / inspect the background catalog batch.
+  async function catalogControl(input = {}) {
+    if (!app) throw new Error('cataloging is only available in the running app');
+    const action = (input.action || 'status');
+    if (action === 'start') return app.catalogAll();
+    if (action === 'stop') return { stopped: app.stopCatalog() };
+    if (action === 'status') {
+      const st = app.catalogStatus ? app.catalogStatus() : { running: false };
+      return { ...st, cataloged: await store.catalogCount(), total: store.items.size };
+    }
+    throw new Error('action must be one of: start | stop | status');
+  }
+
+  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -165,6 +206,31 @@ const TOOLS = [
     annotations: { readOnlyHint: true, title: 'Get a weir item' },
   },
   {
+    name: 'weir_setState', fn: 'setState',
+    description: "Mutate an item: set read / saved / archived (each a boolean; pass only the ones to change). All reversible — weir's archive never deletes. Returns the updated item.",
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'Item id (from weir_queryItems)' },
+        read: { type: 'boolean', description: 'Mark read/unread' },
+        saved: { type: 'boolean', description: 'Save/unsave (star)' },
+        archived: { type: 'boolean', description: 'Archive/unarchive (non-destructive)' },
+      }, required: ['id'],
+    },
+    annotations: { title: 'Set item state' },
+  },
+  {
+    name: 'weir_catalogItem', fn: 'catalogItem',
+    description: 'Catalog one item with the configured LLM right now (fills its glass facets + description). Returns glass_id, facets, description. Needs the cataloger configured and reachable (Lemonade via the bridge).',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Item id (from weir_queryItems)' } }, required: ['id'] },
+    annotations: { title: 'Catalog an item' },
+  },
+  {
+    name: 'weir_catalogControl', fn: 'catalogControl',
+    description: 'Start / stop / inspect the background catalog batch. action:"start" catalogs all un-cataloged non-archived items (paced, runs in the page); "stop" cancels; "status" (default) reports running state, progress {total,done,failed}, and cataloged/total counts.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['start', 'stop', 'status'], description: 'Default: status' } } },
+    annotations: { title: 'Control cataloging' },
+  },
+  {
     name: 'weir_listFacets', fn: 'listFacets',
     description: 'Glass catalog facets across the non-archived corpus: each facet → { total, terms:[{term,count}], omitted }, top terms by count (entity alone can be thousands). Facets: domain, entity, process, method, scale, spatial, temporal, form, provenance. Cataloged items contribute LLM facets; the rest contribute deterministic Stage-0 facets. Use facet+limit to drill into one.',
     inputSchema: {
@@ -188,6 +254,7 @@ export function initWebmcp({ store, app, fetch }) {
 
   const tools = buildWeirTools({
     store,
+    app,
     cardFacets: () => (app ? app._cardFacets : null),
     ensureCards: async () => { if (app && app.loadCardFacets && (!app._cardFacets || app._cardFacets.size === 0)) await app.loadCardFacets(); },
   });

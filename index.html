@@ -208,6 +208,8 @@ body {
 .facet-term .ft-count { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); flex-shrink: 0; }
 .facet-more { padding: 2px 8px 2px 22px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
 .rail-label #cat-run { float: right; font-size: 10px; text-transform: none; letter-spacing: 0; }
+.rail-label #cat-run.running { color: var(--au-action); animation: cat-pulse 1.4s ease-in-out infinite; }
+@keyframes cat-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 #catalog-status { color: var(--au-action); }
 
 /* folder headers in the source rail */
@@ -4671,9 +4673,15 @@ function stripToText(html) {
 const LANGUAGE_FACETS = ['domain', 'entity', 'process', 'method', 'scale', 'spatial'];
 
 function catalogPrompt(item, card, body) {
-  const system = 'You are a library cataloger using faceted classification. Read the document and return ONLY a JSON object with these keys, each an array of short lowercase kebab-case terms (or []), plus a one-sentence "description":\n'
-    + '- domain: the field(s) it belongs to\n- entity: the specific things/concepts it is about\n- process: what is being done (e.g. estimation, comparison, review)\n- method: techniques/approaches used\n- scale: one of sample|bench|deposit|district|region|global if applicable, else []\n- spatial: place names if any, else []\n- description: one precise sentence summarizing it.\n'
-    + 'Be precise; do not invent terms that are not supported by the text. Prefer reusing these already-known entity terms when they fit: ' + JSON.stringify(card.facets.entity || []) + '.';
+  const system = 'You are a library cataloger using faceted classification, over a general feed of articles and videos. Read the document and return ONLY a JSON object with these keys — each an array of short, lowercase, GENERAL terms — plus a one-sentence "description":\n'
+    + '- domain: the field(s) / subject area(s) it belongs to (e.g. gaming, technology, politics, cooking, science, finance)\n'
+    + '- entity: the specific subjects, works, products, or concepts it is ABOUT (e.g. a game, a gadget, a person in the news, a topic). NEVER the author, channel, uploader, or show/series title — those are not entities.\n'
+    + '- process: what is being done (e.g. review, analysis, tutorial, interview, announcement, commentary)\n'
+    + '- method: notable techniques/approaches, only if salient — else []\n'
+    + '- scale: scope, ONLY if clearly applicable — one of personal|local|national|global — else []\n'
+    + '- spatial: real-world place names if any, else []\n'
+    + '- description: one precise sentence summarizing it.\n'
+    + 'Use [] for any facet not clearly supported by the text — never force a value (most items have no meaningful scale or spatial). Prefer concise, reusable canonical terms over near-synonyms (use "streaming", not also "live-stream"). Prefer reusing these already-known entity terms when they fit: ' + JSON.stringify(card.facets.entity || []) + '.';
   const user = `Title: ${item.title || '(untitled)'}\nKind: ${item.type}\nSource: ${card.dublin_core.source || ''}\n\n${String(body || '').slice(0, 6000)}`;
   return [{ role: 'system', content: system }, { role: 'user', content: user }];
 }
@@ -7463,8 +7471,29 @@ class App {
     // "Let it rip" can be the whole corpus (catalog mode, no filter) — one LLM
     // call per item. Confirm before a long unattended run.
     if (todo.length > 30 && !confirm(`Catalog ${todo.length} items? That's one LLM call each — it can run for a while. It resumes where it left off if interrupted, and you can click the button again to stop.`)) return;
+    return this._runCatalog(todo);
+  }
+
+  // Catalog ALL un-cataloged, non-archived items in the corpus (no view scope, no
+  // confirm) — used by the WebMCP catalog-start tool. Fire-and-forget; paced.
+  catalogAll() {
+    if (this._cataloging) return { running: true, already: true };
+    const todo = [...this.store.items.values()].filter((i) => !i.glass_id && !i.archived);
+    if (!todo.length) { this._catStatus('nothing to catalog'); return { running: false, todo: 0 }; }
+    this._runCatalog(todo);   // not awaited — runs in the background, paced
+    return { running: true, todo: todo.length };
+  }
+
+  stopCatalog() { if (this._cataloging) { this._cataloging.cancel = true; return true; } return false; }
+  catalogStatus() { return { running: !!this._cataloging, progress: this._catalogProgress || null }; }
+
+  // The paced batch loop, shared by catalogVisible / catalogAll. Cancelable,
+  // resumable (only un-cataloged items are queued), self-stopping on a failure run.
+  async _runCatalog(todo) {
     const job = this._cataloging = { cancel: false };
     this._batch = true;
+    this._catalogProgress = { total: todo.length, done: 0, failed: 0 };
+    this._renderCatRun();
     let n = 0, ok = 0, fails = 0, streak = 0, bailed = false;
     try {
       for (const it of todo) {
@@ -7477,16 +7506,28 @@ class App {
           // churning through thousands of no-ops.
           bailed = true; this._catStatus(`stopped after ${streak} failures in a row — is Lemonade running / the bridge active? ${ok} cataloged so far; click to resume.`); break;
         } else { fails++; }
+        this._catalogProgress = { total: todo.length, done: ok, failed: fails };
         if (n % 25 === 0 && this.catalog) this.renderAll();          // throttled refresh
         if (!job.cancel) await new Promise((res) => setTimeout(res, 400));   // pace it
       }
     } finally {
       this._batch = false;
       this._cataloging = null;
+      this._renderCatRun();
       if (this.catalog) this.renderAll();
       this.renderCatUsage();
     }
+    this._catalogProgress = { total: todo.length, done: ok, failed: fails, finished: true };
     if (!bailed) this._catStatus(`cataloged ${ok}/${todo.length}${fails ? `, ${fails} failed` : ''}${job.cancel ? ' (stopped)' : ''}`);
+  }
+
+  // Catalog ▸ ⇄ ⏸ — the rail button reflects whether a batch is running.
+  _renderCatRun() {
+    const btn = document.getElementById('cat-run'); if (!btn) return;
+    const running = !!this._cataloging;
+    btn.textContent = running ? 'catalog ⏸' : 'catalog ▸';
+    btn.classList.toggle('running', running);
+    btn.title = running ? 'Cataloging… click to stop' : 'Catalog the shown items with AI (click again to stop)';
   }
 
   // Wipe every catalog card and un-stamp items, then refresh the view. Cleanup
@@ -8683,7 +8724,7 @@ function decCursor(s) {
 // Tool implementations over a store. `cardFacets` (optional) returns the app's
 // live item→facets cache (enriched, when catalog cards are loaded); `ensureCards`
 // (optional) warms it. Without them, facets fall back to deterministic Stage-0.
-function buildWeirTools({ store, cardFacets, ensureCards } = {}) {
+function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   const facetsFor = (it) => {
     const live = cardFacets && cardFacets();
     return (live && live.get(it.id)) || facetsOf(it, store.getFeed(it.feed_id));
@@ -8762,7 +8803,48 @@ function buildWeirTools({ store, cardFacets, ensureCards } = {}) {
     return out;
   }
 
-  return { queryItems, getItem, listFacets };
+  // ── mutations (the user opted into wide access for their own local data) ──
+
+  // Set item flags. All reversible — weir's "archived" archives, never deletes.
+  async function setState(input = {}) {
+    const it = input.id != null && store.getItem(String(input.id));
+    if (!it) throw new Error(`No item with id "${input.id}".`);
+    const patch = {};
+    if (input.read !== undefined) patch.read = !!input.read;
+    if (input.saved !== undefined) patch.saved = !!input.saved;
+    if (input.archived !== undefined) patch.archived = !!input.archived;
+    if (!Object.keys(patch).length) throw new Error('Provide at least one of: read, saved, archived.');
+    store.setState(it.id, patch);
+    return projItem(store, store.getItem(it.id), true);
+  }
+
+  // Catalog one item with the configured LLM now → returns its enriched facets.
+  async function catalogItem(input = {}) {
+    if (!app || !app.catalogItem) throw new Error('cataloging is only available in the running app');
+    const it = input.id != null && store.getItem(String(input.id));
+    if (!it) throw new Error(`No item with id "${input.id}".`);
+    const r = await app.catalogItem(it.id);
+    if (!r) throw new Error('catalog failed — is the cataloger configured and Lemonade/the bridge reachable?');
+    const fresh = store.getItem(it.id);
+    let facets = r.card && r.card.facets, description;
+    if (fresh.glass_id) { try { const c = await store.getCard(fresh.glass_id); if (c) { facets = c.facets; description = c.dublin_core && c.dublin_core.description; } } catch { /* card unreadable */ } }
+    return { glass_id: fresh.glass_id, ok: r.ok !== false, facets, description };
+  }
+
+  // Start / stop / inspect the background catalog batch.
+  async function catalogControl(input = {}) {
+    if (!app) throw new Error('cataloging is only available in the running app');
+    const action = (input.action || 'status');
+    if (action === 'start') return app.catalogAll();
+    if (action === 'stop') return { stopped: app.stopCatalog() };
+    if (action === 'status') {
+      const st = app.catalogStatus ? app.catalogStatus() : { running: false };
+      return { ...st, cataloged: await store.catalogCount(), total: store.items.size };
+    }
+    throw new Error('action must be one of: start | stop | status');
+  }
+
+  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -8797,6 +8879,31 @@ const TOOLS = [
     annotations: { readOnlyHint: true, title: 'Get a weir item' },
   },
   {
+    name: 'weir_setState', fn: 'setState',
+    description: "Mutate an item: set read / saved / archived (each a boolean; pass only the ones to change). All reversible — weir's archive never deletes. Returns the updated item.",
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'Item id (from weir_queryItems)' },
+        read: { type: 'boolean', description: 'Mark read/unread' },
+        saved: { type: 'boolean', description: 'Save/unsave (star)' },
+        archived: { type: 'boolean', description: 'Archive/unarchive (non-destructive)' },
+      }, required: ['id'],
+    },
+    annotations: { title: 'Set item state' },
+  },
+  {
+    name: 'weir_catalogItem', fn: 'catalogItem',
+    description: 'Catalog one item with the configured LLM right now (fills its glass facets + description). Returns glass_id, facets, description. Needs the cataloger configured and reachable (Lemonade via the bridge).',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Item id (from weir_queryItems)' } }, required: ['id'] },
+    annotations: { title: 'Catalog an item' },
+  },
+  {
+    name: 'weir_catalogControl', fn: 'catalogControl',
+    description: 'Start / stop / inspect the background catalog batch. action:"start" catalogs all un-cataloged non-archived items (paced, runs in the page); "stop" cancels; "status" (default) reports running state, progress {total,done,failed}, and cataloged/total counts.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['start', 'stop', 'status'], description: 'Default: status' } } },
+    annotations: { title: 'Control cataloging' },
+  },
+  {
     name: 'weir_listFacets', fn: 'listFacets',
     description: 'Glass catalog facets across the non-archived corpus: each facet → { total, terms:[{term,count}], omitted }, top terms by count (entity alone can be thousands). Facets: domain, entity, process, method, scale, spatial, temporal, form, provenance. Cataloged items contribute LLM facets; the rest contribute deterministic Stage-0 facets. Use facet+limit to drill into one.',
     inputSchema: {
@@ -8820,6 +8927,7 @@ function initWebmcp({ store, app, fetch }) {
 
   const tools = buildWeirTools({
     store,
+    app,
     cardFacets: () => (app ? app._cardFacets : null),
     ensureCards: async () => { if (app && app.loadCardFacets && (!app._cardFacets || app._cardFacets.size === 0)) await app.loadCardFacets(); },
   });

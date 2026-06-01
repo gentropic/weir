@@ -403,8 +403,29 @@ export class App {
     // "Let it rip" can be the whole corpus (catalog mode, no filter) — one LLM
     // call per item. Confirm before a long unattended run.
     if (todo.length > 30 && !confirm(`Catalog ${todo.length} items? That's one LLM call each — it can run for a while. It resumes where it left off if interrupted, and you can click the button again to stop.`)) return;
+    return this._runCatalog(todo);
+  }
+
+  // Catalog ALL un-cataloged, non-archived items in the corpus (no view scope, no
+  // confirm) — used by the WebMCP catalog-start tool. Fire-and-forget; paced.
+  catalogAll() {
+    if (this._cataloging) return { running: true, already: true };
+    const todo = [...this.store.items.values()].filter((i) => !i.glass_id && !i.archived);
+    if (!todo.length) { this._catStatus('nothing to catalog'); return { running: false, todo: 0 }; }
+    this._runCatalog(todo);   // not awaited — runs in the background, paced
+    return { running: true, todo: todo.length };
+  }
+
+  stopCatalog() { if (this._cataloging) { this._cataloging.cancel = true; return true; } return false; }
+  catalogStatus() { return { running: !!this._cataloging, progress: this._catalogProgress || null }; }
+
+  // The paced batch loop, shared by catalogVisible / catalogAll. Cancelable,
+  // resumable (only un-cataloged items are queued), self-stopping on a failure run.
+  async _runCatalog(todo) {
     const job = this._cataloging = { cancel: false };
     this._batch = true;
+    this._catalogProgress = { total: todo.length, done: 0, failed: 0 };
+    this._renderCatRun();
     let n = 0, ok = 0, fails = 0, streak = 0, bailed = false;
     try {
       for (const it of todo) {
@@ -417,16 +438,28 @@ export class App {
           // churning through thousands of no-ops.
           bailed = true; this._catStatus(`stopped after ${streak} failures in a row — is Lemonade running / the bridge active? ${ok} cataloged so far; click to resume.`); break;
         } else { fails++; }
+        this._catalogProgress = { total: todo.length, done: ok, failed: fails };
         if (n % 25 === 0 && this.catalog) this.renderAll();          // throttled refresh
         if (!job.cancel) await new Promise((res) => setTimeout(res, 400));   // pace it
       }
     } finally {
       this._batch = false;
       this._cataloging = null;
+      this._renderCatRun();
       if (this.catalog) this.renderAll();
       this.renderCatUsage();
     }
+    this._catalogProgress = { total: todo.length, done: ok, failed: fails, finished: true };
     if (!bailed) this._catStatus(`cataloged ${ok}/${todo.length}${fails ? `, ${fails} failed` : ''}${job.cancel ? ' (stopped)' : ''}`);
+  }
+
+  // Catalog ▸ ⇄ ⏸ — the rail button reflects whether a batch is running.
+  _renderCatRun() {
+    const btn = document.getElementById('cat-run'); if (!btn) return;
+    const running = !!this._cataloging;
+    btn.textContent = running ? 'catalog ⏸' : 'catalog ▸';
+    btn.classList.toggle('running', running);
+    btn.title = running ? 'Cataloging… click to stop' : 'Catalog the shown items with AI (click again to stop)';
   }
 
   // Wipe every catalog card and un-stamp items, then refresh the view. Cleanup
