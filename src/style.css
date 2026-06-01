@@ -72,6 +72,10 @@ body {
 #flightdeck { font-family: var(--au-font-ui, sans-serif); color: var(--au-fg); background: var(--au-bg); height: 100%; display: flex; flex-direction: column; }
 .fd-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--au-border); position: sticky; top: 0; background: var(--au-bg-raised, var(--au-bg)); font-size: 13px; }
 .fd-prog { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); }
+.fd-scope { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-action); background: var(--sw-bg-bright); border-radius: 3px; padding: 1px 5px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fd-btn { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); background: none; border: 1px solid var(--au-border); border-radius: 3px; padding: 1px 5px; cursor: pointer; }
+.fd-btn:hover { color: var(--au-action); border-color: var(--au-action); }
+.fd-spacer { flex: 1; }
 .fd-prog.running { color: var(--au-action); animation: cat-pulse 1.4s ease-in-out infinite; }
 .fd-list { overflow-y: auto; flex: 1; }
 .fd-item { display: flex; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--au-border); cursor: pointer; align-items: center; }

@@ -6,6 +6,18 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Flight-deck: pinnable scope + smoother refresh — 2026-06-01
+
+- The flight-deck can be **pinned to a slice** of the corpus: navigate the main
+  view to a folder / saved view / type / feed, then hit **pin** in the deck header
+  — it shows just that scope (label in the header, **all** button to reset),
+  persisted in `flightdeck_scope`. So you can keep a deck on your fast-moving news
+  folders while you work, ignoring the gaming firehose.
+- **Smoother refresh:** the deck only rebuilds its list when the item set actually
+  changes (preserving scroll instead of snapping to top every tick), and it now
+  refreshes after each background **poll cycle** too — so newly-polled items appear
+  even when only polling (no catalog running).
+
 ### Flight-deck keeps polling alive too — 2026-06-01
 
 - While the flight-deck pop-out is open, weir now keeps **polling** alive, not just

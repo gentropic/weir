@@ -216,6 +216,10 @@ body {
 #flightdeck { font-family: var(--au-font-ui, sans-serif); color: var(--au-fg); background: var(--au-bg); height: 100%; display: flex; flex-direction: column; }
 .fd-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--au-border); position: sticky; top: 0; background: var(--au-bg-raised, var(--au-bg)); font-size: 13px; }
 .fd-prog { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); }
+.fd-scope { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-action); background: var(--sw-bg-bright); border-radius: 3px; padding: 1px 5px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fd-btn { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); background: none; border: 1px solid var(--au-border); border-radius: 3px; padding: 1px 5px; cursor: pointer; }
+.fd-btn:hover { color: var(--au-action); border-color: var(--au-action); }
+.fd-spacer { flex: 1; }
 .fd-prog.running { color: var(--au-action); animation: cat-pulse 1.4s ease-in-out infinite; }
 .fd-list { overflow-y: auto; flex: 1; }
 .fd-item { display: flex; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--au-border); cursor: pointer; align-items: center; }
@@ -4331,6 +4335,7 @@ const DEFAULT_SETTINGS = {
   poll_concurrency: 8,
   pause_polling_when_hidden: true,
   poll_in_flightdeck: true,              // keep polling at full rate while the flight-deck pop-out is open (overrides pause-when-hidden + dodges background throttling)
+  flightdeck_scope: null,                // null = all items; else a query-opts snapshot ({category}/{type}/{view}/{feed_id}/…) pinned via the deck's "pin" button
   images_default_allowed: false,
   retainer_run_hour: 4,
   theme: 'switchboard-dark',
@@ -7677,23 +7682,68 @@ class App {
     pip.document.body.innerHTML = '<div id="flightdeck"></div>';
     // Keep polling alive through the deck's (un-throttled, always-visible) timer
     // while it's open — so a backgrounded tab keeps ingesting, not just cataloging.
-    if (this.store.getSettings().poll_in_flightdeck !== false) this.poller.setKeepAlive(pip);
-    pip.addEventListener('pagehide', () => { this._pipWin = null; this.poller.setKeepAlive(null); });
+    if (this.store.getSettings().poll_in_flightdeck !== false) {
+      this.poller.setKeepAlive(pip);
+      // Refresh the deck after each background poll cycle, so new items show even
+      // when only polling (no catalog running) — un-throttled (it's a microtask
+      // off the PiP-timer tick), unlike the main hidden-tab render.
+      this._deckPollOff = this.poller.on('cycle', () => { if (this._pipWin) this._renderFlightDeck(); });
+    }
+    pip.addEventListener('pagehide', () => { this._pipWin = null; this.poller.setKeepAlive(null); if (this._deckPollOff) { this._deckPollOff(); this._deckPollOff = null; } });
     pip.document.getElementById('flightdeck').addEventListener('click', (e) => {
+      if (e.target.closest('[data-fd-pin]')) { this._pinDeck(); return; }
+      if (e.target.closest('[data-fd-reset]')) { this.store.setSettings({ flightdeck_scope: null }); this._fdSig = null; this._renderFlightDeck(); return; }
       const el = e.target.closest('[data-fd-open]'); if (el && el.dataset.fdOpen) { try { window.open(el.dataset.fdOpen, '_blank', 'noopener'); } catch { /* ignore */ } }
     });
+    this._fdSig = null;
+    this._renderFlightDeck();
+  }
+
+  // Query-opts snapshot for the current main view (what "pin to deck" captures).
+  _currentScope() {
+    if (this.smartView) return { ...this.smartView.query };
+    if (this.route) return { route: this.route };
+    if (this.catFilter != null) return { category: this.catFilter };
+    if (this.feedFilter) return { feed_id: this.feedFilter };
+    if (this.view && this.view !== 'inbox') return { view: this.view };
+    return null;   // inbox / default / catalog → everything
+  }
+  _scopeLabel(scope) {
+    if (!scope) return 'all';
+    if (scope.category != null) return scope.category || 'ungrouped';
+    if (scope.feed_id) return this.store.getFeed(scope.feed_id)?.name || scope.feed_id;
+    if (scope.route) return `→ ${scope.route}`;
+    if (scope.saved) return 'saved';
+    if (scope.view) return scope.view;
+    if (scope.type) return scope.type;
+    return 'filtered';
+  }
+  _pinDeck() {
+    this.store.setSettings({ flightdeck_scope: this._currentScope() });
+    this._fdSig = null;
     this._renderFlightDeck();
   }
 
   _renderFlightDeck() {
     const pip = this._pipWin; if (!pip || !pip.document) return;
     const root = pip.document.getElementById('flightdeck'); if (!root) return;
+    if (!root.querySelector('.fd-list')) root.innerHTML = '<div class="fd-head"></div><div class="fd-list"></div>';
+    const headEl = root.querySelector('.fd-head'); const listEl = root.querySelector('.fd-list');
+    const scope = this.store.getSettings().flightdeck_scope || null;
     const p = this._catalogProgress;
     const prog = this._cataloging
-      ? `<span class="fd-prog running">cataloging ${p ? p.done : 0}/${p ? p.total : '?'}${p && p.failed ? ` · ${p.failed}✗` : ''}</span>`
-      : (p && p.finished ? `<span class="fd-prog">done ${p.done}/${p.total}</span>` : '<span class="fd-prog idle">idle</span>');
-    const recent = this.store.query({ limit: 16 });
-    const rows = recent.map((it) => {
+      ? `<span class="fd-prog running">${p ? p.done : 0}/${p ? p.total : '?'}${p && p.failed ? ` · ${p.failed}✗` : ''}</span>`
+      : (p && p.finished ? `<span class="fd-prog">done ${p.done}/${p.total}</span>` : '<span class="fd-prog idle"></span>');
+    headEl.innerHTML = `<b>weir</b> <span class="fd-scope" title="flight-deck scope">${escapeHtml(this._scopeLabel(scope))}</span>`
+      + `<button class="fd-btn" data-fd-pin title="Pin the deck to the current view">pin</button>`
+      + (scope ? `<button class="fd-btn" data-fd-reset title="Show all items">all</button>` : '')
+      + `<span class="fd-spacer"></span>${prog}`;
+    const recent = this.store.query({ ...(scope || {}), limit: 16 });
+    const sig = recent.map((it) => it.id + (it.read ? '1' : '0')).join('|');
+    if (sig === this._fdSig) return;   // list unchanged — skip rebuild (preserves scroll)
+    this._fdSig = sig;
+    const top = listEl.scrollTop;
+    listEl.innerHTML = recent.map((it) => {
       const feed = this.store.getFeed(it.feed_id);
       const thumb = it.media && it.media.thumbnail
         ? `<img class="fd-thumb" loading="lazy" src="${escapeHtml(it.media.thumbnail)}" alt="">`
@@ -7701,8 +7751,8 @@ class App {
       return `<div class="fd-item${it.read ? ' read' : ''}" data-fd-open="${escapeHtml(it.url || '')}">${thumb}`
         + `<div class="fd-body"><div class="fd-title">${escapeHtml(it.title || '(untitled)')}</div>`
         + `<div class="fd-meta">${escapeHtml(feed ? feed.name : it.feed_id)} · ${relativeTime(it.published_at)}</div></div></div>`;
-    }).join('');
-    root.innerHTML = `<div class="fd-head"><b>weir</b> ${prog}</div><div class="fd-list">${rows}</div>`;
+    }).join('') || '<div class="hint" style="padding:12px">No items in this scope yet.</div>';
+    listEl.scrollTop = top;
   }
 
   // Wipe every catalog card and un-stamp items, then refresh the view. Cleanup
