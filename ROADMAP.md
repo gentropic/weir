@@ -267,6 +267,23 @@ the trigger/query layer on top.
     which *is* a server. So it shines as a same-network remote. (On-LAN, the
     `@gcu/webmcp` bridge binding the LAN IP instead of `127.0.0.1` would be even
     simpler — no WebRTC at all — at a different security tradeoff.)
+  - **Safety over sketchy relays — yes, if you trust the endpoints, not the
+    transport** (the GCU posture). Split content from metadata: **content is safe
+    by construction** — WebRTC data channels are *always* DTLS-encrypted E2E (a
+    TURN relay forwards ciphertext; it can't read notes), and Trystero encrypts its
+    signaling under a room-derived key before it touches a public tracker / Nostr /
+    MQTT, so the relay is a blind dead-drop. The real soft spots aren't the weird
+    relays but **the courier + room-id-as-bearer-secret**: Telegram can read what
+    you hand it (the note in tier-a; the room id in tier-b), and anyone who gets the
+    room id can join the room. The careful recipe: **layer your own E2E key,
+    pre-shared out-of-band** (generated on desktop, QR-scanned by the phone — never
+    via Telegram/CloudStorage), **rotate room ids per session**, and **pin the
+    peer's DTLS fingerprint**. Then a leaked room id buys an attacker nothing
+    (encrypted door, no key). Residual is **metadata only** (the two IPs + timing +
+    volume visible to whatever relay is in path) — shrink it by self-hosting TURN
+    (coturn), else accept it as low-sensitivity for your own two devices. Tier-a's
+    `sendData` note, by contrast, is readable by Telegram — fine for everyday notes,
+    not for secrets.
 - **Favorites & passive harvesting — `@gcu/glean`.** Pull "saved / favorited"
   items from accounts that don't expose feeds — MercadoLibre & Amazon favorites /
   wishlists, etc. — into weir as items, so the second brain sees them too. This is
