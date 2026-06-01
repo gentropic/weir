@@ -46,7 +46,37 @@ the trigger/query layer on top.
 - **Stage 2 — the query side.** Facet-intersection + thesaurus broaden/narrow (this
   *is* search v2); navigable emergent graph.
 - **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +
-  annotations; optional force-graph view; webmcp triggers.
+  annotations; webmcp triggers. (Graph/map visualization broken out below.)
+- **Graph & map visualization (the "brain map").** Two complementary views over
+  the catalog — designed to dodge the force-graph scale cliff from the start:
+  - **Force graph = explicit relations** (the `related` edges / facet
+    co-occurrence). Naive O(N²) layout + SVG dies at ~1–2k nodes (Obsidian's
+    global graph is the cautionary tale). Scale levers: **Barnes–Hut quadtree**
+    (O(N log N) layout, hand-rollable ~300 lines), **canvas** render (WebGL/
+    cosmograph only at the extreme), **web-worker** the sim, **precompute + cache**
+    positions (browse a static layout; re-sim only on change). The real unlock is
+    **don't render everything**: nodes = entities/topics (not 8k raw items),
+    community-clustered, level-of-detail. So build it as a **local / ego explorer**
+    — focus+context (click → center + expand neighbors, fade the rest),
+    search-to-subgraph, **faceted entry** (graph the "gaming" neighborhood from the
+    facet browser). Navigability and scale are the same move; Obsidian's *local*
+    graph ≫ its global one. **v1:** scoped ego-graph from a facet/entity, naive sim
+    (small because it's local), canvas.
+  - **UMAP map = semantic-similarity terrain** (higher-value + more scalable). Run
+    **UMAP on the FACET VECTORS** (domain/entity/process… as multi-hot dims) — *no
+    embedding model needed, reuses the catalog* — to a 2D map where similar items
+    cluster spatially. Precompute (worker) → **static canvas scatter**: renders any
+    N trivially, clusters visually obvious (cf. Nomic Atlas). UMAP > t-SNE (faster,
+    keeps global structure, no perplexity fiddling); `umap-js` is small + vendorable.
+  - **Combine them** (the good hybrids): seed the force layout from UMAP coords
+    (fast convergence + meaningful start); UMAP map as the zoom-out *terrain* with a
+    force/ego-graph on click for local explicit relations (map = context, graph =
+    focus); color force nodes by UMAP cluster / facet community. Map answers "what
+    are the clusters / where's the white space," graph answers "what connects to
+    what."
+  - Zero-dep fit: Barnes–Hut + canvas + a blob-inlined worker are hand-rollable;
+    `umap-js` vendors as source. Supersedes the loose "graph view" mentions in
+    Stage 2/3.
 - Near-term Stage-0 follow-up: a **faceted catalog view** (see the corpus by facet).
 
 ## Near term — small UX / polish
