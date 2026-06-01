@@ -167,6 +167,8 @@ export class App {
     this.layout = this.store.getSettings().stream_layout === 'gallery' ? 'gallery' : 'list';
     { const b = document.getElementById('btn-layout'); if (b) { b.textContent = this.layout === 'gallery' ? '☰' : '▦'; b.title = this.layout === 'gallery' ? 'List view' : 'Gallery view'; } }
     document.getElementById('btn-layout')?.addEventListener('click', () => this.setLayout(this.layout === 'gallery' ? 'list' : 'gallery'));
+    { const fd = document.getElementById('btn-flightdeck'); if (fd) { if ('documentPictureInPicture' in window) fd.addEventListener('click', () => this.openFlightDeck()); else fd.hidden = true; } }
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && this._cataloging) this._acquireWakeLock(); });   // wake lock auto-releases when hidden; re-take on return
     document.addEventListener('keydown', (e) => this.onKey(e));
     setInterval(() => this.renderPollStatus(), 30_000);
 
@@ -426,6 +428,7 @@ export class App {
     this._batch = true;
     this._catalogProgress = { total: todo.length, done: 0, failed: 0 };
     this._renderCatRun();
+    this._acquireWakeLock();                 // keep the display awake for the run
     let n = 0, ok = 0, fails = 0, streak = 0, bailed = false;
     try {
       for (const it of todo) {
@@ -439,13 +442,18 @@ export class App {
           bailed = true; this._catStatus(`stopped after ${streak} failures in a row — is Lemonade running / the bridge active? ${ok} cataloged so far; click to resume.`); break;
         } else { fails++; }
         this._catalogProgress = { total: todo.length, done: ok, failed: fails };
+        if (this._pipWin) this._renderFlightDeck();                  // live progress on the pop-out
         if (n % 25 === 0 && this.catalog) this.renderAll();          // throttled refresh
-        if (!job.cancel) await new Promise((res) => setTimeout(res, 400));   // pace it
+        // Pace via the flight-deck window's timer when it's open: its timers stay
+        // un-throttled (always-visible), so a buried main tab no longer crawls.
+        if (!job.cancel) await new Promise((res) => (this._pipWin || window).setTimeout(res, 400));
       }
     } finally {
       this._batch = false;
       this._cataloging = null;
+      this._releaseWakeLock();
       this._renderCatRun();
+      if (this._pipWin) this._renderFlightDeck();
       if (this.catalog) this.renderAll();
       this.renderCatUsage();
     }
@@ -460,6 +468,59 @@ export class App {
     btn.textContent = running ? 'catalog ⏸' : 'catalog ▸';
     btn.classList.toggle('running', running);
     btn.title = running ? 'Cataloging… click to stop' : 'Catalog the shown items with AI (click again to stop)';
+  }
+
+  // ── unattended-run survival: Screen Wake Lock (keep the display awake during a
+  // batch so the machine doesn't sleep/throttle mid-run; no mouse-jiggler needed).
+  async _acquireWakeLock() {
+    try {
+      if (navigator.wakeLock && !this._wakeLock && document.visibilityState === 'visible') {
+        this._wakeLock = await navigator.wakeLock.request('screen');
+        this._wakeLock.addEventListener('release', () => { this._wakeLock = null; });
+      }
+    } catch { /* unsupported / denied / not visible — best effort */ }
+  }
+  _releaseWakeLock() { if (this._wakeLock) { try { this._wakeLock.release(); } catch { /* ignore */ } this._wakeLock = null; } }
+
+  // ── flight-deck: a Document Picture-in-Picture pop-out (always-on-top) showing
+  // catalog progress + the latest items. Its timers aren't background-throttled,
+  // so while it's open the batch's pacing runs through it (see _runCatalog) and a
+  // buried main tab no longer crawls. Chromium-only; needs a user gesture to open.
+  async openFlightDeck() {
+    if (!('documentPictureInPicture' in window)) { this._catStatus('Picture-in-Picture isn’t supported in this browser'); return; }
+    if (this._pipWin) { try { this._pipWin.focus(); } catch { /* ignore */ } return; }
+    let pip;
+    try { pip = await window.documentPictureInPicture.requestWindow({ width: 400, height: 560 }); }
+    catch (e) { this._catStatus(`couldn’t open flight-deck: ${e.message}`); return; }
+    this._pipWin = pip;
+    for (const ss of document.querySelectorAll('style')) { const s = pip.document.createElement('style'); s.textContent = ss.textContent; pip.document.head.appendChild(s); }
+    pip.document.documentElement.dataset.density = document.documentElement.dataset.density || 'comfortable';
+    pip.document.body.innerHTML = '<div id="flightdeck"></div>';
+    pip.addEventListener('pagehide', () => { this._pipWin = null; });
+    pip.document.getElementById('flightdeck').addEventListener('click', (e) => {
+      const el = e.target.closest('[data-fd-open]'); if (el && el.dataset.fdOpen) { try { window.open(el.dataset.fdOpen, '_blank', 'noopener'); } catch { /* ignore */ } }
+    });
+    this._renderFlightDeck();
+  }
+
+  _renderFlightDeck() {
+    const pip = this._pipWin; if (!pip || !pip.document) return;
+    const root = pip.document.getElementById('flightdeck'); if (!root) return;
+    const p = this._catalogProgress;
+    const prog = this._cataloging
+      ? `<span class="fd-prog running">cataloging ${p ? p.done : 0}/${p ? p.total : '?'}${p && p.failed ? ` · ${p.failed}✗` : ''}</span>`
+      : (p && p.finished ? `<span class="fd-prog">done ${p.done}/${p.total}</span>` : '<span class="fd-prog idle">idle</span>');
+    const recent = this.store.query({ limit: 16 });
+    const rows = recent.map((it) => {
+      const feed = this.store.getFeed(it.feed_id);
+      const thumb = it.media && it.media.thumbnail
+        ? `<img class="fd-thumb" loading="lazy" src="${escapeHtml(it.media.thumbnail)}" alt="">`
+        : `<span class="fd-thumb ph">${escapeHtml(((it.type || '?')[0] || '?').toUpperCase())}</span>`;
+      return `<div class="fd-item${it.read ? ' read' : ''}" data-fd-open="${escapeHtml(it.url || '')}">${thumb}`
+        + `<div class="fd-body"><div class="fd-title">${escapeHtml(it.title || '(untitled)')}</div>`
+        + `<div class="fd-meta">${escapeHtml(feed ? feed.name : it.feed_id)} · ${relativeTime(it.published_at)}</div></div></div>`;
+    }).join('');
+    root.innerHTML = `<div class="fd-head"><b>weir</b> ${prog}</div><div class="fd-list">${rows}</div>`;
   }
 
   // Wipe every catalog card and un-stamp items, then refresh the view. Cleanup
@@ -556,6 +617,7 @@ export class App {
     this.stream.innerHTML = html;
     this.stream.scrollTop = scrollTop;
     this.renderTopbar();
+    if (this._pipWin) this._renderFlightDeck();   // keep the pop-out's latest list fresh
   }
 
   emptyHtml() {

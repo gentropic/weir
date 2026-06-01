@@ -66,6 +66,21 @@ body {
 .rail-label #cat-run { float: right; font-size: 10px; text-transform: none; letter-spacing: 0; }
 .rail-label #cat-run.running { color: var(--au-action); animation: cat-pulse 1.4s ease-in-out infinite; }
 @keyframes cat-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* Flight-deck — rendered inside a Document Picture-in-Picture window (the page's
+   stylesheet is copied in, so these rules apply there too). */
+#flightdeck { font-family: var(--au-font-ui, sans-serif); color: var(--au-fg); background: var(--au-bg); height: 100%; display: flex; flex-direction: column; }
+.fd-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--au-border); position: sticky; top: 0; background: var(--au-bg-raised, var(--au-bg)); font-size: 13px; }
+.fd-prog { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); }
+.fd-prog.running { color: var(--au-action); animation: cat-pulse 1.4s ease-in-out infinite; }
+.fd-list { overflow-y: auto; flex: 1; }
+.fd-item { display: flex; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--au-border); cursor: pointer; align-items: center; }
+.fd-item:hover { background: var(--au-bg-bright, rgba(255,255,255,0.04)); }
+.fd-item.read { opacity: 0.55; }
+.fd-thumb { width: 52px; height: 30px; flex-shrink: 0; border-radius: var(--au-radius, 4px); object-fit: cover; border: 1px solid var(--au-border); display: flex; align-items: center; justify-content: center; font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg-soft); background: var(--sw-bg-raised, #222); }
+.fd-body { min-width: 0; }
+.fd-title { font-size: 12px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.fd-meta { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #catalog-status { color: var(--au-action); }
 
 /* folder headers in the source rail */

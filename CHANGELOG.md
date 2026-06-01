@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Unattended catalog runs: wake lock + flight-deck — 2026-06-01
+
+- **Screen Wake Lock** while a catalog batch runs — weir asks the browser to keep
+  the display awake (`navigator.wakeLock`), released when the batch ends, re-taken
+  on tab-return. No more mouse-jiggler to stop the machine sleeping mid-run.
+- **Flight-deck (Document Picture-in-Picture).** A **⮬ deck** topbar button pops
+  out an always-on-top mini-window showing catalog progress + the latest items
+  (click one to open it). Because a PiP window stays *visible*, its timers aren't
+  background-throttled — so while it's open the batch paces through *its* timer,
+  and a buried main tab no longer crawls (the overnight throttle that capped the
+  first run at ~580). Chromium-only; the keep-alive is best confirmed by watching
+  a backgrounded run keep moving.
+
 ### WebMCP: drive weir from Claude Code — 2026-05-31
 
 - weir now speaks **WebMCP** (`@gcu/webmcp`): Claude Code can read the corpus over
