@@ -623,13 +623,19 @@ export class App {
     const saved = it.saved ? '<span class="flag">★</span>' : '';
 
     let body;
-    if (it.type === 'video' || (it.media && it.media.thumbnail && !TEXT_TYPES.has(it.type))) {
+    const isVideo = it.type === 'video';
+    const hasThumb = !!(it.media && it.media.thumbnail);
+    if (isVideo || hasThumb) {
+      // Thumbnail row — videos always, and any item carrying a thumbnail (e.g. an
+      // article's og:image), matching gallery. Play overlay only for video;
+      // articles keep their excerpt. Images are lazy + browser-cached (same URLs
+      // gallery uses), so the thumbnail is free once it's been seen in either view.
       const dur = it.media?.duration_seconds ? `<span class="dur">${fmtDuration(it.media.duration_seconds)}</span>` : '';
-      const thumb = it.media?.thumbnail
-        ? `<img class="thumbimg" loading="lazy" src="${escapeHtml(it.media.thumbnail)}" alt="">`
-        : '';
+      const thumb = hasThumb ? `<img class="thumbimg" loading="lazy" src="${escapeHtml(it.media.thumbnail)}" alt="">` : '';
+      const play = isVideo ? '<span class="playover">▶</span>' : '';
       const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
-      body = `<div class="ivideo"><div class="thumb">${thumb}<span class="playover">▶</span>${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div><div class="imeta">${meta}${views} ${tags}</div></div></div>`;
+      const excerpt = (!isVideo && it.excerpt) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
+      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${meta}${views} ${tags}</div></div></div>`;
     } else {
       body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${meta} ${tags}</div>`;
     }
