@@ -61,6 +61,21 @@ the trigger/query layer on top.
   affinity/name fallback). Drag-to-reorder still deferred.
 - **Manual prune control.** Retention is archive-only and off by default; add a
   "prune/archive expired now" action for when you do want a sweep.
+- **Unattended-run survival (wake lock + PiP flight-deck).** Long catalog batches
+  run in the page, so they stall on two browser throttles: the machine sleeping,
+  and background-tab timer throttling. Two clean, self-sufficient fixes (vs. an
+  external mouse-jiggler):
+  - **Screen Wake Lock** — `navigator.wakeLock.request('screen')` while a batch is
+    running, released when it finishes/cancels. Stops display/system sleep
+    programmatically. Small, do first.
+  - **Document Picture-in-Picture flight-deck** — a pop-out always-on-top window
+    (`documentPictureInPicture`) showing catalog progress + latest items + quick
+    actions, that *also* hosts the batch's pacing timer. A PiP window is always
+    `visible`, so its timers aren't background-throttled, and (same-origin, shared
+    JS agent) it can drive the main app's catalog step even while the main tab is
+    buried — defeating the overnight crawl. Chromium-only, needs a user gesture to
+    open, one at a time; **verify the keep-alive behavior with a quick prototype**
+    before relying on it. Nice as a feature regardless (a real flight-deck view).
 - **Collapse-all / expand-all folders.** The folder menu has per-folder
   Expand/Collapse and the rail tracks `collapsedCats`; add a one-click
   collapse-all / expand-all (rail control + folder-menu items) — trivial
