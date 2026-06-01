@@ -61,6 +61,14 @@ the trigger/query layer on top.
   affinity/name fallback). Drag-to-reorder still deferred.
 - **Manual prune control.** Retention is archive-only and off by default; add a
   "prune/archive expired now" action for when you do want a sweep.
+- **Collapse-all / expand-all folders.** The folder menu has per-folder
+  Expand/Collapse and the rail tracks `collapsedCats`; add a one-click
+  collapse-all / expand-all (rail control + folder-menu items) — trivial
+  (`collapsedCats` = all categories / cleared). Useful once there are many folders.
+- **Nested folders (sub-folders).** `category` is a single flat string today.
+  Allow a hierarchy — path-style categories (`tech/ai`) or a parent ref — touching
+  rail grouping (recursive collapse), the `category` query filter, drag/reorder,
+  and the edit-feed folder field. Pairs with collapse-all above.
 - ~~**Gallery view.**~~ ✅ Shipped 2026-05-31 — list ↔ gallery topbar toggle
   (`stream_layout`); thumbnail grid using item `media.thumbnail` (videos) with a
   colored type-tile fallback; tiles are `.item` so click/select/expand are shared.
@@ -117,6 +125,25 @@ the trigger/query layer on top.
   → `release`/`commit` items; add-time URL resolution). Remaining: `scrape`
   (public-page change tracking → `track` items), arXiv (→ `paper`), Mastodon,
   Bluesky.
+- **Telegram saved-links adapter (Holocene inflow → weir).** Holocene (the user's
+  ~2,500-link KM system) captures links via a Telegram "save link" bot/channel;
+  ingest that as a weir source so each saved link becomes an item — folding
+  Holocene's *inflow* into weir (glass already plans to absorb Holocene; see
+  GLASS.md). Needs a read path into the channel/bot history (Telegram bot API or a
+  chat export) + de-dupe; the saved URL is the canonical id. Turns "save to
+  Telegram" into "appears in weir, ready to catalog."
+- **Favorites & passive harvesting — `@gcu/glean`.** Pull "saved / favorited"
+  items from accounts that don't expose feeds — MercadoLibre & Amazon favorites /
+  wishlists, etc. — into weir as items, so the second brain sees them too. This is
+  the **`@gcu/glean`** concept: deliberately a *separate* sibling tool (per
+  CLAUDE.md), because it's authenticated + must be **human-cadence and polite** (the
+  "sifter" scraper) precisely to avoid tripping a site's anti-automation /
+  enforcement — something weir's public-only `scrape` adapter must never do.
+  Cleanest shape: **glean produces, weir stores/reads** — glean harvests in its own
+  careful process (its own session, throttle, retries) and emits normalized items
+  weir ingests via an adapter or a `BroadcastChannel`/file handoff. Keeps weir's
+  "no authenticated scraping" boundary intact while still feeding everything in.
+  Open decision: glean-as-sibling vs. a tightly-guarded weir capability.
 - **Durability / storage tiers.** ~~Full backup + restore~~ ✅ + ~~FSA "mount to
   a folder"~~ ✅ both shipped 2026-06-01 — the store runs on a user-picked
   directory (adopt-or-migrate, persisted handle, bulletproof IDB fallback,
