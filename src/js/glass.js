@@ -4,7 +4,7 @@
 // entity ⊇ tags. The language facets (domain/entity/process/method/scale/spatial)
 // and the abstract are left for the Stage-1 cataloger service. Pure + testable.
 
-export const FACETS = ['domain', 'entity', 'process', 'method', 'scale', 'spatial', 'temporal', 'form', 'provenance'];
+export const FACETS = ['domain', 'entity', 'process', 'method', 'scale', 'spatial', 'stance', 'temporal', 'form', 'provenance'];
 
 // weir item.type → glass `form` facet (genre of document).
 export const TYPE_TO_FORM = {
@@ -45,6 +45,7 @@ export function facetsOf(item, feed) {
     form: [TYPE_TO_FORM[item.type] || 'article'],
     provenance: [provenanceFor(feed, item)],
     spatial: [],
+    stance: [],          // editorial lean — LLM-only (Stage 0 can't know it)
     temporal: year ? [year] : [],
   };
 }

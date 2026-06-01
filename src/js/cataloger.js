@@ -21,6 +21,7 @@ export function catalogPrompt(item, card, body) {
     + '- method: notable techniques/approaches, only if salient — else []\n'
     + '- scale: scope, ONLY if clearly applicable — one of personal|local|national|global — else []\n'
     + '- spatial: real-world place names if any, else []\n'
+    + '- stance: the document\'s overall stance/tone toward its subject — a one-item array with one of critical|promotional|explanatory|neutral|opinion, else []\n'
     + '- description: one precise sentence summarizing it.\n'
     + 'Use [] for any facet not clearly supported by the text — never force a value (most items have no meaningful scale or spatial). Prefer concise, reusable canonical terms over near-synonyms (use "streaming", not also "live-stream"). Prefer reusing these already-known entity terms when they fit: ' + JSON.stringify(card.facets.entity || []) + '.';
   const user = `Title: ${item.title || '(untitled)'}\nKind: ${item.type}\nSource: ${card.dublin_core.source || ''}\n\n${String(body || '').slice(0, 6000)}`;
@@ -32,9 +33,10 @@ export function catalogPrompt(item, card, body) {
 export function parseCatalog(content, card) {
   const m = String(content).match(/\{[\s\S]*\}/);
   let obj; try { obj = JSON.parse(m ? m[0] : content); } catch { return { card, ok: false }; }
-  const arr = (v) => (Array.isArray(v) ? [...new Set(v.map((x) => String(x).toLowerCase().trim()).filter(Boolean))] : []);
+  const arr = (v) => (Array.isArray(v) ? [...new Set(v.map((x) => String(x).toLowerCase().trim()).filter(Boolean))]
+    : (typeof v === 'string' && v.trim() ? [v.toLowerCase().trim()] : []));   // tolerate a bare string (e.g. a single stance term)
   const facets = { ...card.facets };
-  for (const f of ['domain', 'process', 'method', 'scale', 'spatial']) facets[f] = arr(obj[f]);
+  for (const f of ['domain', 'process', 'method', 'scale', 'spatial', 'stance']) facets[f] = arr(obj[f]);
   facets.entity = [...new Set([...(card.facets.entity || []), ...arr(obj.entity)])];   // add to, never lose Stage-0 tags
   const dublin_core = { ...card.dublin_core };
   if (obj.description && String(obj.description).trim()) dublin_core.description = String(obj.description).trim();

@@ -11,6 +11,7 @@ import { Store } from '../src/js/store/store.js';
 const CARD_JSON = JSON.stringify({
   domain: ['geostatistics', 'mining'], entity: ['kriging', 'itabirite'], process: ['estimation'],
   method: ['ordinary-kriging'], scale: ['deposit'], spatial: ['Quadrilátero Ferrífero'],
+  stance: 'explanatory',   // bare string (not array) → exercises arr() coercion
   description: 'Compares OK and SK estimators for iron grade.',
 });
 const llmFetch = async () => ({
@@ -52,6 +53,7 @@ const stage0 = buildCard({ id: 'i', feed_id: 'f', type: 'paper', title: 'T', tag
 const { card: merged, ok } = parseCatalog('here you go:\n' + CARD_JSON, stage0);
 assert.equal(ok, true);
 assert.deepEqual(merged.facets.domain, ['geostatistics', 'mining'], 'language facet filled');
+assert.deepEqual(merged.facets.stance, ['explanatory'], 'stance: bare string coerced to a one-item array');
 assert.ok(merged.facets.entity.includes('kriging') && merged.facets.entity.includes('itabirite'), 'entity = stage0 tags + LLM');
 assert.deepEqual(merged.facets.form, ['paper'], 'Stage-0 form preserved');
 assert.match(merged.dublin_core.description, /OK and SK/);

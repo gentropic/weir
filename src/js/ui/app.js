@@ -662,7 +662,7 @@ export class App {
     const el = document.getElementById('facets'); if (!el) return;
     this.buildCatalogIndex();
     const order = ['form', 'provenance', 'temporal', 'entity', 'domain', 'method', 'process', 'scale', 'spatial'];
-    const ICONS = { form: '⬡', provenance: '✦', temporal: '◷', entity: '◆', domain: '▤', method: '⚙', process: '↻', scale: '⤢', spatial: '⌖' };
+    const ICONS = { form: '⬡', provenance: '✦', temporal: '◷', entity: '◆', domain: '▤', method: '⚙', process: '↻', scale: '⤢', spatial: '⌖', stance: '⚖' };
     let html = '';
     for (const facet of order) {
       const map = this._catalogIndex[facet];
