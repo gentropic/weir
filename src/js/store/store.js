@@ -529,6 +529,23 @@ export class Store {
   }
 
   async getCard(glassId) { return this._readJSON(`/catalog/${String(glassId)}.json`, null); }
+
+  // Confirm/correct a cataloger card: clear needs_review, stamp the human review,
+  // and optionally overwrite specific facets. Used by the review queue (UI + MCP).
+  async markCardReviewed(glassId, opts = {}) {
+    const card = await this.getCard(glassId);
+    if (!card) throw new Error(`no such card: ${glassId}`);
+    card.glass = card.glass || {};
+    card.glass.needs_review = false;
+    card.glass.reviewer = 'human';
+    card.glass.reviewed_at = now();
+    if (opts.confidence != null) card.glass.confidence = opts.confidence;
+    else if (!(card.glass.confidence >= 0.9)) card.glass.confidence = 0.9;
+    if (opts.facets && typeof opts.facets === 'object') card.facets = { ...card.facets, ...opts.facets };
+    await this.vfs.writeFile(`/catalog/${glassId}.json`, JSON.stringify(card, null, 2));
+    this.emit('catalog', { id: glassId, reviewed: true });
+    return card;
+  }
   async catalogCount() { try { return (await this.vfs.readdir('/catalog')).filter((f) => f.endsWith('.json')).length; } catch { return 0; } }
 
   // Wipe the catalog: delete every card file and un-stamp every item, so a fresh

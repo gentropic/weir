@@ -101,4 +101,27 @@ await assert.rejects(ctlTools.catalogControl({ action: 'nope' }), /start \| stop
 // catalogItem requires app
 await assert.rejects(tools.catalogItem({ id: 'a1' }), /only available/, 'catalogItem needs app');
 
+// ── review queue: markCardReviewed + reviewQueue/reviewItem (mock app) ──
+await store.writeCard({ glass: { document_ref: 'a1', cataloged: '2026-06-01', needs_review: true, confidence: 0.2 }, facets: { scale: ['global'], domain: ['x'] }, dublin_core: {} });
+const a1card = await store.getCard(store.getItem('a1').glass_id);
+const reviewApp = {
+  _cardReview: new Map([['a1', { needs_review: true, confidence: 0.2 }]]),
+  _cardFacets: new Map([['a1', a1card.facets]]),
+  renderReviewStatus() {},
+};
+const rvTools = buildWeirTools({ store, app: reviewApp, ensureCards: async () => {} });
+const queue = await rvTools.reviewQueue({});
+assert.equal(queue.total, 1); assert.equal(queue.items[0].id, 'a1'); assert.equal(queue.items[0].confidence, 0.2, 'queue carries confidence');
+// correct facets + approve
+const fixed = await rvTools.reviewItem({ id: 'a1', facets: { scale: [] } });
+assert.deepEqual(fixed.facets.scale, [], 'facet correction applied');
+assert.deepEqual(fixed.facets.domain, ['x'], 'untouched facet preserved');
+const card2 = await store.getCard(store.getItem('a1').glass_id);
+assert.equal(card2.glass.needs_review, false, 'needs_review cleared');
+assert.equal(card2.glass.reviewer, 'human', 'stamped human review');
+assert.equal(reviewApp._cardReview.get('a1').needs_review, false, 'app cache updated');
+const queue2 = await rvTools.reviewQueue({});
+assert.equal(queue2.total, 0, 'queue empty after review');
+await assert.rejects(rvTools.reviewItem({ id: 'v1' }), /isn’t cataloged|not cataloged|isn't cataloged/, 'uncataloged item rejected');
+
 console.log('webmcp tools smoke ok:', JSON.stringify({ items: all.count, facets: Object.keys(f).length, mutations: calls.length }));

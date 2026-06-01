@@ -71,6 +71,7 @@
         <span id="poll-status">idle</span>
         <span id="drip-status"></span>
         <span id="health-status" title="Feeds that may be hijacked, dead, or stale — click to review"></span>
+        <span id="review-status" title="Catalog cards the librarian flagged low-confidence — click to confirm/correct"></span>
         <span id="catalog-status"></span>
         <span id="notify-status"></span>
       </div>
@@ -217,6 +218,17 @@
     <div class="health-body" id="health-body"></div>
     <div class="panel-foot">
       <button class="btn" id="health-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Review queue — catalog cards the librarian flagged low-confidence -->
+<div class="overlay" id="review-overlay" hidden>
+  <div class="panel">
+    <div class="panel-head"><span>review queue</span></div>
+    <div class="review-body" id="review-body"></div>
+    <div class="panel-foot">
+      <button class="btn" id="review-close">Close</button>
     </div>
   </div>
 </div>

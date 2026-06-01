@@ -145,6 +145,16 @@ export class App {
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
+    document.getElementById('review-status')?.addEventListener('click', () => this.openReview());
+    document.getElementById('review-close')?.addEventListener('click', () => { document.getElementById('review-overlay').hidden = true; });
+    document.getElementById('review-body')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-rvact]'); if (!btn) return;
+      const row = btn.closest('.rv-row'); const id = row && row.dataset.id; if (!id) return;
+      const act = btn.dataset.rvact;
+      if (act === 'ok') this.markReviewed(id);
+      else if (act === 'recat') this.catalogItem(id).then(() => this.markReviewed(id));
+      else if (act === 'open') { const it = this.store.getItem(id); if (it && it.url) window.open(it.url, '_blank', 'noopener'); }
+    });
     document.getElementById('health-close')?.addEventListener('click', () => this.closeHealth());
     document.getElementById('health-body')?.addEventListener('click', (e) => this.onHealthClick(e));
     document.getElementById('reorder-list')?.addEventListener('click', (e) => this.onReorderClick(e));
@@ -187,7 +197,7 @@ export class App {
     return this.store.query({ view: this.view, feed_id: this.feedFilter || undefined, text: this.searchText || undefined });
   }
 
-  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTopbar(); this.renderStream(); }
+  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); }
 
   // Debounced rail+stream rebuild for store-driven changes (polling), so rows
   // aren't recreated under the cursor on every insert.
@@ -365,11 +375,17 @@ export class App {
   // ones). Un-cataloged items fall back to facetsOf() live.
   async loadCardFacets() {
     const map = new Map();
+    const review = new Map();
     for (const item of this.store.items.values()) {
       if (!item.glass_id) continue;
-      try { const c = await this.store.getCard(item.glass_id); if (c && c.facets) map.set(item.id, c.facets); } catch { /* skip */ }
+      try {
+        const c = await this.store.getCard(item.glass_id);
+        if (c) { if (c.facets) map.set(item.id, c.facets); review.set(item.id, { needs_review: !!(c.glass && c.glass.needs_review), confidence: c.glass && c.glass.confidence }); }
+      } catch { /* skip */ }
     }
     this._cardFacets = map;
+    this._cardReview = review;
+    this.renderReviewStatus();
   }
 
   // ── glass cataloger (Stage 1): per-item + gentle batch ──
@@ -892,6 +908,7 @@ export class App {
       { label: it.archived ? 'Unarchive' : 'Archive', onClick: () => { if (it.archived) { this.store.setState(id, { archived: false }); this.reflectItem(id); } else this.doAct('archive', id); } },
       { sep: true },
       { label: it.glass_id ? 'Re-catalog with AI' : 'Catalog with AI', onClick: () => this.catalogItem(id) },
+      (it.glass_id && this._cardReview && this._cardReview.get(id)?.needs_review) && { label: '✓ Mark reviewed', onClick: () => this.markReviewed(id) },
       it.url && { label: 'Copy link', onClick: () => navigator.clipboard?.writeText(it.url).catch(() => {}) },
     ].filter(Boolean));
   }
@@ -981,6 +998,47 @@ export class App {
       || '<div class="hint">All feeds look healthy — nothing flagged.</div>';
     document.getElementById('health-body').innerHTML = body;
     document.getElementById('health-overlay').hidden = false;
+  }
+
+  // ── needs_review queue: cards the cataloger flagged low-confidence (bad JSON
+  // parse), surfaced for human confirm/correct. Counts come from _cardReview
+  // (built in loadCardFacets); the overlay mirrors the feed-health one.
+  _reviewIds() {
+    const out = [];
+    if (this._cardReview) for (const [id, r] of this._cardReview) if (r && r.needs_review) out.push(id);
+    return out;
+  }
+  renderReviewStatus() {
+    const el = document.getElementById('review-status'); if (!el) return;
+    const n = this._reviewIds().length;
+    el.textContent = n ? `⚑ ${n} to review` : '';
+    el.classList.toggle('clickable', n > 0);
+  }
+  openReview() {
+    const ensure = (this._cardReview && this._cardReview.size) ? Promise.resolve() : this.loadCardFacets();
+    ensure.then(() => {
+      const ids = this._reviewIds().slice(0, 150);
+      const body = ids.map((id) => {
+        const it = this.store.getItem(id); if (!it) return '';
+        const feed = this.store.getFeed(it.feed_id);
+        const f = (this._cardFacets && this._cardFacets.get(id)) || {};
+        const chips = FACETS.flatMap((k) => (f[k] || []).map((t) => `<span class="rv-chip">${escapeHtml(k[0])}:${escapeHtml(t)}</span>`)).slice(0, 14).join('');
+        return `<div class="rv-row" data-id="${escapeHtml(id)}"><div class="rv-head"><span class="pill ${escapeHtml(it.type)}">${escapeHtml(it.type)}</span>`
+          + `<span class="rv-name">${escapeHtml(it.title || '(untitled)')}</span><span class="rv-feed">${escapeHtml(feed ? feed.name : it.feed_id)}</span></div>`
+          + `<div class="rv-facets">${chips || '<span class="dim">no facets</span>'}</div>`
+          + `<div class="rv-actions"><button data-rvact="ok">✓ Looks good</button><button data-rvact="recat">⟳ Re-catalog</button>`
+          + (it.url ? `<button data-rvact="open">Open ↗</button>` : '') + `</div></div>`;
+      }).join('') || '<div class="hint">Nothing flagged for review — the cataloger was confident on everything loaded.</div>';
+      document.getElementById('review-body').innerHTML = body;
+      document.getElementById('review-overlay').hidden = false;
+    });
+  }
+  async markReviewed(id) {
+    const it = this.store.getItem(id); if (!it || !it.glass_id) return;
+    try { await this.store.markCardReviewed(it.glass_id); } catch (e) { this._catStatus(`review failed: ${e.message}`); return; }
+    if (this._cardReview && this._cardReview.get(id)) this._cardReview.get(id).needs_review = false;
+    this.renderReviewStatus();
+    for (const r of document.querySelectorAll('#review-body .rv-row')) if (r.dataset.id === id) { r.remove(); break; }
   }
 
   closeHealth() { document.getElementById('health-overlay').hidden = true; }

@@ -182,7 +182,40 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     throw new Error('action must be one of: start | stop | clear | status');
   }
 
-  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl };
+  // List cataloger cards flagged low-confidence (needs_review) for human confirm.
+  async function reviewQueue(input = {}) {
+    if (!app) throw new Error('review is only available in the running app');
+    if (ensureCards) { try { await ensureCards(); } catch { /* fall through */ } }
+    const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
+    const cr = app._cardReview || new Map();
+    const items = []; let total = 0;
+    for (const [id, r] of cr) {
+      if (!r || !r.needs_review) continue;
+      total++;
+      if (items.length >= limit) continue;
+      const it = store.getItem(id); if (!it) continue;
+      const o = projItem(store, it, false);
+      o.confidence = r.confidence;
+      const f = app._cardFacets && app._cardFacets.get(id); if (f) o.facets = f;
+      items.push(o);
+    }
+    return { total, count: items.length, items };
+  }
+
+  // Confirm a card (clear needs_review) and optionally correct its facets.
+  async function reviewItem(input = {}) {
+    if (!app) throw new Error('review is only available in the running app');
+    const it = input.id != null && store.getItem(String(input.id));
+    if (!it) throw new Error(`No item with id "${input.id}".`);
+    if (!it.glass_id) throw new Error(`Item "${input.id}" isn't cataloged yet.`);
+    const card = await store.markCardReviewed(it.glass_id, { facets: input.facets });
+    if (app._cardReview && app._cardReview.get(it.id)) app._cardReview.get(it.id).needs_review = false;
+    if (input.facets && app._cardFacets) app._cardFacets.set(it.id, card.facets);
+    if (app.renderReviewStatus) app.renderReviewStatus();
+    return { glass_id: it.glass_id, reviewed: true, facets: card.facets };
+  }
+
+  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl, reviewQueue, reviewItem };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -240,6 +273,23 @@ const TOOLS = [
     description: 'Start / stop / clear / inspect the catalog batch. action:"start" catalogs all un-cataloged non-archived items (paced, runs in the page); "stop" cancels; "clear" discards ALL cards + un-files every item (items/content/reading state untouched; reversible by re-cataloging) for a clean restart; "status" (default) reports running state, progress {total,done,failed}, and cataloged/total counts.',
     inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['start', 'stop', 'clear', 'status'], description: 'Default: status' } } },
     annotations: { title: 'Control cataloging', destructiveHint: true },
+  },
+  {
+    name: 'weir_reviewQueue', fn: 'reviewQueue',
+    description: 'List cataloger cards flagged needs_review (the LLM returned low-confidence / unparseable output) for human confirm/correct. Returns { total, count, items } where each item carries its current facets + confidence. Pair with weir_reviewItem to approve or fix.',
+    inputSchema: { type: 'object', properties: { limit: { type: 'integer', description: 'Max items (default 30, cap 100)' } } },
+    annotations: { readOnlyHint: true, title: 'Review queue' },
+  },
+  {
+    name: 'weir_reviewItem', fn: 'reviewItem',
+    description: 'Confirm a cataloger card (clears needs_review, stamps a human review) and OPTIONALLY correct its facets. Pass facets as an object of facet→string[] to overwrite those facets (e.g. {"scale":[],"domain":["gaming"]}); omit to just approve as-is.',
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'Item id (from weir_reviewQueue)' },
+        facets: { type: 'object', description: 'Optional facet corrections, e.g. {"scale":[],"entity":["minecraft"]} — overwrites only the given facets' },
+      }, required: ['id'],
+    },
+    annotations: { title: 'Confirm/correct a card' },
   },
   {
     name: 'weir_listFacets', fn: 'listFacets',

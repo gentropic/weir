@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Glass: catalog review queue — 2026-06-01
+
+- A **`needs_review` queue** surfaces cards the cataloger flagged low-confidence
+  (its LLM output didn't parse) for human confirm/correct — closing the
+  *propose → review → correct* loop. A **⚑ N to review** status-bar chip opens an
+  overlay listing each flagged item with its facets + **✓ Looks good** /
+  **⟳ Re-catalog** / **Open** actions; the item context menu gains **Mark
+  reviewed**. `store.markCardReviewed` clears the flag, stamps the human review,
+  and can overwrite specific facets.
+- **WebMCP:** `weir_reviewQueue` (list flagged items + their facets) and
+  `weir_reviewItem` (approve as-is, or correct facets like `{"scale":[]}`) — so
+  Claude Code can triage the queue alongside you.
+
 ### Unattended catalog runs: wake lock + flight-deck — 2026-06-01
 
 - **Screen Wake Lock** while a catalog batch runs — weir asks the browser to keep
