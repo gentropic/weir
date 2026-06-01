@@ -58,7 +58,23 @@ the trigger/query layer on top.
   *is* search v2 — ✅ the BM25F engine shipped; the facet-intersection/thesaurus
   *layer over it* is the remaining work); navigable emergent graph.
 - **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +
-  annotations; webmcp triggers. (Graph/map visualization broken out below.)
+  annotations; webmcp triggers. (Graph/map visualization broken out below.) The
+  data model is ready today (`provenance: self`, `type: note` in `glass.js`); the
+  new surface is a note *composer* — weir becomes the **write** side, not just
+  read (the "replace Obsidian" move). Folds in Holocene's **activity log** as
+  self-notes on import. Sequence: *after* the catalog base settles.
+- **Stage 4 — holdings library (the glass endgame).** Extend glass from a *stream
+  inbox* to also hold **static, undated holdings** — books (Dewey + Cutter, ready
+  to inherit from Holocene), a papers shelf — so it's a literal LIS catalog, not
+  just a feed reader. Key realizations: **cataloging holdings is already solved**
+  (the Dublin-Core + facets card is format-agnostic; `form: book|paper`, Dewey →
+  a facet) and **needs no PDF parsing** — title/author/abstract/Dewey from a `.bib`
+  / IA metadata / Calibre is plenty for a card. **FSAA is the unlock** (big PDFs/
+  EPUBs on the real filesystem, past IndexedDB's ceiling — the v0.3 storage stage).
+  PDF *full-text* (for in-book search) is the stretch: **extract at import time in
+  Node**, not in-browser — keeps shipped weir zero-dep (no inlined pdf.js). The real
+  build is a **holdings *view*** — browse-and-keep, not inbox process-and-clear —
+  over the same catalog/store. Endgame: post-FSAA, after notes.
 - **Graph & map visualization (the "brain map").** Two complementary views over
   the catalog — designed to dodge the force-graph scale cliff from the start:
   - **Force graph = explicit relations** (the `related` edges / facet
@@ -201,13 +217,31 @@ the trigger/query layer on top.
   → `release`/`commit` items; add-time URL resolution). Remaining: `scrape`
   (public-page change tracking → `track` items), arXiv (→ `paper`), Mastodon,
   Bluesky.
-- **Telegram saved-links adapter (Holocene inflow → weir).** Holocene (the user's
-  ~2,500-link KM system) captures links via a Telegram "save link" bot/channel;
-  ingest that as a weir source so each saved link becomes an item — folding
-  Holocene's *inflow* into weir (glass already plans to absorb Holocene; see
-  GLASS.md). Needs a read path into the channel/bot history (Telegram bot API or a
-  chat export) + de-dupe; the saved URL is the canonical id. Turns "save to
-  Telegram" into "appears in weir, ready to catalog."
+- **Saved-link import + Holocene/Telegram inflow.** ✅ *Importer shipped 2026-06-01*
+  — the **Import** button / file drop now **sniffs the file** (`importers.js` →
+  `detectImport`): OPML → feeds (as before); **Telegram export JSON**, **URL list**,
+  and **JSON link arrays** → saved links under a non-pollable **Saved Links** source,
+  ready to catalog (`App.importLinks`). Share-sheet/shortener URLs (share.google /
+  search.app / bit.ly…) are **unwrapped via gcuFetch** (follow redirects → real
+  destination) so dedup keys on the target; in-text titles (Google Discover
+  "Title | Source &lt;url&gt;") are kept; ids are url-hash so re-import never resets
+  read/saved. This folds in Holocene's backlog — **~1,500 unique links** across two
+  Telegram exports (2023→2026; see the weir-holocene-migration note). **Remaining:**
+  (a) the **ongoing Telegram bot adapter** — mint a *fresh weir bot*, poll Bot API
+  `getUpdates` via gcuFetch (allowlist `api.telegram.org`), token in the OPFS vault
+  like the LLM key, so new saves flow in live (rei retires as the consumer); (b)
+  recover the rei DB's per-link **Wayback snapshots** (`archive_url`/`archive_date`)
+  when it's back — dead-link insurance, ties to feed archaeology; (c) more import
+  formats (browser bookmarks HTML, `.bib`) = one parser each in `importers.js`.
+- **Archive-on-save (linkrot insurance).** Adopt Holocene's habit: when a link is
+  saved/imported, ask the Internet Archive to snapshot it (Save-Page-Now), so the
+  copy survives the source going dark. It's *good* citizenship (you're feeding the
+  commons + preventing rot) with guardrails Holocene already had: respect IA rate
+  limits + **exponential backoff**, **check-before-archive** (skip recent snapshots),
+  use the user's own IA S3 keys (`ia_access_key`/`ia_secret_key` already in
+  settings), **public pages only**. Route via gcuFetch/bridge (allowlist
+  `web.archive.org`). Volume is trivial (~1.4 links/day); the ~1,500 backlog gets a
+  gentle rate-limited pass. Pairs with never-delete + the shipped Wayback recovery.
 - **Favorites & passive harvesting — `@gcu/glean`.** Pull "saved / favorited"
   items from accounts that don't expose feeds — MercadoLibre & Amazon favorites /
   wishlists, etc. — into weir as items, so the second brain sees them too. This is

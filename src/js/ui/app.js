@@ -5,6 +5,8 @@
 
 import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, fmtBytes, dailyCounts, sparkPoints } from './format.js';
 import { parseOpml, buildOpml } from '../opml.js';
+import { detectImport } from '../importers.js';
+import { hash32 } from '../store/schema.js';
 import { DEFAULT_ROUTING } from '../router.js';
 import { parseWatchDigest } from '../affinity.js';
 import { showMenu } from './menu.js';
@@ -105,10 +107,16 @@ export class App {
     const fileEl = document.getElementById('opml-file');
     document.getElementById('btn-import')?.addEventListener('click', () => fileEl.click());
     fileEl?.addEventListener('change', async () => {
-      const texts = [];
-      for (const f of fileEl.files) texts.push(await f.text());
+      const files = [...fileEl.files];
       fileEl.value = '';
-      if (texts.length) this.importOpmlFiles(texts);
+      const opmlTexts = [];
+      for (const f of files) {
+        const text = await f.text();
+        const d = detectImport(text);
+        if (!d || d.format === 'opml') { opmlTexts.push(text); continue; }   // feeds → existing flow
+        await this.importLinks(d.links, d.format);                            // saved links → new flow
+      }
+      if (opmlTexts.length) this.importOpmlFiles(opmlTexts);
     });
     document.getElementById('btn-export')?.addEventListener('click', () => this.exportOpml());
 
@@ -1316,6 +1324,60 @@ export class App {
     }
     document.getElementById('view-sub').textContent = `imported ${list.length} feeds — polling…`;
     this.setView('inbox');
+  }
+
+  // ── saved-link import (Telegram export / URL list / JSON) ──
+  // Imports into the non-pollable 'saved' source. Unwraps share-sheet/shortener
+  // URLs via gcuFetch (best-effort, paced) so dedup keys on the real destination,
+  // then upserts — the store's dedup keeps read/saved/tags on re-import. Imported
+  // links catalog in the next cataloger pass like any item.
+  async importLinks(links, format = 'import') {
+    const sub = document.getElementById('view-sub');
+    if (!links || !links.length) { if (sub) sub.textContent = `no links found in that ${format} file`; return { inserted: 0, updated: 0 }; }
+    await this._ensureSavedSource();
+
+    const wrapped = links.filter((l) => l.wrapped);
+    if (wrapped.length && this.poller?.fetch) {
+      let done = 0;
+      if (sub) sub.textContent = `unwrapping ${wrapped.length} shortened link${wrapped.length === 1 ? '' : 's'}…`;
+      await this._poolEach(wrapped, async (l) => {
+        try { const r = await this.poller.fetch(l.url, { redirect: 'follow' }); if (r && r.url) l.url = r.url; } catch { /* keep wrapped url */ }
+        done++;
+        if (sub && done % 10 === 0) sub.textContent = `unwrapping links… ${done}/${wrapped.length}`;
+      }, 4);
+    }
+
+    const raws = links.map((l) => ({
+      id: `saved:h${hash32(String(l.url).toLowerCase())}`,
+      feed_id: 'saved',
+      url: l.url,
+      title: l.title || (() => { try { return new URL(l.url).hostname.replace(/^www\./, ''); } catch { return l.url; } })(),
+      type: /(?:youtube\.com|youtu\.be)\//i.test(l.url) ? 'video' : 'article',
+      published_at: l.date || undefined,
+      tags: [],
+    }));
+    const res = await this.store.upsertItems(raws);
+    this.renderRail();
+    this.renderStream();
+    // set the summary AFTER re-rendering (renderStream rewrites view-sub).
+    if (sub) sub.textContent = `imported ${res.inserted} new link${res.inserted === 1 ? '' : 's'}${res.updated ? ` (${res.updated} already saved)` : ''} from ${format} → Saved Links`;
+    return res;
+  }
+
+  // The 'saved' source holds imported links + (later) Telegram captures. It has
+  // no feed URL, so it must never be polled — a far-future next_poll_at keeps the
+  // poller's due-check from ever selecting it (no special-casing needed).
+  async _ensureSavedSource() {
+    if (this.store.getFeed('saved')) return;
+    await this.store.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15 });
+  }
+
+  // Run `fn` over items with at most `n` in flight (the unwrap pool).
+  async _poolEach(items, fn, n = 4) {
+    const q = [...items];
+    await Promise.all(Array.from({ length: Math.min(n, q.length) }, async () => {
+      while (q.length) await fn(q.shift());
+    }));
   }
 
   exportOpml() {

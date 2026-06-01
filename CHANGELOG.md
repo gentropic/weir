@@ -6,6 +6,28 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Multi-format link import (Holocene/Telegram backlog → weir) — 2026-06-01
+
+- The **Import** button / file drop now **sniffs the file** and routes it
+  (`importers.js` → `detectImport`): OPML still imports feeds; **Telegram export
+  JSON**, a plain **URL list**, and **JSON link arrays** import as *saved links*.
+- Saved links land under a new non-pollable **Saved Links** source, ready for the
+  cataloger like any item (`App.importLinks`; a far-future `next_poll_at` keeps the
+  poller from ever touching it — no feed URL to fetch).
+- **Share-sheet / shortener URLs are unwrapped** (share.google / search.app /
+  bit.ly…) via `gcuFetch` (follow redirects → real destination) so dedup keys on
+  the target, not the wrapper. In-text titles (Google Discover
+  "Title | Source &lt;url&gt;") are kept; YouTube links become `video` items.
+- IDs are **url-hash** → re-importing a fresher export merges and **never resets
+  read/saved** (the store's existing dedup discipline). Folds in Holocene's
+  ~1,500-link backlog across two Telegram exports. Tests: `tools/smoke-import.mjs`
+  (parsers + store round-trip) + a headless end-to-end.
+
+### Cataloger: stance/tone facet — 2026-06-01
+
+- New `stance` facet (critical | promotional | explanatory | neutral | opinion) —
+  a document's editorial lean, LLM-filled, browsable/queryable like any facet.
+
 ### Cataloger config + drive it from Claude Code — 2026-06-01
 
 - New cataloger knobs (Settings → AI cataloger): **pace** (ms between calls — 400

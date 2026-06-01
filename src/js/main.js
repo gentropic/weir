@@ -26,6 +26,7 @@ import './adapters/youtube.js';          // → parseYoutube, youtubeAdapter (us
 import './adapters/github.js';           // → parseGithub, githubAdapter (releases/commits/tags)
 import './extract.js';                   // → extractArticle (readability; browser DOMParser)
 import './opml.js';                      // → parseOpml, buildOpml (uses parseXml)
+import './importers.js';                 // → detectImport, parseTelegramExport (multi-format link import)
 import './router.js';                    // → Router, compileRules, DEFAULT_ROUTING
 import './wayback.js';                    // → cdxSnapshots, recoverFeed (uses parseFeed at call time)
 import './recovery.js';                   // → RecoveryDrip (uses cdxSnapshots)

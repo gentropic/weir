@@ -540,9 +540,9 @@ body {
         <button id="btn-layout" class="btn-link" type="button" title="Gallery view">▦</button>
         <button id="btn-flightdeck" class="btn-link" type="button" title="Pop out a flight-deck (progress + latest, always on top — keeps long catalog runs from throttling)">⮬ deck</button>
         <button id="btn-recover" class="btn-link" type="button" hidden title="Recover this feed's lost history from the Internet Archive">⏪ recover</button>
-        <button id="btn-import" class="btn-link" type="button" title="Import OPML">import</button>
+        <button id="btn-import" class="btn-link" type="button" title="Import feeds (OPML) or saved links (Telegram export / URL list / JSON)">import</button>
         <button id="btn-export" class="btn-link" type="button" title="Export OPML">export</button>
-        <input id="opml-file" type="file" accept=".opml,.xml,text/xml,application/xml" multiple hidden>
+        <input id="opml-file" type="file" accept=".opml,.xml,.json,.txt,text/xml,application/xml,application/json,text/plain" multiple hidden>
         <span class="topbar-sep"></span>
         <button id="open-rules" class="btn-link" type="button" title="Routing rules">λ&nbsp;routing</button>
         <button id="open-settings" class="btn-link" type="button" title="Settings">⚙&nbsp;settings</button>
@@ -7411,6 +7411,133 @@ function buildOpml(feeds, title = 'weir feeds') {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="1.0">\n  <head>\n    <title>${esc(title)}</title>\n  </head>\n  <body>\n${body}  </body>\n</opml>\n`;
 }
 
+// ── src/js/importers.js ──
+
+// Multi-format import (SPEC §9, extended). Sniffs a dropped file and parses it
+// into either FEEDS (OPML — left to the caller's existing OPML path) or
+// SAVED-LINK records. Pure + testable; the network unwrap + store insert live in
+// the app layer (which has gcuFetch + the store). First link format: Holocene's
+// Telegram bot export — see weir-holocene-migration. Add a format = one parser.
+
+// Share-sheet / shortener hosts whose URLs must be unwrapped (followed to their
+// real destination) before dedup. Holocene did this with requests.get(allow_
+// redirects=True).url; gcuFetch replicates it (follows redirects → response.url).
+const WRAPPER_HOSTS = new Set([
+  'share.google', 'search.app', 'goo.gl', 'g.co', 'bit.ly', 't.co', 'tinyurl.com',
+  'fb.me', 'lnkd.in', 'ow.ly', 'buff.ly', 'dlvr.it', 'trib.al', 'rebrand.ly',
+]);
+
+// URLs we never want to import AS saved links (the bot echoes archive snapshots
+// + Telegram-internal links into the chat).
+const IMP_SKIP_HOSTS = new Set(['web.archive.org', 'archive.org', 't.me', 'telegram.org', 'telegram.me']);
+
+const IMP_URL_RE = /https?:\/\/[^\s<>"'\])]+/g;
+
+function isWrappedUrl(url) {
+  try { return WRAPPER_HOSTS.has(new URL(url).hostname.replace(/^www\./, '')); } catch { return false; }
+}
+function impHost(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
+}
+function impSkip(url) { return IMP_SKIP_HOSTS.has(impHost(url)); }
+
+// A Telegram export message's text is either a string or an array of segments
+// (plain strings + entity objects). Reconstruct the plain text + collect URLs.
+function impMsgText(m) {
+  const t = m && m.text;
+  if (typeof t === 'string') return t;
+  if (Array.isArray(t)) return t.map((x) => (typeof x === 'string' ? x : (x && x.text) || '')).join('');
+  return '';
+}
+function impMsgUrls(m) {
+  const out = [];
+  const t = m && m.text;
+  if (Array.isArray(t)) for (const x of t) {
+    if (x && (x.type === 'link' || x.type === 'text_link' || x.type === 'url')) { const u = x.href || x.text; if (u) out.push(u); }
+  }
+  const text = impMsgText(m);
+  let mm; IMP_URL_RE.lastIndex = 0;
+  while ((mm = IMP_URL_RE.exec(text))) out.push(mm[0]);
+  // strip trailing punctuation, dedup within the message
+  return [...new Set(out.map((u) => String(u).replace(/[.,;:!?)\]]+$/, '')))];
+}
+// The title that rides along in the share text, e.g. Google Discover's
+// "Title | Source https://share.google/…" or "Title\nhttps://…". Strip the
+// URL(s) out and tidy what's left; too-short remainders aren't titles.
+function impTitleFrom(text, urls) {
+  let s = String(text || '');
+  for (const u of urls) s = s.split(u).join(' ');
+  s = s.replace(/\s+/g, ' ').trim().replace(/^[-–—|:•·\s]+|[-–—|:•·\s]+$/g, '').trim();
+  return s.length >= 3 ? s : null;
+}
+
+// Parse a Telegram Desktop chat/bot export (result.json) → saved-link records.
+// First occurrence of each URL wins (the user's send precedes any bot echo), so
+// dedup naturally drops the bot's confirmations.
+function parseTelegramExport(json) {
+  const msgs = json && Array.isArray(json.messages) ? json.messages : [];
+  const links = [];
+  const seen = new Set();
+  for (const m of msgs) {
+    const urls = impMsgUrls(m).filter((u) => /^https?:\/\//i.test(u) && !impSkip(u));
+    if (!urls.length) continue;
+    const text = impMsgText(m);
+    const title = impTitleFrom(text, urls);
+    const dateMs = m.date_unixtime ? Number(m.date_unixtime) * 1000
+      : (m.date ? (Date.parse(m.date) || undefined) : undefined);
+    for (const url of urls) {
+      const key = url.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      links.push({ url, title: urls.length === 1 ? title : null, date: dateMs, wrapped: isWrappedUrl(url) });
+    }
+  }
+  return links;
+}
+
+// One URL per line, optionally "Title — https://…" / "https://… Title".
+function parseUrlList(text) {
+  const links = [];
+  const seen = new Set();
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = line.match(/https?:\/\/[^\s]+/);
+    if (!m) continue;
+    const url = m[0].replace(/[.,;:!?)\]]+$/, '');
+    if (impSkip(url)) continue;
+    const key = url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const title = impTitleFrom(line, [m[0]]);
+    links.push({ url, title, date: undefined, wrapped: isWrappedUrl(url) });
+  }
+  return links;
+}
+
+// Sniff a file's content → { format, links? }. OPML returns no links (the caller
+// routes it to the existing feed-import flow); link formats return parsed records.
+function detectImport(text) {
+  const t = String(text || '').trimStart();
+  if (t[0] === '{' || t[0] === '[') {
+    try {
+      const j = JSON.parse(text);
+      if (j && Array.isArray(j.messages)) return { format: 'telegram', links: parseTelegramExport(j) };
+      if (Array.isArray(j) && j.length && j.every((x) => x && typeof x.url === 'string')) {
+        return {
+          format: 'json-links',
+          links: j.filter((x) => !impSkip(x.url)).map((x) => ({
+            url: x.url, title: x.title || null,
+            date: x.date ? (Date.parse(x.date) || undefined) : undefined,
+            wrapped: isWrappedUrl(x.url),
+          })),
+        };
+      }
+    } catch { /* not the JSON we know — fall through */ }
+  }
+  if (/<opml[\s>]/i.test(t) || (/<\?xml/i.test(t) && /<outline/i.test(t))) return { format: 'opml' };
+  if (/https?:\/\//.test(t)) { const links = parseUrlList(text); if (links.length) return { format: 'urls', links }; }
+  return null;
+}
+
 // ── src/js/router.js ──
 
 // Router — evaluates plain-JS routing rules on each NEW item at insert (SPEC §6).
@@ -8522,6 +8649,8 @@ class Poller {
 
 
 
+
+
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
 const RENDER_CAP = 300;
@@ -8605,10 +8734,16 @@ class App {
     const fileEl = document.getElementById('opml-file');
     document.getElementById('btn-import')?.addEventListener('click', () => fileEl.click());
     fileEl?.addEventListener('change', async () => {
-      const texts = [];
-      for (const f of fileEl.files) texts.push(await f.text());
+      const files = [...fileEl.files];
       fileEl.value = '';
-      if (texts.length) this.importOpmlFiles(texts);
+      const opmlTexts = [];
+      for (const f of files) {
+        const text = await f.text();
+        const d = detectImport(text);
+        if (!d || d.format === 'opml') { opmlTexts.push(text); continue; }   // feeds → existing flow
+        await this.importLinks(d.links, d.format);                            // saved links → new flow
+      }
+      if (opmlTexts.length) this.importOpmlFiles(opmlTexts);
     });
     document.getElementById('btn-export')?.addEventListener('click', () => this.exportOpml());
 
@@ -9816,6 +9951,60 @@ class App {
     }
     document.getElementById('view-sub').textContent = `imported ${list.length} feeds — polling…`;
     this.setView('inbox');
+  }
+
+  // ── saved-link import (Telegram export / URL list / JSON) ──
+  // Imports into the non-pollable 'saved' source. Unwraps share-sheet/shortener
+  // URLs via gcuFetch (best-effort, paced) so dedup keys on the real destination,
+  // then upserts — the store's dedup keeps read/saved/tags on re-import. Imported
+  // links catalog in the next cataloger pass like any item.
+  async importLinks(links, format = 'import') {
+    const sub = document.getElementById('view-sub');
+    if (!links || !links.length) { if (sub) sub.textContent = `no links found in that ${format} file`; return { inserted: 0, updated: 0 }; }
+    await this._ensureSavedSource();
+
+    const wrapped = links.filter((l) => l.wrapped);
+    if (wrapped.length && this.poller?.fetch) {
+      let done = 0;
+      if (sub) sub.textContent = `unwrapping ${wrapped.length} shortened link${wrapped.length === 1 ? '' : 's'}…`;
+      await this._poolEach(wrapped, async (l) => {
+        try { const r = await this.poller.fetch(l.url, { redirect: 'follow' }); if (r && r.url) l.url = r.url; } catch { /* keep wrapped url */ }
+        done++;
+        if (sub && done % 10 === 0) sub.textContent = `unwrapping links… ${done}/${wrapped.length}`;
+      }, 4);
+    }
+
+    const raws = links.map((l) => ({
+      id: `saved:h${hash32(String(l.url).toLowerCase())}`,
+      feed_id: 'saved',
+      url: l.url,
+      title: l.title || (() => { try { return new URL(l.url).hostname.replace(/^www\./, ''); } catch { return l.url; } })(),
+      type: /(?:youtube\.com|youtu\.be)\//i.test(l.url) ? 'video' : 'article',
+      published_at: l.date || undefined,
+      tags: [],
+    }));
+    const res = await this.store.upsertItems(raws);
+    this.renderRail();
+    this.renderStream();
+    // set the summary AFTER re-rendering (renderStream rewrites view-sub).
+    if (sub) sub.textContent = `imported ${res.inserted} new link${res.inserted === 1 ? '' : 's'}${res.updated ? ` (${res.updated} already saved)` : ''} from ${format} → Saved Links`;
+    return res;
+  }
+
+  // The 'saved' source holds imported links + (later) Telegram captures. It has
+  // no feed URL, so it must never be polled — a far-future next_poll_at keeps the
+  // poller's due-check from ever selecting it (no special-casing needed).
+  async _ensureSavedSource() {
+    if (this.store.getFeed('saved')) return;
+    await this.store.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15 });
+  }
+
+  // Run `fn` over items with at most `n` in flight (the unwrap pool).
+  async _poolEach(items, fn, n = 4) {
+    const q = [...items];
+    await Promise.all(Array.from({ length: Math.min(n, q.length) }, async () => {
+      while (q.length) await fn(q.shift());
+    }));
   }
 
   exportOpml() {
