@@ -21,9 +21,28 @@ the trigger/query layer on top.
   (`llm.js` provider client, `llmkeys.js` OPFS vault, `cataloger.js` bounded call
   filling the language facets + abstract, `Store.writeCard`/usage ledger, Settings
   → AI cataloger; **per-item + batch catalog UI**, and the **catalog browser
-  fills in enriched facets live**). **Remaining:** a `needs_review` **review
-  queue** to confirm/correct the librarian, proposed typed `related` edges, and a
-  persisted `/glass-index/` so the browser scales past loading every card.
+  fills in enriched facets live**; **wake-lock + PiP flight-deck** keep long runs
+  alive; **WebMCP** can clear/start/stop/status the batch). ~~`needs_review`
+  **review queue**~~ ✅ Shipped 2026-06-01 (⚑ chip → overlay with ✓/⟳/open per
+  flagged card; `store.markCardReviewed`; `weir_reviewQueue`/`weir_reviewItem`).
+  **Remaining:** proposed typed `related` edges, and a persisted `/glass-index/`
+  so the browser scales past loading every card.
+- **Catalog provenance + tiered escalation** (cross-cutting Stage-1 design). Keep
+  **one canonical card per item** (`card.facets` = the active set everyone reads)
+  — *not* parallel full catalogs (they N× storage and break the 1:1 item→card
+  assumption the index / browser / review / thesaurus all rely on). Make the card
+  cataloger-aware instead: an append-only `glass.history[]` of prior catalogings
+  (`{cataloger, at, confidence, facets}`) for audit + rollback + model provenance.
+  Re-cataloging pushes the old pass to history and promotes the new one. The real
+  win isn't parallelism but **escalation**: bulk-catalog cheap (qwen, local, free),
+  then escalate only the uncertain/valuable (`needs_review`, low-confidence, saved)
+  to a strong model (nano-gpt GLM) — a "build" = a *policy over which items get
+  which cataloger*, not a duplicate pass. **Hard rule: human-reviewed facets are
+  sticky** — a re-build must skip or re-stage them, never clobber the review/
+  thesaurus curation (today's overwrite-on-recatalog would erase it). Data-model
+  impact is additive (`glass.history[]` + an escalation flag; `card.facets` stays
+  active), so it needs no re-catalog to adopt. Full A/B model comparison stays a
+  bounded one-off eval on a sample, not a permanent structure.
 - **Stage 2 — the query side.** Facet-intersection + thesaurus broaden/narrow (this
   *is* search v2); navigable emergent graph.
 - **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +
