@@ -24,8 +24,12 @@ if (!fs.existsSync(path.join(aud, 'ext'))) {
 // NOTE: vfs.js / switchboard / bridge-client.js are vendored separately (vfs from
 // a built bundle, bridge from the ../bridge repo) — see vendor/PROVENANCE.md.
 // Add `['ext/librarian/index.js', 'librarian.js']` here once librarian v2 lands.
+// [src, dest, wrap?] — `wrap` is the single export symbol to expose; when set,
+// the module body is enclosed in an IIFE so its (generic) internal names don't
+// leak into weir's single-file (flat-concat) scope and collide. librarian's
+// bundle has names like `search`/`index`/`scan`, so it MUST be wrapped.
 const FILES = [
-  // ['ext/librarian/index.js', 'librarian.js'],   // enable when @gcu/librarian v2 ships (see PROVENANCE)
+  ['ext/librarian/index.js', 'librarian.js', 'Librarian'],   // @gcu/librarian v2 (unified CSR engine) — shipped 2026-06-01
 ];
 
 if (FILES.length === 0) {
@@ -36,11 +40,19 @@ if (FILES.length === 0) {
 
 const banner = '// VENDORED from the auditable repo — do not edit here.\n'
   + '// Re-sync: node tools/sync-vendor.mjs\n';
-for (const [src, dest] of FILES) {
+for (const [src, dest, wrap] of FILES) {
   const p = path.join(aud, src);
   if (!fs.existsSync(p)) { console.warn('skip (missing upstream):', src); continue; }
-  const body = fs.readFileSync(p, 'utf8');
+  let body = fs.readFileSync(p, 'utf8');
+  if (wrap) {
+    // Drop the upstream `export { Sym };`, enclose the body in an IIFE, and
+    // re-export only `Sym` — so the flat-concat build introduces just that one
+    // top-level name (its internals stay scoped inside the IIFE).
+    body = body.replace(new RegExp(`^\\s*export\\s*\\{\\s*${wrap}\\s*\\};?\\s*$`, 'm'), '');
+    body = `// wrapped at vendor time so its internals don't collide in weir's single-file build.\n`
+      + `export const ${wrap} = (function () {\n${body}\nreturn ${wrap};\n})();\n`;
+  }
   fs.writeFileSync(path.join(root, 'vendor', dest), banner + body);
-  console.log('vendored', dest, '(' + (body.length / 1024).toFixed(0) + ' KB)');
+  console.log('vendored', dest, '(' + (body.length / 1024).toFixed(0) + ' KB)' + (wrap ? ` [wrapped → ${wrap}]` : ''));
 }
 console.log('→ vendor/ synced from', path.relative(root, aud) || aud);

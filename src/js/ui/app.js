@@ -192,10 +192,22 @@ export class App {
 
   query() {
     if (this.catalog) return this.catalogQuery();
-    if (this.smartView) return this.store.query({ ...this.smartView.query, text: this.searchText || this.smartView.query.text || undefined });
-    if (this.route) return this.store.query({ route: this.route, text: this.searchText || undefined });
-    if (this.catFilter != null) return this.store.query({ category: this.catFilter, text: this.searchText || undefined });   // '' = ungrouped
-    return this.store.query({ view: this.view, feed_id: this.feedFilter || undefined, text: this.searchText || undefined });
+    // Current view's filter (no text) + the effective search text (live box, or a
+    // saved smart-view's text).
+    let opts, text;
+    if (this.smartView) { const { text: t, ...rest } = this.smartView.query; opts = rest; text = this.searchText || t || ''; }
+    else if (this.route) { opts = { route: this.route }; text = this.searchText || ''; }
+    else if (this.catFilter != null) { opts = { category: this.catFilter }; text = this.searchText || ''; }   // '' = ungrouped
+    else { opts = { view: this.view, feed_id: this.feedFilter || undefined }; text = this.searchText || ''; }
+
+    // Ranked full-text (librarian) when we have text + a ready index — scoped to
+    // the current view by filtering on its allowed id set; relevance order.
+    if (text && this.searchIndex && this.searchIndex.ready) {
+      const allowed = new Set(this.store.query(opts).map((r) => r.id));
+      const hits = this.searchIndex.search(text, { limit: RENDER_CAP, filter: (id) => allowed.has(id) });
+      return hits.map((h) => this.store.getItem(h.id)).filter(Boolean);
+    }
+    return this.store.query({ ...opts, text: text || undefined });   // cursor-scan fallback
   }
 
   renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); }

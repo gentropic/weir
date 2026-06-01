@@ -11,6 +11,7 @@ import { App } from './ui/app.js';
 import { initPwa, setAutoCheck } from './pwa.js';
 import { loadHandle, handlePermission } from './fsmount.js';
 import { catalogStoreItem } from './cataloger.js';
+import { SearchIndex } from './search.js';
 import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
@@ -87,7 +88,15 @@ async function boot() {
   const adapters = [youtubeAdapter, githubAdapter, feedAdapter];   // specific before the `feed` fallback
   const poller = new Poller(store, { adapters, fetch: gcuFetch });
   const faviconFetcher = new FaviconFetcher(store, { fetch: gcuFetch });   // lazy rail icons, polite
+  // Full-text search v2 — build the in-RAM librarian index from the corpus, and
+  // rebuild (debounced) as items arrive/change. app.query() routes the search box
+  // through it (ranked), falling back to the cursor-scan until it's ready.
+  const search = new SearchIndex(store);
+  try { search.build(); } catch (e) { console.error('search index build failed', e); }
+  store.on('items', () => search.scheduleRebuild());
+
   const app = new App({ store, poller, router, adapters, faviconFetcher });
+  app.searchIndex = search;
   app.fsMount = { type: backendType, pending: pendingMount };   // filesystem-mount state for the UI
   app.mount();
   poller.start();
@@ -116,7 +125,7 @@ async function boot() {
       const key = o.key || (await getKey(provider));
       return catalogStoreItem(store, id, { provider, model: o.model || s.catalog_model, baseUrl: o.baseUrl || s.catalog_base_url, key, fetch: gcuFetch, ...o });
     },
-    webmcp, parseFeed, feedAdapter, gcuFetch };
+    webmcp, search, parseFeed, feedAdapter, gcuFetch };
 
   try {
     let persisted = false;

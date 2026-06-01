@@ -6,6 +6,22 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Search v2 — ranked full-text on @gcu/librarian — 2026-06-01
+
+- Vendored **@gcu/librarian v2** (the unified typed-array CSR engine, built *for*
+  weir) and replaced the v0.1 cursor-scan with **ranked BM25F + fuzzy + prefix**.
+  Title matches outrank body hits; typos (`krigging`) and partial terms (`minecr`)
+  still land. The search box — and a saved smart-view's text — now returns
+  **relevance-ranked** results scoped to the current view, with a graceful
+  cursor-scan fallback until the index is built.
+- Lean **folded** index (`storeText` off → snippets via a callback, `positions`
+  off) so the whole corpus fits cheaply in RAM; rebuilt on a debounce as items
+  arrive/change (`src/js/search.js`). Incremental `addDoc`/`removeDoc` +
+  `pack`/`unpack` persistence are the scale follow-up (ROADMAP).
+- `tools/sync-vendor.mjs` now wraps the librarian bundle in an IIFE so its generic
+  internal names (`search`, `index`, `scan`…) don't collide in weir's single-file
+  (flat-concat) build — only `Librarian` is exposed.
+
 ### Flight-deck: pinnable scope + smoother refresh — 2026-06-01
 
 - The flight-deck can be **pinned to a slice** of the corpus: navigate the main
