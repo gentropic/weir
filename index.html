@@ -628,6 +628,7 @@ body {
         <label class="set-row check"><input type="checkbox" id="set-adaptive"> adaptive polling — favorites more often, quiet &amp; dead feeds less</label>
         <label class="set-row">max concurrent fetches<input type="number" id="set-poll-concurrency" min="1" max="32" step="1"></label>
         <label class="set-row check"><input type="checkbox" id="set-pause-hidden"> pause polling when the tab is hidden</label>
+        <label class="set-row check"><input type="checkbox" id="set-poll-flightdeck"> keep polling while the flight-deck pop-out is open (overrides the pause above)</label>
       </section>
       <section class="set-group">
         <h4>Reading</h4>
@@ -4329,6 +4330,7 @@ const DEFAULT_SETTINGS = {
   adaptive_polling: true,               // scale each feed's interval by watch-affinity, activity, health
   poll_concurrency: 8,
   pause_polling_when_hidden: true,
+  poll_in_flightdeck: true,              // keep polling at full rate while the flight-deck pop-out is open (overrides pause-when-hidden + dodges background throttling)
   images_default_allowed: false,
   retainer_run_hour: 4,
   theme: 'switchboard-dark',
@@ -6961,6 +6963,8 @@ class Poller {
     this.adapters = opts.adapters || [];
     this.tickMs = opts.tickMs || 60_000;
     this._timer = null;
+    this._kaWin = null;        // flight-deck window driving a keep-alive tick (un-throttled)
+    this._kaTimer = null;
     this._running = new Set();        // feed ids currently in flight
     this._listeners = new Map();
     this.lastPollAt = null;
@@ -7131,7 +7135,17 @@ class Poller {
     if (this._timer && typeof this._timer.unref === 'function') this._timer.unref();
   }
 
-  stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } }
+  stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } this.setKeepAlive(null); }
+
+  // Keep-alive tick driven by an always-visible window (the flight-deck PiP), so
+  // polling continues at full rate even when the main tab is backgrounded —
+  // ignoring pause-when-hidden, since the open flight-deck means "keep it live."
+  // Pass null to stop. Parallels the catalog pacing being routed through the PiP.
+  setKeepAlive(win) {
+    if (this._kaTimer) { try { (this._kaWin || globalThis).clearInterval(this._kaTimer); } catch { /* window gone */ } this._kaTimer = null; }
+    this._kaWin = win || null;
+    if (win) this._kaTimer = win.setInterval(() => { this.pollDue(); }, this.tickMs);
+  }
 
   // Next scheduled poll across all feeds (epoch ms), or null.
   nextPollAt() {
@@ -7661,7 +7675,10 @@ class App {
     for (const ss of document.querySelectorAll('style')) { const s = pip.document.createElement('style'); s.textContent = ss.textContent; pip.document.head.appendChild(s); }
     pip.document.documentElement.dataset.density = document.documentElement.dataset.density || 'comfortable';
     pip.document.body.innerHTML = '<div id="flightdeck"></div>';
-    pip.addEventListener('pagehide', () => { this._pipWin = null; });
+    // Keep polling alive through the deck's (un-throttled, always-visible) timer
+    // while it's open — so a backgrounded tab keeps ingesting, not just cataloging.
+    if (this.store.getSettings().poll_in_flightdeck !== false) this.poller.setKeepAlive(pip);
+    pip.addEventListener('pagehide', () => { this._pipWin = null; this.poller.setKeepAlive(null); });
     pip.document.getElementById('flightdeck').addEventListener('click', (e) => {
       const el = e.target.closest('[data-fd-open]'); if (el && el.dataset.fdOpen) { try { window.open(el.dataset.fdOpen, '_blank', 'noopener'); } catch { /* ignore */ } }
     });
@@ -8580,6 +8597,7 @@ class App {
     chk('set-adaptive', s.adaptive_polling);
     val('set-poll-concurrency', s.poll_concurrency);
     chk('set-pause-hidden', s.pause_polling_when_hidden);
+    chk('set-poll-flightdeck', s.poll_in_flightdeck !== false);
     chk('set-images', s.images_default_allowed);
     chk('set-fullcontent', s.fetch_full_content_default);
     val('set-density', s.density || 'comfortable');
@@ -8738,6 +8756,7 @@ class App {
       adaptive_polling: chk('set-adaptive'),
       poll_concurrency: Math.max(1, Math.min(32, num('set-poll-concurrency', cur.poll_concurrency))),
       pause_polling_when_hidden: chk('set-pause-hidden'),
+      poll_in_flightdeck: chk('set-poll-flightdeck'),
       images_default_allowed: chk('set-images'),
       fetch_full_content_default: chk('set-fullcontent'),
       density: document.getElementById('set-density')?.value === 'compact' ? 'compact' : 'comfortable',

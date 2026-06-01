@@ -118,4 +118,18 @@ assert.equal(cgStats.fetches, 3, 'three fetches');
 assert.equal(cgStats.unchanged, 2, 'two confirmed-unchanged');
 assert.ok(Math.abs(cgStats.ratio - 2 / 3) < 1e-9, 'ratio = unchanged/fetches');
 
+// ── setKeepAlive: flight-deck-driven poll tick on an injected (PiP) window ──
+{
+  const ka = new Poller(store, { adapters: [feedAdapter], fetch: async () => mkRes({ status: 304 }) });
+  let scheduled = null, cleared = false;
+  const fakePip = { setInterval: (fn) => { scheduled = fn; return 7; }, clearInterval: (id) => { cleared = (id === 7); } };
+  ka.setKeepAlive(fakePip);
+  assert.equal(typeof scheduled, 'function', 'keep-alive tick scheduled on the PiP window');
+  let polled = 0; const orig = ka.pollDue.bind(ka); ka.pollDue = (...a) => { polled++; return orig(...a); };
+  await scheduled();                         // simulate a PiP timer fire
+  assert.equal(polled, 1, 'PiP tick drives pollDue');
+  ka.setKeepAlive(null);
+  assert.equal(cleared, true, 'keep-alive cleared via the PiP window');
+}
+
 console.log('poller smoke ok:', JSON.stringify(store.counts()));

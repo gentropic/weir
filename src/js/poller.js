@@ -39,6 +39,8 @@ export class Poller {
     this.adapters = opts.adapters || [];
     this.tickMs = opts.tickMs || 60_000;
     this._timer = null;
+    this._kaWin = null;        // flight-deck window driving a keep-alive tick (un-throttled)
+    this._kaTimer = null;
     this._running = new Set();        // feed ids currently in flight
     this._listeners = new Map();
     this.lastPollAt = null;
@@ -209,7 +211,17 @@ export class Poller {
     if (this._timer && typeof this._timer.unref === 'function') this._timer.unref();
   }
 
-  stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } }
+  stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } this.setKeepAlive(null); }
+
+  // Keep-alive tick driven by an always-visible window (the flight-deck PiP), so
+  // polling continues at full rate even when the main tab is backgrounded —
+  // ignoring pause-when-hidden, since the open flight-deck means "keep it live."
+  // Pass null to stop. Parallels the catalog pacing being routed through the PiP.
+  setKeepAlive(win) {
+    if (this._kaTimer) { try { (this._kaWin || globalThis).clearInterval(this._kaTimer); } catch { /* window gone */ } this._kaTimer = null; }
+    this._kaWin = win || null;
+    if (win) this._kaTimer = win.setInterval(() => { this.pollDue(); }, this.tickMs);
+  }
 
   // Next scheduled poll across all feeds (epoch ms), or null.
   nextPollAt() {

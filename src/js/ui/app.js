@@ -513,7 +513,10 @@ export class App {
     for (const ss of document.querySelectorAll('style')) { const s = pip.document.createElement('style'); s.textContent = ss.textContent; pip.document.head.appendChild(s); }
     pip.document.documentElement.dataset.density = document.documentElement.dataset.density || 'comfortable';
     pip.document.body.innerHTML = '<div id="flightdeck"></div>';
-    pip.addEventListener('pagehide', () => { this._pipWin = null; });
+    // Keep polling alive through the deck's (un-throttled, always-visible) timer
+    // while it's open — so a backgrounded tab keeps ingesting, not just cataloging.
+    if (this.store.getSettings().poll_in_flightdeck !== false) this.poller.setKeepAlive(pip);
+    pip.addEventListener('pagehide', () => { this._pipWin = null; this.poller.setKeepAlive(null); });
     pip.document.getElementById('flightdeck').addEventListener('click', (e) => {
       const el = e.target.closest('[data-fd-open]'); if (el && el.dataset.fdOpen) { try { window.open(el.dataset.fdOpen, '_blank', 'noopener'); } catch { /* ignore */ } }
     });
@@ -1432,6 +1435,7 @@ export class App {
     chk('set-adaptive', s.adaptive_polling);
     val('set-poll-concurrency', s.poll_concurrency);
     chk('set-pause-hidden', s.pause_polling_when_hidden);
+    chk('set-poll-flightdeck', s.poll_in_flightdeck !== false);
     chk('set-images', s.images_default_allowed);
     chk('set-fullcontent', s.fetch_full_content_default);
     val('set-density', s.density || 'comfortable');
@@ -1590,6 +1594,7 @@ export class App {
       adaptive_polling: chk('set-adaptive'),
       poll_concurrency: Math.max(1, Math.min(32, num('set-poll-concurrency', cur.poll_concurrency))),
       pause_polling_when_hidden: chk('set-pause-hidden'),
+      poll_in_flightdeck: chk('set-poll-flightdeck'),
       images_default_allowed: chk('set-images'),
       fetch_full_content_default: chk('set-fullcontent'),
       density: document.getElementById('set-density')?.value === 'compact' ? 'compact' : 'comfortable',

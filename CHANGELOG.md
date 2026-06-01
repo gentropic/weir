@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Flight-deck keeps polling alive too — 2026-06-01
+
+- While the flight-deck pop-out is open, weir now keeps **polling** alive, not just
+  cataloging — a poll tick runs through the deck's always-visible (un-throttled)
+  timer, overriding `pause_polling_when_hidden`. So a backgrounded "leave it
+  running" session keeps **ingesting new feed items**, not just chewing the
+  catalog backlog. New setting **`poll_in_flightdeck`** (default on; Settings →
+  Polling). Caught because the deck's "latest items" froze for an hour while
+  backgrounded — cataloging kept going (its pacing already rides the PiP timer)
+  but intake had quietly paused. Now both stay live.
+
 ### Storage size-report breakdown — 2026-06-01
 
 - **Settings → Storage → breakdown → compute…** shows a per-area byte breakdown

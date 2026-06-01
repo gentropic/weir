@@ -27,6 +27,7 @@ export const DEFAULT_SETTINGS = {
   adaptive_polling: true,               // scale each feed's interval by watch-affinity, activity, health
   poll_concurrency: 8,
   pause_polling_when_hidden: true,
+  poll_in_flightdeck: true,              // keep polling at full rate while the flight-deck pop-out is open (overrides pause-when-hidden + dodges background throttling)
   images_default_allowed: false,
   retainer_run_hour: 4,
   theme: 'switchboard-dark',
