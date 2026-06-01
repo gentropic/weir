@@ -14,7 +14,7 @@
 
 import { stripToText } from './cataloger.js';
 import { facetsOf, FACETS } from './glass.js';
-import { listModels as llmListModels } from './llm.js';
+import { listModels } from './llm.js';
 import { getKey } from './llmkeys.js';
 
 const LS_KEY = 'weir-webmcp';   // localStorage "port:token" — origin-scoped, never in backups/FSA folder
@@ -217,11 +217,13 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { glass_id: it.glass_id, reviewed: true, facets: card.facets };
   }
 
-  // List the catalog provider's available models (so Claude can pick one).
-  async function listModels(input = {}) {
+  // List the catalog provider's available models (so Claude can pick one). Named
+  // distinctly from the imported llm `listModels` — a local `listModels` would
+  // shadow it (and the build strips import aliases, so it can't be aliased).
+  async function listProviderModels(input = {}) {
     if (!app) throw new Error('listModels is only available in the running app');
     const provider = input.provider || store.getSettings().catalog_provider || 'ollama';
-    const models = await llmListModels({ provider, key: await getKey(provider), baseUrl: store.getSettings().catalog_base_url, fetch: app.poller && app.poller.fetch });
+    const models = await listModels({ provider, key: await getKey(provider), baseUrl: store.getSettings().catalog_base_url, fetch: app.poller && app.poller.fetch });
     return { provider, count: models.length, models };
   }
 
@@ -241,7 +243,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { provider: s.catalog_provider, model: s.catalog_model, baseUrl: s.catalog_base_url || undefined, paceMs: s.catalog_pace_ms, maxBodyChars: s.catalog_max_body_chars, note: 'key unchanged (set it in the UI)' };
   }
 
-  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listModels, setCatalog };
+  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -295,7 +297,7 @@ const TOOLS = [
     annotations: { title: 'Catalog an item' },
   },
   {
-    name: 'weir_listModels', fn: 'listModels',
+    name: 'weir_listModels', fn: 'listProviderModels',
     description: 'List the catalog provider\'s available models (so you can pick one). Optional `provider` overrides the configured one (lemonade|ollama|nanogpt|groq|custom). Returns { provider, count, models }.',
     inputSchema: { type: 'object', properties: { provider: { type: 'string', description: 'Override the configured provider' } } },
     annotations: { readOnlyHint: true, title: 'List provider models' },
