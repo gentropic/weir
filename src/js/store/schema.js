@@ -29,6 +29,8 @@ export const DEFAULT_SETTINGS = {
   pause_polling_when_hidden: true,
   poll_in_flightdeck: true,              // keep polling at full rate while the flight-deck pop-out is open (overrides pause-when-hidden + dodges background throttling)
   flightdeck_scope: null,                // null = all items; else a query-opts snapshot ({category}/{type}/{view}/{feed_id}/…) pinned via the deck's "pin" button
+  catalog_pace_ms: 400,                  // delay between catalog calls (400 kept the local NPU responsive; drop it for a cloud provider)
+  catalog_max_body_chars: 6000,          // chars of each doc body sent to the cataloger (cost/context knob)
   images_default_allowed: false,
   retainer_run_hour: 4,
   theme: 'switchboard-dark',

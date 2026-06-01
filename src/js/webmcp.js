@@ -14,6 +14,8 @@
 
 import { stripToText } from './cataloger.js';
 import { facetsOf, FACETS } from './glass.js';
+import { listModels as llmListModels } from './llm.js';
+import { getKey } from './llmkeys.js';
 
 const LS_KEY = 'weir-webmcp';   // localStorage "port:token" — origin-scoped, never in backups/FSA folder
 
@@ -215,7 +217,31 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { glass_id: it.glass_id, reviewed: true, facets: card.facets };
   }
 
-  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl, reviewQueue, reviewItem };
+  // List the catalog provider's available models (so Claude can pick one).
+  async function listModels(input = {}) {
+    if (!app) throw new Error('listModels is only available in the running app');
+    const provider = input.provider || store.getSettings().catalog_provider || 'ollama';
+    const models = await llmListModels({ provider, key: await getKey(provider), baseUrl: store.getSettings().catalog_base_url, fetch: app.poller && app.poller.fetch });
+    return { provider, count: models.length, models };
+  }
+
+  // Set cataloger config: provider / model / baseUrl / paceMs / maxBodyChars.
+  // Deliberately NOT the API key — that stays the user's UI paste into the OPFS
+  // vault. Takes effect on the NEXT cataloged item (a running batch picks it up).
+  async function setCatalog(input = {}) {
+    const patch = {};
+    if (input.provider != null) patch.catalog_provider = String(input.provider);
+    if (input.model != null) patch.catalog_model = String(input.model);
+    if (input.baseUrl != null) patch.catalog_base_url = String(input.baseUrl);
+    if (input.paceMs != null) patch.catalog_pace_ms = Math.max(0, Number(input.paceMs) || 0);
+    if (input.maxBodyChars != null) patch.catalog_max_body_chars = Math.max(500, Math.min(Number(input.maxBodyChars) || 6000, 20000));
+    if (!Object.keys(patch).length) throw new Error('nothing to set — pass provider/model/baseUrl/paceMs/maxBodyChars');
+    await store.setSettings(patch);
+    const s = store.getSettings();
+    return { provider: s.catalog_provider, model: s.catalog_model, baseUrl: s.catalog_base_url || undefined, paceMs: s.catalog_pace_ms, maxBodyChars: s.catalog_max_body_chars, note: 'key unchanged (set it in the UI)' };
+  }
+
+  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -267,6 +293,26 @@ const TOOLS = [
     description: 'Catalog one item with the configured LLM right now (fills its glass facets + description). Returns glass_id, facets, description. Needs the cataloger configured and reachable (Lemonade via the bridge).',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Item id (from weir_queryItems)' } }, required: ['id'] },
     annotations: { title: 'Catalog an item' },
+  },
+  {
+    name: 'weir_listModels', fn: 'listModels',
+    description: 'List the catalog provider\'s available models (so you can pick one). Optional `provider` overrides the configured one (lemonade|ollama|nanogpt|groq|custom). Returns { provider, count, models }.',
+    inputSchema: { type: 'object', properties: { provider: { type: 'string', description: 'Override the configured provider' } } },
+    annotations: { readOnlyHint: true, title: 'List provider models' },
+  },
+  {
+    name: 'weir_setCatalog', fn: 'setCatalog',
+    description: 'Set cataloger config — provider, model, baseUrl, paceMs (delay between calls; 0 = fastest, good for cloud), maxBodyChars (doc text sent; cost/context). NOT the API key (set that in the UI). Takes effect on the next cataloged item; a running batch picks it up. Returns the new config.',
+    inputSchema: {
+      type: 'object', properties: {
+        provider: { type: 'string', description: 'lemonade | ollama | nanogpt | groq | custom' },
+        model: { type: 'string', description: 'Model id (see weir_listModels)' },
+        baseUrl: { type: 'string', description: 'Override base URL (local/custom providers)' },
+        paceMs: { type: 'integer', description: 'Delay between catalog calls in ms (0 = no pause)' },
+        maxBodyChars: { type: 'integer', description: 'Max doc chars sent to the LLM (500–20000)' },
+      },
+    },
+    annotations: { title: 'Set cataloger config' },
   },
   {
     name: 'weir_catalogControl', fn: 'catalogControl',

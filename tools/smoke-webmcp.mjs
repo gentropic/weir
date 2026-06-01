@@ -124,4 +124,18 @@ const queue2 = await rvTools.reviewQueue({});
 assert.equal(queue2.total, 0, 'queue empty after review');
 await assert.rejects(rvTools.reviewItem({ id: 'v1' }), /isn’t cataloged|not cataloged|isn't cataloged/, 'uncataloged item rejected');
 
+// ── setCatalog: writes config (not the key), clamps; listModels needs app ──
+const cfg = await tools.setCatalog({ provider: 'nanogpt', model: 'deepseek/deepseek-v3.2', paceMs: 0, maxBodyChars: 99999 });
+assert.equal(cfg.provider, 'nanogpt'); assert.equal(cfg.model, 'deepseek/deepseek-v3.2');
+assert.equal(cfg.paceMs, 0, 'pace set'); assert.equal(cfg.maxBodyChars, 20000, 'maxBody clamped to 20000');
+assert.equal(store.getSettings().catalog_provider, 'nanogpt', 'persisted to settings');
+assert.ok(!('catalog_key' in store.getSettings()), 'no key field written');
+await assert.rejects(tools.setCatalog({}), /nothing to set/, 'empty patch rejected');
+await assert.rejects(tools.listModels({}), /only available/, 'listModels needs app');
+// listModels with a mock app + injected fetch
+const lmApp = { poller: { fetch: async () => ({ ok: true, async json() { return { data: [{ id: 'm1' }, { id: 'm2' }] }; } }) } };
+const lmTools = buildWeirTools({ store, app: lmApp });
+const lm = await lmTools.listModels({ provider: 'nanogpt' });
+assert.equal(lm.count, 2); assert.deepEqual(lm.models, ['m1', 'm2'], 'models listed');
+
 console.log('webmcp tools smoke ok:', JSON.stringify({ items: all.count, facets: Object.keys(f).length, mutations: calls.length }));

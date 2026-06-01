@@ -666,6 +666,8 @@ body {
         <label class="set-row">model<span><select id="set-cat-model" class="field"></select> <input type="text" id="set-cat-model-custom" class="field" hidden autocomplete="off" spellcheck="false" placeholder="model id"> <button class="btn-link" id="set-cat-models" type="button" title="Fetch available models from the provider">↻ list</button></span></label>
         <label class="set-row">base URL<input type="text" id="set-cat-baseurl" class="field" autocomplete="off" spellcheck="false" placeholder="http://localhost:11434"></label>
         <label class="set-row">API key<input type="password" id="set-cat-key" class="field" autocomplete="off" placeholder="(none)"></label>
+        <label class="set-row">pace (ms)<input type="number" id="set-cat-pace" class="field" min="0" step="50" title="Delay between catalog calls. 400 keeps a local NPU responsive; drop toward 0 for a cloud provider."></label>
+        <label class="set-row">max body chars<input type="number" id="set-cat-maxbody" class="field" min="500" step="500" title="How much of each document's text is sent to the cataloger (cost / context)."></label>
         <div class="set-row"><span id="cat-usage">no LLM usage yet</span><button class="btn-link" id="set-cat-gauge" type="button">check allowance</button></div>
         <div class="set-row"><span>Catalog maintenance</span><button class="btn-link" id="set-cat-clear" type="button" title="Delete all catalog cards and un-file every item (items &amp; reading state kept)">clear catalog</button></div>
         <div class="hint">The librarian that fills the language facets. Ollama runs locally (free, nothing leaves your machine). Keys are stored encrypted-out-of-band (OPFS), never in backups or the mounted folder. Cloud providers need their origin added to the bridge allowlist once.</div>
@@ -5602,6 +5604,8 @@ const DEFAULT_SETTINGS = {
   pause_polling_when_hidden: true,
   poll_in_flightdeck: true,              // keep polling at full rate while the flight-deck pop-out is open (overrides pause-when-hidden + dodges background throttling)
   flightdeck_scope: null,                // null = all items; else a query-opts snapshot ({category}/{type}/{view}/{feed_id}/…) pinned via the deck's "pin" button
+  catalog_pace_ms: 400,                  // delay between catalog calls (400 kept the local NPU responsive; drop it for a cloud provider)
+  catalog_max_body_chars: 6000,          // chars of each doc body sent to the cataloger (cost/context knob)
   images_default_allowed: false,
   retainer_run_hour: 4,
   theme: 'switchboard-dark',
@@ -8900,7 +8904,7 @@ class App {
   async _catalogOpts() {
     const s = this.store.getSettings();
     const provider = s.catalog_provider || 'ollama';
-    return { provider, model: s.catalog_model, baseUrl: s.catalog_base_url, key: await getKey(provider), fetch: this.poller.fetch };
+    return { provider, model: s.catalog_model, baseUrl: s.catalog_base_url, key: await getKey(provider), fetch: this.poller.fetch, maxBodyChars: s.catalog_max_body_chars || 6000 };
   }
 
   async catalogItem(id) {
@@ -8946,6 +8950,7 @@ class App {
   // The paced batch loop, shared by catalogVisible / catalogAll. Cancelable,
   // resumable (only un-cataloged items are queued), self-stopping on a failure run.
   async _runCatalog(todo) {
+    const pace = Math.max(0, Number(this.store.getSettings().catalog_pace_ms) ?? 400);   // 0 = as fast as the LLM answers (cloud)
     const job = this._cataloging = { cancel: false };
     this._batch = true;
     this._catalogProgress = { total: todo.length, done: 0, failed: 0 };
@@ -8969,7 +8974,7 @@ class App {
         if (n % 25 === 0 && this.catalog) this.renderAll();          // throttled refresh
         // Pace via the flight-deck window's timer when it's open: its timers stay
         // un-throttled (always-visible), so a buried main tab no longer crawls.
-        if (!job.cancel) await new Promise((res) => (this._pipWin || window).setTimeout(res, 400));
+        if (pace && !job.cancel) await new Promise((res) => (this._pipWin || window).setTimeout(res, pace));
       }
     } finally {
       this._batch = false;
@@ -9993,6 +9998,8 @@ class App {
     val('set-cat-provider', s.catalog_provider || 'ollama');
     this._renderCatModelSelect([], s.catalog_model || '');
     val('set-cat-baseurl', s.catalog_base_url || '');
+    val('set-cat-pace', s.catalog_pace_ms ?? 400);
+    val('set-cat-maxbody', s.catalog_max_body_chars ?? 6000);
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
@@ -10152,6 +10159,8 @@ class App {
       catalog_provider: document.getElementById('set-cat-provider')?.value || 'ollama',
       catalog_model: this._catModelValue(),
       catalog_base_url: document.getElementById('set-cat-baseurl')?.value.trim() || '',
+      catalog_pace_ms: Math.max(0, parseInt(document.getElementById('set-cat-pace')?.value, 10) || 0),
+      catalog_max_body_chars: Math.max(500, parseInt(document.getElementById('set-cat-maxbody')?.value, 10) || 6000),
       retention_enabled: chk('set-retention'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
@@ -10311,6 +10320,8 @@ class App {
 // gated by Chromium's Local/Private Network Access, so we inject gcuFetch — the
 // shim then routes its HTTP long-poll transport through the @gcu/bridge extension,
 // exactly like weir's LLM client reaches Lemonade. (See gentropic/webmcp SPEC §4.1.)
+
+
 
 
 
@@ -10515,7 +10526,31 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { glass_id: it.glass_id, reviewed: true, facets: card.facets };
   }
 
-  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl, reviewQueue, reviewItem };
+  // List the catalog provider's available models (so Claude can pick one).
+  async function listModels(input = {}) {
+    if (!app) throw new Error('listModels is only available in the running app');
+    const provider = input.provider || store.getSettings().catalog_provider || 'ollama';
+    const models = await llmListModels({ provider, key: await getKey(provider), baseUrl: store.getSettings().catalog_base_url, fetch: app.poller && app.poller.fetch });
+    return { provider, count: models.length, models };
+  }
+
+  // Set cataloger config: provider / model / baseUrl / paceMs / maxBodyChars.
+  // Deliberately NOT the API key — that stays the user's UI paste into the OPFS
+  // vault. Takes effect on the NEXT cataloged item (a running batch picks it up).
+  async function setCatalog(input = {}) {
+    const patch = {};
+    if (input.provider != null) patch.catalog_provider = String(input.provider);
+    if (input.model != null) patch.catalog_model = String(input.model);
+    if (input.baseUrl != null) patch.catalog_base_url = String(input.baseUrl);
+    if (input.paceMs != null) patch.catalog_pace_ms = Math.max(0, Number(input.paceMs) || 0);
+    if (input.maxBodyChars != null) patch.catalog_max_body_chars = Math.max(500, Math.min(Number(input.maxBodyChars) || 6000, 20000));
+    if (!Object.keys(patch).length) throw new Error('nothing to set — pass provider/model/baseUrl/paceMs/maxBodyChars');
+    await store.setSettings(patch);
+    const s = store.getSettings();
+    return { provider: s.catalog_provider, model: s.catalog_model, baseUrl: s.catalog_base_url || undefined, paceMs: s.catalog_pace_ms, maxBodyChars: s.catalog_max_body_chars, note: 'key unchanged (set it in the UI)' };
+  }
+
+  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -10567,6 +10602,26 @@ const TOOLS = [
     description: 'Catalog one item with the configured LLM right now (fills its glass facets + description). Returns glass_id, facets, description. Needs the cataloger configured and reachable (Lemonade via the bridge).',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Item id (from weir_queryItems)' } }, required: ['id'] },
     annotations: { title: 'Catalog an item' },
+  },
+  {
+    name: 'weir_listModels', fn: 'listModels',
+    description: 'List the catalog provider\'s available models (so you can pick one). Optional `provider` overrides the configured one (lemonade|ollama|nanogpt|groq|custom). Returns { provider, count, models }.',
+    inputSchema: { type: 'object', properties: { provider: { type: 'string', description: 'Override the configured provider' } } },
+    annotations: { readOnlyHint: true, title: 'List provider models' },
+  },
+  {
+    name: 'weir_setCatalog', fn: 'setCatalog',
+    description: 'Set cataloger config — provider, model, baseUrl, paceMs (delay between calls; 0 = fastest, good for cloud), maxBodyChars (doc text sent; cost/context). NOT the API key (set that in the UI). Takes effect on the next cataloged item; a running batch picks it up. Returns the new config.',
+    inputSchema: {
+      type: 'object', properties: {
+        provider: { type: 'string', description: 'lemonade | ollama | nanogpt | groq | custom' },
+        model: { type: 'string', description: 'Model id (see weir_listModels)' },
+        baseUrl: { type: 'string', description: 'Override base URL (local/custom providers)' },
+        paceMs: { type: 'integer', description: 'Delay between catalog calls in ms (0 = no pause)' },
+        maxBodyChars: { type: 'integer', description: 'Max doc chars sent to the LLM (500–20000)' },
+      },
+    },
+    annotations: { title: 'Set cataloger config' },
   },
   {
     name: 'weir_catalogControl', fn: 'catalogControl',

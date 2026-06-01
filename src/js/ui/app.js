@@ -407,7 +407,7 @@ export class App {
   async _catalogOpts() {
     const s = this.store.getSettings();
     const provider = s.catalog_provider || 'ollama';
-    return { provider, model: s.catalog_model, baseUrl: s.catalog_base_url, key: await getKey(provider), fetch: this.poller.fetch };
+    return { provider, model: s.catalog_model, baseUrl: s.catalog_base_url, key: await getKey(provider), fetch: this.poller.fetch, maxBodyChars: s.catalog_max_body_chars || 6000 };
   }
 
   async catalogItem(id) {
@@ -453,6 +453,7 @@ export class App {
   // The paced batch loop, shared by catalogVisible / catalogAll. Cancelable,
   // resumable (only un-cataloged items are queued), self-stopping on a failure run.
   async _runCatalog(todo) {
+    const pace = Math.max(0, Number(this.store.getSettings().catalog_pace_ms) ?? 400);   // 0 = as fast as the LLM answers (cloud)
     const job = this._cataloging = { cancel: false };
     this._batch = true;
     this._catalogProgress = { total: todo.length, done: 0, failed: 0 };
@@ -476,7 +477,7 @@ export class App {
         if (n % 25 === 0 && this.catalog) this.renderAll();          // throttled refresh
         // Pace via the flight-deck window's timer when it's open: its timers stay
         // un-throttled (always-visible), so a buried main tab no longer crawls.
-        if (!job.cancel) await new Promise((res) => (this._pipWin || window).setTimeout(res, 400));
+        if (pace && !job.cancel) await new Promise((res) => (this._pipWin || window).setTimeout(res, pace));
       }
     } finally {
       this._batch = false;
@@ -1500,6 +1501,8 @@ export class App {
     val('set-cat-provider', s.catalog_provider || 'ollama');
     this._renderCatModelSelect([], s.catalog_model || '');
     val('set-cat-baseurl', s.catalog_base_url || '');
+    val('set-cat-pace', s.catalog_pace_ms ?? 400);
+    val('set-cat-maxbody', s.catalog_max_body_chars ?? 6000);
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
@@ -1659,6 +1662,8 @@ export class App {
       catalog_provider: document.getElementById('set-cat-provider')?.value || 'ollama',
       catalog_model: this._catModelValue(),
       catalog_base_url: document.getElementById('set-cat-baseurl')?.value.trim() || '',
+      catalog_pace_ms: Math.max(0, parseInt(document.getElementById('set-cat-pace')?.value, 10) || 0),
+      catalog_max_body_chars: Math.max(500, parseInt(document.getElementById('set-cat-maxbody')?.value, 10) || 6000),
       retention_enabled: chk('set-retention'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),

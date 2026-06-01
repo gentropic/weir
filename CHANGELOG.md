@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Cataloger config + drive it from Claude Code — 2026-06-01
+
+- New cataloger knobs (Settings → AI cataloger): **pace** (ms between calls — 400
+  keeps a local NPU responsive; drop toward 0 for a cloud provider) and **max body
+  chars** (how much of each doc is sent — cost/context).
+- **WebMCP control:** `weir_listModels` (list the provider's available models) and
+  `weir_setCatalog` (set provider / model / baseUrl / pace / maxBodyChars). The API
+  **key is deliberately excluded** — it stays your UI paste into the OPFS vault.
+  Changes take effect on the next cataloged item, so a running batch picks them up.
+  Lets Claude pick a model and tune the cataloger from a session.
+
 ### Search v2 — ranked full-text on @gcu/librarian — 2026-06-01
 
 - Vendored **@gcu/librarian v2** (the unified typed-array CSR engine, built *for*

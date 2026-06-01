@@ -43,8 +43,20 @@ the trigger/query layer on top.
   impact is additive (`glass.history[]` + an escalation flag; `card.facets` stays
   active), so it needs no re-catalog to adopt. Full A/B model comparison stays a
   bounded one-off eval on a sample, not a permanent structure.
+- **Concurrent cataloging (the cloud speed lever).** Cataloging is sequential
+  today (one LLM call at a time — right for a local NPU). With a cloud provider
+  (nano-gpt), an N-wide worker pool over the batch would finish ~N× faster (1.8k
+  items: ~1h sequential → ~10 min at 6-wide). **Blocker to do first:** concurrent
+  `writeCard`s race on the daily glass-id sequence (`_nextCatalogSeq` scans the dir
+  → two in-flight catalogs get the same seq → the collision we already fixed once).
+  Fix = a **concurrency-safe in-memory seq counter** in the store (init once per
+  day from the dir, then synchronous `++`; reset on `clearCatalog`). Then a
+  `catalog_concurrency` setting + a pooled `_runCatalog` (shared progress/breaker/
+  cancel — safe since JS is single-threaded). Settable via `weir_setCatalog` once
+  built. (pace + maxBodyChars knobs + provider/model control already shipped.)
 - **Stage 2 — the query side.** Facet-intersection + thesaurus broaden/narrow (this
-  *is* search v2); navigable emergent graph.
+  *is* search v2 — ✅ the BM25F engine shipped; the facet-intersection/thesaurus
+  *layer over it* is the remaining work); navigable emergent graph.
 - **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +
   annotations; webmcp triggers. (Graph/map visualization broken out below.)
 - **Graph & map visualization (the "brain map").** Two complementary views over
