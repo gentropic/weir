@@ -242,6 +242,31 @@ the trigger/query layer on top.
   settings), **public pages only**. Route via gcuFetch/bridge (allowlist
   `web.archive.org`). Volume is trivial (~1.4 links/day); the ~1,500 backlog gets a
   gentle rate-limited pass. Pairs with never-delete + the shipped Wayback recovery.
+- **Remote thin interface via a Telegram Mini App** *(back-pocket / speculative)*.
+  A tiny phone-side UI for weir-on-desktop — notes input, maybe light control —
+  with **no server and no webhook**. Two tiers:
+  - **Simplest (one-way, basically free):** a static Mini App note-composer form →
+    `Telegram.WebApp.sendData(JSON)` → arrives as a `web_app_data` message →
+    desktop weir's `getUpdates` poll ingests it as a structured note. No return
+    channel, no WebRTC. (Constraints: `sendData` needs a reply-keyboard `web_app`
+    launch; ~4 KB payload.) This is the one to actually reach for.
+  - **Live/bidirectional (the clever hack):** use Telegram only as a one-way
+    courier for a **WebRTC room ID** — phone joins a **Trystero** (or PeerJS) room,
+    `sendData(roomId)`, desktop reads it via `getUpdates` and joins the same room;
+    the P2P lib does the *real* SDP/ICE signaling, then it's a direct data channel
+    and Telegram drops out. The Mini App's **`CloudStorage`** (durable, cross-device
+    synced KV) stashes the room ID → **pair once, auto-reconnect**. This dissolves
+    the "a Mini App can't *receive* bot messages" blocker, since Telegram only
+    carries ~20 bytes one-way.
+  - **Honest asterisks:** (1) it's a **dependency** (Trystero/PeerJS) vs weir's
+    single-file ethos — only acceptable lazy-loaded *inside* this feature, never in
+    core. (2) Trystero is "serverless" in the SaaS-marketing sense — it leans on
+    *public* rendezvous infra (BitTorrent trackers / Nostr / MQTT), not GCU-grade
+    actually-serverless. (3) **NAT is the real gremlin:** same-WiFi P2P works on
+    STUN; true-remote (phone-on-cellular ↔ desktop) usually needs a **TURN relay**,
+    which *is* a server. So it shines as a same-network remote. (On-LAN, the
+    `@gcu/webmcp` bridge binding the LAN IP instead of `127.0.0.1` would be even
+    simpler — no WebRTC at all — at a different security tradeoff.)
 - **Favorites & passive harvesting — `@gcu/glean`.** Pull "saved / favorited"
   items from accounts that don't expose feeds — MercadoLibre & Amazon favorites /
   wishlists, etc. — into weir as items, so the second brain sees them too. This is
