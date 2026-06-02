@@ -19,6 +19,15 @@ assert.equal(m.description, 'A short description.', 'og:description');
 assert.equal(parseLinkMeta('<head><title>Only Title</title></head>').title, 'Only Title', 'title-tag fallback');
 assert.equal(parseLinkMeta('<head><meta name="twitter:image" content="https://x/y.png"></head>').image, 'https://x/y.png', 'twitter:image fallback');
 assert.equal(parseLinkMeta('').image, null, 'empty → null');
+// a value containing the other quote type must NOT truncate (the "That an app" bug)
+assert.equal(
+  parseLinkMeta(`<meta property="og:title" content="That an app 'Fits on a Floppy' is still useful">`).title,
+  "That an app 'Fits on a Floppy' is still useful",
+  'apostrophe inside double-quoted content not truncated');
+assert.equal(
+  parseLinkMeta(`<meta property='og:title' content='Bob&#39;s "big" day'>`).title,
+  'Bob\'s "big" day',
+  'double-quote inside single-quoted content not truncated (+ entity decoded)');
 
 // ── enrichOne: resolve wrapper + parse og + update in place ──
 const store = new Store(await VFS.create()); await store._hydrate();

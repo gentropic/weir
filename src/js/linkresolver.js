@@ -24,8 +24,10 @@ export function parseLinkMeta(html) {
     const re = new RegExp('<meta\\b[^>]*\\b(?:property|name)\\s*=\\s*["\']' + prop + '["\'][^>]*>', 'i');
     const tag = head.match(re);
     if (!tag) return null;
-    const c = tag[0].match(/\bcontent\s*=\s*["']([^"']*)["']/i);
-    return c ? lrDecodeEntities(c[1].trim()) || null : null;
+    // Match to the SAME delimiter quote (backref), so a value containing the other
+    // quote — e.g. og:title="That an app 'Fits on a Floppy'…" — isn't truncated.
+    const c = tag[0].match(/\bcontent\s*=\s*(["'])([\s\S]*?)\1/i);
+    return c ? lrDecodeEntities(c[2].trim()) || null : null;
   };
   const titleTag = head.match(/<title[^>]*>([^<]*)<\/title>/i);
   return {
