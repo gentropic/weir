@@ -211,6 +211,13 @@ body {
 .rail-label #cat-run.running { color: var(--au-action); animation: cat-pulse 1.4s ease-in-out infinite; }
 @keyframes cat-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
+/* Sources header actions (collapse/expand all) + the filter box. */
+.rail-label .rail-acts { float: right; }
+.rail-label .rail-acts .btn-link { font-size: 12px; text-transform: none; letter-spacing: 0; padding: 0 2px; line-height: 1; }
+.source-filter { display: block; width: 100%; box-sizing: border-box; margin: -2px 0 6px; padding: 4px 8px; background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg); color: var(--au-fg); font-family: var(--au-font-mono); font-size: 11px; }
+.source-filter:focus { outline: none; border-color: var(--au-action); }
+.source-filter::placeholder { color: var(--au-fg-soft); }
+
 /* Flight-deck — rendered inside a Document Picture-in-Picture window (the page's
    stylesheet is copied in, so these rules apply there too). */
 #flightdeck { font-family: var(--au-font-ui, sans-serif); color: var(--au-fg); background: var(--au-bg); height: 100%; display: flex; flex-direction: column; }
@@ -511,7 +518,8 @@ body {
     </div>
 
     <div class="rail-section">
-      <div class="rail-label">Sources</div>
+      <div class="rail-label" id="sources-head">Sources<span class="rail-acts"><button id="src-collapse-all" class="btn-link" type="button" title="Collapse all folders">▸</button><button id="src-expand-all" class="btn-link" type="button" title="Expand all folders">▾</button></span></div>
+      <input id="source-filter" class="source-filter" type="search" placeholder="filter sources…" spellcheck="false" autocomplete="off">
       <div id="sources"><div class="rail-empty">No sources yet</div></div>
     </div>
 
@@ -8682,6 +8690,7 @@ class App {
     this.catalog = null;        // glass catalog mode: { filters: { facet: Set<term> } } or null
     this.layout = 'list';       // stream layout: 'list' | 'gallery'
     this.collapsedCats = new Set();
+    this.sourceFilter = '';          // rail source-filter query (narrows the Sources list by name/folder)
     this._loadingFull = new Set();   // items with a full-content fetch in flight
     this._fullTried = new Set();     // items whose auto full-fetch already failed (don't retry on every open)
     this.searchText = '';
@@ -8756,6 +8765,14 @@ class App {
       if (opmlTexts.length) this.importOpmlFiles(opmlTexts);
     });
     document.getElementById('btn-export')?.addEventListener('click', () => this.exportOpml());
+
+    // Sources header: collapse/expand-all buttons, a name/folder filter, and a
+    // right-click menu on the header itself.
+    document.getElementById('src-collapse-all')?.addEventListener('click', () => this.collapseAllCats());
+    document.getElementById('src-expand-all')?.addEventListener('click', () => this.expandAllCats());
+    const srcFilter = document.getElementById('source-filter');
+    srcFilter?.addEventListener('input', () => { this.sourceFilter = srcFilter.value; this.renderRail(); });
+    document.getElementById('sources-head')?.addEventListener('contextmenu', (e) => { e.preventDefault(); this.railMenu(e.clientX, e.clientY); });
 
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
     document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
@@ -8951,7 +8968,7 @@ class App {
   }
 
   renderRail() {
-    const feeds = this.store.listFeeds();
+    let feeds = this.store.listFeeds();
     this.faviconFetcher?.enqueue(feeds);   // lazily backfill site icons (polite, once each)
     this.recomputeHealth();
     this.renderHealthStatus();
@@ -8972,7 +8989,11 @@ class App {
     if (srcSec) srcSec.style.display = '';
     if (facSec) facSec.style.display = 'none';
 
-    if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
+    // Source filter narrows the list by feed name or folder; while filtering,
+    // matching folders force-expand so hits are always visible.
+    const srcQ = (this.sourceFilter || '').trim().toLowerCase();
+    if (srcQ) feeds = feeds.filter((f) => (f.name || '').toLowerCase().includes(srcQ) || (f.category || '').toLowerCase().includes(srcQ));
+    if (!feeds.length) { this.sources.innerHTML = `<div class="rail-empty">${srcQ ? 'no sources match' : 'No sources yet'}</div>`; return; }
 
     const groups = new Map();
     for (const f of feeds) { const c = f.category || ''; (groups.get(c) || groups.set(c, []).get(c)).push(f); }
@@ -8994,7 +9015,7 @@ class App {
       // watch-affinity then name.
       const ord = (f) => (f.order == null ? Infinity : f.order);
       const list = groups.get(c).sort((x, y) => ord(x) - ord(y) || (y.affinity || 0) - (x.affinity || 0) || x.name.localeCompare(y.name));
-      const collapsed = this.collapsedCats.has(c);
+      const collapsed = !srcQ && this.collapsedCats.has(c);
       const unread = list.reduce((n, f) => n + this.feedUnread(f.id), 0);
       const activeCat = this.catFilter === c ? ' active' : '';
       html += `<div class="cat-head${activeCat}" data-cat="${escapeHtml(c)}">`

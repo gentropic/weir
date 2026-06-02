@@ -6,11 +6,14 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
-### Rail: collapse-all / expand-all folders — 2026-06-01
+### Sources rail: filter box + collapse/expand-all — 2026-06-01
 
-- **Collapse all folders** / **Expand all folders** on the folder context menu
-  *and* on right-clicking empty rail space — no more closing folders one by one to
-  get a clean overview.
+- **Filter box** in the Sources header — narrow the list by feed name *or* folder
+  as you type (matching folders force-expand so hits are always visible). Much
+  faster than scrolling/collapsing to find a source in a large list.
+- **Collapse-all / Expand-all** buttons (▸ / ▾) in the Sources header, plus the
+  same two actions on the folder context menu, the Sources-header right-click, and
+  right-clicking empty rail space — no more closing folders one by one.
 
 ### Multi-format link import (Holocene/Telegram backlog → weir) — 2026-06-01
 

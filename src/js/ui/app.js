@@ -46,6 +46,7 @@ export class App {
     this.catalog = null;        // glass catalog mode: { filters: { facet: Set<term> } } or null
     this.layout = 'list';       // stream layout: 'list' | 'gallery'
     this.collapsedCats = new Set();
+    this.sourceFilter = '';          // rail source-filter query (narrows the Sources list by name/folder)
     this._loadingFull = new Set();   // items with a full-content fetch in flight
     this._fullTried = new Set();     // items whose auto full-fetch already failed (don't retry on every open)
     this.searchText = '';
@@ -120,6 +121,14 @@ export class App {
       if (opmlTexts.length) this.importOpmlFiles(opmlTexts);
     });
     document.getElementById('btn-export')?.addEventListener('click', () => this.exportOpml());
+
+    // Sources header: collapse/expand-all buttons, a name/folder filter, and a
+    // right-click menu on the header itself.
+    document.getElementById('src-collapse-all')?.addEventListener('click', () => this.collapseAllCats());
+    document.getElementById('src-expand-all')?.addEventListener('click', () => this.expandAllCats());
+    const srcFilter = document.getElementById('source-filter');
+    srcFilter?.addEventListener('input', () => { this.sourceFilter = srcFilter.value; this.renderRail(); });
+    document.getElementById('sources-head')?.addEventListener('contextmenu', (e) => { e.preventDefault(); this.railMenu(e.clientX, e.clientY); });
 
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
     document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
@@ -315,7 +324,7 @@ export class App {
   }
 
   renderRail() {
-    const feeds = this.store.listFeeds();
+    let feeds = this.store.listFeeds();
     this.faviconFetcher?.enqueue(feeds);   // lazily backfill site icons (polite, once each)
     this.recomputeHealth();
     this.renderHealthStatus();
@@ -336,7 +345,11 @@ export class App {
     if (srcSec) srcSec.style.display = '';
     if (facSec) facSec.style.display = 'none';
 
-    if (!feeds.length) { this.sources.innerHTML = '<div class="rail-empty">No sources yet</div>'; return; }
+    // Source filter narrows the list by feed name or folder; while filtering,
+    // matching folders force-expand so hits are always visible.
+    const srcQ = (this.sourceFilter || '').trim().toLowerCase();
+    if (srcQ) feeds = feeds.filter((f) => (f.name || '').toLowerCase().includes(srcQ) || (f.category || '').toLowerCase().includes(srcQ));
+    if (!feeds.length) { this.sources.innerHTML = `<div class="rail-empty">${srcQ ? 'no sources match' : 'No sources yet'}</div>`; return; }
 
     const groups = new Map();
     for (const f of feeds) { const c = f.category || ''; (groups.get(c) || groups.set(c, []).get(c)).push(f); }
@@ -358,7 +371,7 @@ export class App {
       // watch-affinity then name.
       const ord = (f) => (f.order == null ? Infinity : f.order);
       const list = groups.get(c).sort((x, y) => ord(x) - ord(y) || (y.affinity || 0) - (x.affinity || 0) || x.name.localeCompare(y.name));
-      const collapsed = this.collapsedCats.has(c);
+      const collapsed = !srcQ && this.collapsedCats.has(c);
       const unread = list.reduce((n, f) => n + this.feedUnread(f.id), 0);
       const activeCat = this.catFilter === c ? ' active' : '';
       html += `<div class="cat-head${activeCat}" data-cat="${escapeHtml(c)}">`
