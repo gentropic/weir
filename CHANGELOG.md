@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Saved links: stash the article body during resolve (full-content catalog + inline read) — 2026-06-02
+
+- The resolver already fetched each link's page (to find its URL + OpenGraph) and
+  then **threw the body away**. Now it **extracts + stores the article text from
+  that same response** (the readability extractor, injected) — *no second fetch*.
+- Net: one fetch per saved link now yields **real URL + thumbnail + title +
+  excerpt + full readable content + a rich catalog**. The cataloger picks the
+  stored content up automatically (capped at `maxBodyChars`), and the link reads
+  **inline** (expand-in-place) like a feed article. Images stay suppressed by
+  default (per policy; "load images" still works per-item).
+- Roadmapped: **compress stored content** (native `CompressionStream`, ~3–5×) at
+  the VFS layer, since stashing bodies makes content the biggest space user.
+
 ### Cataloger: defer un-enriched saved links from the batch — 2026-06-01
 
 - The catalog batch (`catalogVisible` / `catalogAll` / the WebMCP start) now

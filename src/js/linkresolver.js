@@ -48,9 +48,10 @@ function isWeakTitle(title, url) {
 function absUrl(href, base) { try { return new URL(href, base).href; } catch { return null; } }
 
 export class LinkResolver {
-  constructor(store, { fetch, intervalMs = 15_000, batch = 2, maxMisses = 8 } = {}) {
+  constructor(store, { fetch, extract, intervalMs = 15_000, batch = 2, maxMisses = 8 } = {}) {
     this.store = store;
     this.fetch = fetch;
+    this.extract = extract || null;   // readability extractor (browser-only; injected so node tests can omit it)
     this.intervalMs = intervalMs;
     this.batch = batch;
     this.maxMisses = maxMisses;     // park a link after this many failed ticks (until the next kick / reload)
@@ -101,10 +102,17 @@ export class LinkResolver {
 
     const meta = parseLinkMeta(html);
     const img = meta.image && absUrl(meta.image, finalUrl);
+    // Extract the article body from the SAME response (no second fetch) so the
+    // cataloger gets full content + the link reads inline. Images stay suppressed
+    // (weir's default; "load images" per-item still works).
+    let content = null;
+    if (this.extract) { try { content = this.extract(html, finalUrl); } catch { /* unparseable page */ } }
+
     const patch = { id: item.id, feed_id: SAVED_FEED, url: finalUrl, enriched: true };   // url write clears "unresolved"; enriched = fetched+parsed (won't re-fetch)
     if (img) patch.media = { ...(item.media || {}), thumbnail: img };
     if (meta.title && isWeakTitle(item.title, finalUrl)) patch.title = meta.title;
     if (meta.description && !item.excerpt) patch.excerpt = meta.description.slice(0, 300);
+    if (content) patch.content = content;   // → has_content; cataloger uses it (capped at maxBodyChars)
     await this.store.upsertItems([patch]);
     return patch;
   }

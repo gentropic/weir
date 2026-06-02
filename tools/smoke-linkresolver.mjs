@@ -65,4 +65,15 @@ await store.upsertItems([{ id: id2, feed_id: 'saved', url: 'https://share.google
 await lr.enrichOne(store.getItem(id2));
 assert.equal(store.getItem(id2).title, 'My Good Title | Hackaday', 'meaningful title preserved');
 
-console.log('linkresolver smoke ok:', JSON.stringify({ title: it.title, thumb: !!it.media.thumbnail, pending: lr._pending().length }));
+// ── content extraction from the same fetch (injected extractor) ──
+const id5 = `saved:h${hash32('https://share.google/withbody')}`;
+await store.upsertItems([{ id: id5, feed_id: 'saved', url: 'https://share.google/withbody', title: 'share.google', type: 'article' }]);
+const lrX = new LinkResolver(store, {
+  fetch: async () => ({ ok: true, status: 200, url: 'https://hackaday.com/body', async text() { return '<html><head><meta property="og:title" content="Body Article"></head><body><article><p>x</p></article></body></html>'; } }),
+  extract: (html, url) => `<p>extracted body of ${url}</p>`,
+});
+await lrX.enrichOne(store.getItem(id5));
+assert.equal(store.getItem(id5).has_content, true, 'content stored (has_content) from the same fetch');
+assert.match(await store.getContent(id5), /extracted body of https:\/\/hackaday\.com\/body/, 'stored body is the extractor output, against the FINAL url');
+
+console.log('linkresolver smoke ok:', JSON.stringify({ title: it.title, thumb: !!it.media.thumbnail, pending: lr._pending().length, content: store.getItem(id5).has_content }));

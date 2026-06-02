@@ -324,6 +324,15 @@ the trigger/query layer on top.
   below) — computed via a VFS walk (`store._walk` already enumerates the tree).
   Shows what's actually eating space and informs the retention / cold-store calls.
   This is the "size report in general" we want regardless.
+- **Compress stored content HTML.** Stored article bodies (feed full-text +, now,
+  the resolver stashing each saved link's body for full-content cataloging +
+  inline reading) are the biggest space user — and HTML/text compresses ~3–5×.
+  Compress per-item content on write / decompress on read, transparently. Cleanest
+  is the **native `CompressionStream`/`DecompressionStream`** (gzip, zero-dep, in
+  every modern browser) at the VFS content layer (`_writeContent`/`getContent`), so
+  it's backend-agnostic (IDB/OPFS/FSA) and invisible to the cataloger/reader. Pairs
+  with the size report (measure first) and the cold-store tier. Keep a magic-byte/
+  flag so old uncompressed content still reads.
 - **Self-hosted thumbnails / cover images (opt-in).** Today thumbnails are remote
   URLs — browser-cached only, so list/gallery re-fetch after cache eviction and
   break offline. Optionally cache them locally (OPFS or the FSA folder) behind a
