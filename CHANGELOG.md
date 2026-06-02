@@ -6,6 +6,15 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Saved links: a built-in "Links" view — 2026-06-01
+
+- New built-in **Links** view in the Views list (below Articles) = your
+  captured/saved links (the `saved` source now; Telegram/glean captures later).
+  It's a **view, not a type** — a saved article still shows in Articles too, and
+  still catalogs as an article. Hidden until you have saved links. Existing installs
+  get it via a one-time migration that **respects deletion** (delete it and it
+  stays gone).
+
 ### Saved links: resolve + enrich (thumbnails, titles, excerpts) + manual triggers — 2026-06-01
 
 - The background resolver now does **both jobs from the one page fetch** it already

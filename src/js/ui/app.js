@@ -1483,7 +1483,7 @@ export class App {
       const items = this.store.query(v.query);
       if (v.builtin && items.length === 0) continue;     // empty type default → hide
       const unread = items.reduce((n, i) => n + (i.read ? 0 : 1), 0);
-      const ico = ICONS[v.query.type] || (v.query.text ? ICONS.search : '◆');
+      const ico = v.id === 'v-links' ? '⧉' : (ICONS[v.query.type] || (v.query.text ? ICONS.search : '◆'));
       const active = this.smartView?.id === v.id ? ' active' : '';
       rows.push(`<div class="navrow view${active}" data-view-id="${escapeHtml(v.id)}" title="${escapeHtml(this.viewSummary(v))}">`
         + `<span class="lbl"><span class="ico">${ico}</span> ${escapeHtml(v.name)}</span><span class="count">${unread || items.length || ''}</span></div>`);

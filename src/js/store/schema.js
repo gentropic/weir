@@ -63,6 +63,9 @@ export const DEFAULT_SETTINGS = {
 export const DEFAULT_VIEWS = [
   { id: 'v-videos',   name: 'Videos',   builtin: true, query: { type: 'video' } },
   { id: 'v-articles', name: 'Articles', builtin: true, query: { type: 'article' } },
+  // Links = your captured/saved links (the 'saved' source — and Telegram/glean
+  // captures later). A VIEW, not a type: a saved article still shows in Articles.
+  { id: 'v-links',    name: 'Links',    builtin: true, query: { feed_id: 'saved' } },
   { id: 'v-papers',   name: 'Papers',   builtin: true, query: { type: 'paper' } },
   { id: 'v-releases', name: 'Releases', builtin: true, query: { type: 'release' } },
 ];

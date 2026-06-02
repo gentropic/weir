@@ -5656,6 +5656,9 @@ const DEFAULT_SETTINGS = {
 const DEFAULT_VIEWS = [
   { id: 'v-videos',   name: 'Videos',   builtin: true, query: { type: 'video' } },
   { id: 'v-articles', name: 'Articles', builtin: true, query: { type: 'article' } },
+  // Links = your captured/saved links (the 'saved' source — and Telegram/glean
+  // captures later). A VIEW, not a type: a saved article still shows in Articles.
+  { id: 'v-links',    name: 'Links',    builtin: true, query: { feed_id: 'saved' } },
   { id: 'v-papers',   name: 'Papers',   builtin: true, query: { type: 'paper' } },
   { id: 'v-releases', name: 'Releases', builtin: true, query: { type: 'release' } },
 ];
@@ -6192,8 +6195,25 @@ class Store {
     // Smart views — seed the type defaults on first run; persisted thereafter
     // (so deletions stick and aren't re-seeded).
     const storedViews = await this._readJSON('/views.json', null);
-    if (storedViews && Array.isArray(storedViews)) this.savedViews = storedViews;
-    else { this.savedViews = DEFAULT_VIEWS.map((v) => ({ ...v })); await this.vfs.writeFile('/views.json', JSON.stringify(this.savedViews, null, 2)); }
+    if (storedViews && Array.isArray(storedViews)) {
+      this.savedViews = storedViews;
+      // One-time: introduce the built-in Links view on installs that predate it.
+      // Guarded by a flag so a user who deletes it doesn't get it re-added.
+      if (!this.settings.links_view_seeded) {
+        if (!this.savedViews.find((v) => v.id === 'v-links')) {
+          const def = DEFAULT_VIEWS.find((v) => v.id === 'v-links');
+          const at = this.savedViews.findIndex((v) => v.id === 'v-articles');
+          this.savedViews.splice(at >= 0 ? at + 1 : this.savedViews.length, 0, { ...def });
+          await this.vfs.writeFile('/views.json', JSON.stringify(this.savedViews, null, 2));
+        }
+        this.settings.links_view_seeded = true;
+        await this.vfs.writeFile('/settings.json', JSON.stringify(this.settings, null, 2));
+      }
+    } else {
+      this.savedViews = DEFAULT_VIEWS.map((v) => ({ ...v }));
+      this.settings.links_view_seeded = true;   // fresh install already includes it
+      await this.vfs.writeFile('/views.json', JSON.stringify(this.savedViews, null, 2));
+    }
 
     for (const line of (await this._readText('/archived_index.ndjson')).split('\n')) {
       if (!line.trim()) continue;
@@ -10257,7 +10277,7 @@ class App {
       const items = this.store.query(v.query);
       if (v.builtin && items.length === 0) continue;     // empty type default → hide
       const unread = items.reduce((n, i) => n + (i.read ? 0 : 1), 0);
-      const ico = ICONS[v.query.type] || (v.query.text ? ICONS.search : '◆');
+      const ico = v.id === 'v-links' ? '⧉' : (ICONS[v.query.type] || (v.query.text ? ICONS.search : '◆'));
       const active = this.smartView?.id === v.id ? ' active' : '';
       rows.push(`<div class="navrow view${active}" data-view-id="${escapeHtml(v.id)}" title="${escapeHtml(this.viewSummary(v))}">`
         + `<span class="lbl"><span class="ico">${ico}</span> ${escapeHtml(v.name)}</span><span class="count">${unread || items.length || ''}</span></div>`);

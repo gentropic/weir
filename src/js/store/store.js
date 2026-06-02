@@ -88,8 +88,25 @@ export class Store {
     // Smart views — seed the type defaults on first run; persisted thereafter
     // (so deletions stick and aren't re-seeded).
     const storedViews = await this._readJSON('/views.json', null);
-    if (storedViews && Array.isArray(storedViews)) this.savedViews = storedViews;
-    else { this.savedViews = DEFAULT_VIEWS.map((v) => ({ ...v })); await this.vfs.writeFile('/views.json', JSON.stringify(this.savedViews, null, 2)); }
+    if (storedViews && Array.isArray(storedViews)) {
+      this.savedViews = storedViews;
+      // One-time: introduce the built-in Links view on installs that predate it.
+      // Guarded by a flag so a user who deletes it doesn't get it re-added.
+      if (!this.settings.links_view_seeded) {
+        if (!this.savedViews.find((v) => v.id === 'v-links')) {
+          const def = DEFAULT_VIEWS.find((v) => v.id === 'v-links');
+          const at = this.savedViews.findIndex((v) => v.id === 'v-articles');
+          this.savedViews.splice(at >= 0 ? at + 1 : this.savedViews.length, 0, { ...def });
+          await this.vfs.writeFile('/views.json', JSON.stringify(this.savedViews, null, 2));
+        }
+        this.settings.links_view_seeded = true;
+        await this.vfs.writeFile('/settings.json', JSON.stringify(this.settings, null, 2));
+      }
+    } else {
+      this.savedViews = DEFAULT_VIEWS.map((v) => ({ ...v }));
+      this.settings.links_view_seeded = true;   // fresh install already includes it
+      await this.vfs.writeFile('/views.json', JSON.stringify(this.savedViews, null, 2));
+    }
 
     for (const line of (await this._readText('/archived_index.ndjson')).split('\n')) {
       if (!line.trim()) continue;
