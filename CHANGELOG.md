@@ -6,6 +6,15 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Health: "Retry flagged" — recover failing feeds after an outage — 2026-06-02
+
+- The feed-health panel gets a **"↻ Retry flagged"** button that re-polls every
+  flagged (failing / stale / suspect) feed **right now**. After a transient outage
+  (e.g. the bridge cache wedging → *every* fetch failing), feeds otherwise recover
+  only slowly — adaptive polling **backs failing feeds off** to long intervals. One
+  click re-polls them (a successful poll resets the feed to `healthy`) and the panel
+  re-renders to show the count melt away, instead of waiting out the backoff.
+
 ### PWA: "check now" is honest about an uncontrolled tab — 2026-06-02
 
 - "Check for updates" keyed entirely off `navigator.serviceWorker.controller`,

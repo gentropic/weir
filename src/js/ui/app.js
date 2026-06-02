@@ -176,6 +176,7 @@ export class App {
       else if (act === 'open') { const it = this.store.getItem(id); if (it && it.url) window.open(it.url, '_blank', 'noopener'); }
     });
     document.getElementById('health-close')?.addEventListener('click', () => this.closeHealth());
+    document.getElementById('health-retry')?.addEventListener('click', () => this.retryFlaggedFeeds());
     document.getElementById('health-body')?.addEventListener('click', (e) => this.onHealthClick(e));
     document.getElementById('reorder-list')?.addEventListener('click', (e) => this.onReorderClick(e));
     document.getElementById('reorder-save')?.addEventListener('click', () => this.saveReorder());
@@ -1148,6 +1149,24 @@ export class App {
   }
 
   closeHealth() { document.getElementById('health-overlay').hidden = true; }
+
+  // Re-poll every flagged feed right now — for recovering after a transient
+  // outage (e.g. the bridge was down) without waiting out the adaptive backoff.
+  // A successful poll resets the feed to healthy; the panel re-renders to show it.
+  async retryFlaggedFeeds() {
+    const flagged = this.store.listFeeds().filter((f) => this._health.get(f.id));
+    const btn = document.getElementById('health-retry');
+    if (!flagged.length) { if (btn) btn.textContent = 'nothing flagged'; return; }
+    const t = Date.now();
+    for (const f of flagged) f.next_poll_at = t - 1;   // mark due so pollDue picks them
+    if (btn) { btn.disabled = true; btn.textContent = `re-polling ${flagged.length}…`; }
+    try { await this.poller.pollDue(); } catch { /* poller is per-feed safe */ }
+    this.recomputeHealth();
+    this.renderHealthStatus();
+    this.renderRail();
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Retry flagged'; }
+    if (!document.getElementById('health-overlay').hidden) this.openHealth();   // reflect recovery
+  }
 
   onHealthClick(e) {
     const btn = e.target.closest('[data-hact]'); if (!btn) return;
