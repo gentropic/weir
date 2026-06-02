@@ -333,6 +333,16 @@ the trigger/query layer on top.
   it's backend-agnostic (IDB/OPFS/FSA) and invisible to the cataloger/reader. Pairs
   with the size report (measure first) and the cold-store tier. Keep a magic-byte/
   flag so old uncompressed content still reads.
+- **Pack catalog cards into shards (cut the FSAA file count).** Items are already
+  sharded (per-feed packs), but catalog cards are **one file per item** —
+  ~3,500+ tiny `/catalog/glass-*.json` files. On IDB that's invisible; on FSAA it's
+  death-by-papercuts (the folder copy + every backend op pays per-file
+  `createWritable/write/close` overhead, ×N, and a synced folder hooks each one).
+  Pack cards into shards like items (e.g. by catalog day or a fixed bucketing of
+  `glass_id`), hydrated into the in-memory card index at startup — turning
+  thousands of file ops into dozens. Dovetails with the persisted `/glass-index/`
+  (Stage 1 remaining) and makes the FSA mount genuinely snappy. Content files stay
+  per-item (lazy-loaded) but are the next candidate if they dominate the count.
 - **Self-hosted thumbnails / cover images (opt-in).** Today thumbnails are remote
   URLs — browser-cached only, so list/gallery re-fetch after cache eviction and
   break offline. Optionally cache them locally (OPFS or the FSA folder) behind a
