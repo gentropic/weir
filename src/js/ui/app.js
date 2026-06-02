@@ -5,7 +5,7 @@
 
 import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, fmtBytes, dailyCounts, sparkPoints } from './format.js';
 import { parseOpml, buildOpml } from '../opml.js';
-import { detectImport } from '../importers.js';
+import { detectImport, isWrappedUrl } from '../importers.js';
 import { hash32 } from '../store/schema.js';
 import { DEFAULT_ROUTING } from '../router.js';
 import { parseWatchDigest } from '../affinity.js';
@@ -1345,28 +1345,40 @@ export class App {
   }
 
   // ── saved-link import (Telegram export / URL list / JSON) ──
-  // Imports into the non-pollable 'saved' source. Unwraps share-sheet/shortener
-  // URLs via gcuFetch (best-effort, paced) so dedup keys on the real destination,
-  // then upserts — the store's dedup keeps read/saved/tags on re-import. Imported
-  // links catalog in the next cataloger pass like any item.
+  // Imports into the non-pollable 'saved' source. Share-sheet/shortener URLs
+  // (share.google/…) are resolved to their real destination via gcuFetch so the
+  // stored url is useful — but the item ID is hashed from the ORIGINAL (received)
+  // url, NOT the resolved one, so a failed/flaky unwrap never changes identity:
+  // re-importing is idempotent and simply mops up stragglers (share.google rate-
+  // limits bursts, so resolving is gentle + retried, and the store/bridge cache
+  // makes a second pass cheap). Imported links catalog like any item.
   async importLinks(links, format = 'import') {
     const sub = document.getElementById('view-sub');
     if (!links || !links.length) { if (sub) sub.textContent = `no links found in that ${format} file`; return { inserted: 0, updated: 0 }; }
     await this._ensureSavedSource();
 
-    const wrapped = links.filter((l) => l.wrapped);
-    if (wrapped.length && this.poller?.fetch) {
+    // Stable id from the as-received url; reuse an already-resolved url from a
+    // prior import, and only (re)resolve wrapped links still pointing at a wrapper.
+    const toResolve = [];
+    for (const l of links) {
+      l.id = `saved:h${hash32(String(l.url).toLowerCase())}`;
+      const ex = this.store.getItem(l.id);
+      if (ex && ex.url && !isWrappedUrl(ex.url)) { l.url = ex.url; continue; }   // resolved on a prior run
+      if (l.wrapped) toResolve.push(l);
+    }
+
+    if (toResolve.length && this.poller?.fetch) {
       let done = 0;
-      if (sub) sub.textContent = `unwrapping ${wrapped.length} shortened link${wrapped.length === 1 ? '' : 's'}…`;
-      await this._poolEach(wrapped, async (l) => {
-        try { const r = await this.poller.fetch(l.url, { redirect: 'follow' }); if (r && r.url) l.url = r.url; } catch { /* keep wrapped url */ }
+      if (sub) sub.textContent = `resolving ${toResolve.length} shortened link${toResolve.length === 1 ? '' : 's'}…`;
+      await this._poolEach(toResolve, async (l) => {
+        l.url = await this._resolveUrl(l.url);
         done++;
-        if (sub && done % 10 === 0) sub.textContent = `unwrapping links… ${done}/${wrapped.length}`;
-      }, 4);
+        if (sub && done % 5 === 0) sub.textContent = `resolving links… ${done}/${toResolve.length}`;
+      }, 2);   // gentle — share.google throttles bursts
     }
 
     const raws = links.map((l) => ({
-      id: `saved:h${hash32(String(l.url).toLowerCase())}`,
+      id: l.id,
       feed_id: 'saved',
       url: l.url,
       title: l.title || (() => { try { return new URL(l.url).hostname.replace(/^www\./, ''); } catch { return l.url; } })(),
@@ -1377,9 +1389,28 @@ export class App {
     const res = await this.store.upsertItems(raws);
     this.renderRail();
     this.renderStream();
+    const unresolved = links.filter((l) => isWrappedUrl(l.url)).length;
     // set the summary AFTER re-rendering (renderStream rewrites view-sub).
-    if (sub) sub.textContent = `imported ${res.inserted} new link${res.inserted === 1 ? '' : 's'}${res.updated ? ` (${res.updated} already saved)` : ''} from ${format} → Saved Links`;
+    if (sub) sub.textContent = `imported ${res.inserted} new${res.updated ? `, updated ${res.updated}` : ''} from ${format} → Saved Links`
+      + (unresolved ? ` · ${unresolved} link${unresolved === 1 ? '' : 's'} couldn't resolve — re-import to retry` : '');
     return res;
+  }
+
+  // Resolve a share-sheet/shortener url to its real destination by following
+  // redirects (gcuFetch → response.url). Retries with backoff because share.google
+  // rate-limits bursts (a transient 429/failure shouldn't strand the link wrapped).
+  // Returns the original url if it can't be resolved — the caller keeps it stable.
+  async _resolveUrl(url) {
+    const sleep = (ms) => new Promise((res) => (this._pipWin || window).setTimeout(res, ms));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await this.poller.fetch(url, { redirect: 'follow' });
+        if (r && r.ok && r.url && r.url !== url && !isWrappedUrl(r.url)) return r.url;   // resolved
+        // ok-but-no-redirect, or a non-ok status (rate-limited) → back off + retry
+      } catch { /* network blip → retry */ }
+      await sleep(500 * (attempt + 1));
+    }
+    return url;   // give up — keep the wrapper; a later re-import will retry
   }
 
   // The 'saved' source holds imported links + (later) Telegram captures. It has

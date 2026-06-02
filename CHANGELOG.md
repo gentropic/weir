@@ -20,14 +20,23 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 - Saved links land under a new non-pollable **Saved Links** source, ready for the
   cataloger like any item (`App.importLinks`; a far-future `next_poll_at` keeps the
   poller from ever touching it — no feed URL to fetch).
-- **Share-sheet / shortener URLs are unwrapped** (share.google / search.app /
-  bit.ly…) via `gcuFetch` (follow redirects → real destination) so dedup keys on
-  the target, not the wrapper. In-text titles (Google Discover
-  "Title | Source &lt;url&gt;") are kept; YouTube links become `video` items.
-- IDs are **url-hash** → re-importing a fresher export merges and **never resets
-  read/saved** (the store's existing dedup discipline). Folds in Holocene's
-  ~1,500-link backlog across two Telegram exports. Tests: `tools/smoke-import.mjs`
-  (parsers + store round-trip) + a headless end-to-end.
+- **Share-sheet / shortener URLs are resolved** (share.google / search.app /
+  bit.ly…) to their real destination via `gcuFetch` (follow redirects →
+  `response.url`), **gently paced (2-wide) + retried with backoff** — share.google
+  rate-limits bursts, and a transient failure shouldn't strand a link wrapped.
+  In-text titles (Google Discover "Title | Source &lt;url&gt;") are kept; YouTube
+  links become `video` items.
+- IDs hash the **original (as-received) url, not the resolved one**, so a flaky
+  unwrap never changes an item's identity: **re-importing is idempotent** — it
+  reuses already-resolved links and simply **mops up stragglers**, never resetting
+  read/saved. Folds in Holocene's ~1,500-link backlog across two Telegram exports.
+  Tests: `tools/smoke-import.mjs` (parsers + store round-trip) + headless
+  (retry-through-rate-limit, stable id, idempotent re-import).
+- **Bridge fix (vendored):** `gcuFetch`-via-bridge now surfaces the final
+  post-redirect `response.url` (was always `''` — a manually-constructed Response
+  has no url; the bridge service worker already sent it, the client ignored it).
+  This is what makes the unwrap possible — and benefits every redirect-following
+  fetch in weir.
 
 ### Cataloger: stance/tone facet — 2026-06-01
 
