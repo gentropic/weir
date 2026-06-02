@@ -185,6 +185,9 @@ export class App {
     document.getElementById('health-close')?.addEventListener('click', () => this.closeHealth());
     document.getElementById('tags-close')?.addEventListener('click', () => { document.getElementById('tags-overlay').hidden = true; });
     document.getElementById('tags-body')?.addEventListener('click', (e) => this._onTagManagerClick(e));
+    document.getElementById('tags-list')?.addEventListener('click', (e) => { const r = e.target.closest('.tagrow'); if (r) this.filterByTag(r.dataset.tag); });
+    document.getElementById('tags-manage')?.addEventListener('click', () => this.openTagManager());
+    document.getElementById('tags-head')?.addEventListener('contextmenu', (e) => { e.preventDefault(); this.openTagManager(); });
     document.getElementById('health-retry')?.addEventListener('click', () => this.retryFlaggedFeeds());
     document.getElementById('health-body')?.addEventListener('click', (e) => this.onHealthClick(e));
     document.getElementById('reorder-list')?.addEventListener('click', (e) => this.onReorderClick(e));
@@ -244,13 +247,31 @@ export class App {
     return this.store.query({ ...opts, text: text || undefined });   // cursor-scan fallback
   }
 
-  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); }
+  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); }
+
+  // The rail's Tags section — every tag in use, with its color + item count,
+  // click to filter (a transient tag view). The discoverable home for tags; the
+  // ⚙ opens the manager. Hidden when there are no tags.
+  renderTags() {
+    const el = document.getElementById('tags-list'); const sec = document.getElementById('tags-section');
+    if (!el || !sec) return;
+    const counts = this.store.tagCounts(); const reg = this.store.getTags();
+    const names = Object.keys(counts).filter((t) => counts[t] > 0).sort((a, b) => (counts[b] - counts[a]) || a.localeCompare(b));
+    sec.style.display = names.length ? '' : 'none';
+    const activeTag = this.smartView?.transient && this.smartView.query?.tag;
+    el.innerHTML = names.slice(0, 40).map((t) => {
+      const raw = (reg[t] || {}).color; const col = /^#[0-9a-f]{3,8}$/i.test(raw || '') ? raw : null;
+      return `<div class="navrow tagrow${activeTag === t ? ' active' : ''}" data-tag="${escapeHtml(t)}">`
+        + `<span class="lbl"><span class="tagdot" style="background:${col || 'var(--au-fg-soft)'}"></span> ${escapeHtml(t)}</span>`
+        + `<span class="count">${counts[t]}</span></div>`;
+    }).join('') + (names.length > 40 ? `<div class="rail-empty">+ ${names.length - 40} more</div>` : '');
+  }
 
   // Debounced rail+stream rebuild for store-driven changes (polling), so rows
   // aren't recreated under the cursor on every insert.
   _scheduleRender() {
     if (this._renderTimer) return;
-    this._renderTimer = setTimeout(() => { this._renderTimer = null; this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderStream(); }, 250);
+    this._renderTimer = setTimeout(() => { this._renderTimer = null; this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStream(); }, 250);
   }
 
   // Replace a single row in place — instant feedback for a click action, no
