@@ -1,7 +1,7 @@
 // Multi-format link import: parsers + store round-trip (dedup / never-reset).
 // Run: node tools/smoke-import.mjs
 import assert from 'node:assert';
-import { detectImport, parseTelegramExport, parseUrlList, isWrappedUrl } from '../src/js/importers.js';
+import { detectImport, parseTelegramExport, parseUrlList, isWrappedUrl, isSkippedUrl } from '../src/js/importers.js';
 import { VFS } from '../vendor/vfs.js';
 import { Store } from '../src/js/store/store.js';
 import { hash32 } from '../src/js/store/schema.js';
@@ -24,11 +24,16 @@ const TG = {
       text: 'http://www.e-basteln.de/papertape/' },   // dup of #1
     { id: 7, type: 'message', from: 'aeDB', date: '2026-05-06T10:00:00', date_unixtime: '1778054400',
       text: 'you might also like https://bot-suggestion.example/x' },   // bot's OWN link — must be excluded
+    { id: 8, type: 'message', from: 'Me', date: '2026-05-07T10:00:00', date_unixtime: '1778140800',
+      text: 'saved! https://holo.stdgeo.com/links/123' },   // Holocene-internal pointer — must be skipped
   ],
 };
 
 const links = parseTelegramExport(TG);
 assert.ok(!links.some((l) => /bot-suggestion/.test(l.url)), "bot's own link excluded (owner = dominant link-sender)");
+assert.ok(!links.some((l) => /holo\.stdgeo/.test(l.url)), 'Holocene-internal host (holo.stdgeo.com) skipped');
+assert.equal(isSkippedUrl('https://holo.stdgeo.com/x'), true, 'isSkippedUrl: holo.stdgeo.com');
+assert.equal(isSkippedUrl('https://hackaday.com/x'), false, 'isSkippedUrl: real host not skipped');
 const byUrl = Object.fromEntries(links.map((l) => [l.url, l]));
 assert.equal(links.length, 3, 'three unique importable links (dup + note + archive echo dropped)');
 assert.ok(byUrl['http://www.e-basteln.de/papertape/'], 'bare url kept');

@@ -6,6 +6,16 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Saved-link import: skip Holocene-internal hosts + one-click cleanup — 2026-06-01
+
+- **`holo.stdgeo.com`** (Holocene's Cloudflare-tunnel remote-access host) joins the
+  import skip list — those links are "view in Holocene" / magic-login pointers, not
+  real content.
+- **"⌦ Remove non-content links"** on the Saved Links source menu prunes any
+  skipped-host links (holo.stdgeo.com / archive.org / telegram) that slipped in
+  before — `prune()` tombstones them so a re-import can't resurface them; starred
+  items are exempt. So you don't have to remove + re-import to clean up.
+
 ### Saved-link import: your messages only + batch direct-enrich — 2026-06-01
 
 - **Telegram import takes links from *you* only** — the chat owner, detected as the

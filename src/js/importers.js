@@ -12,9 +12,17 @@ export const WRAPPER_HOSTS = new Set([
   'fb.me', 'lnkd.in', 'ow.ly', 'buff.ly', 'dlvr.it', 'trib.al', 'rebrand.ly',
 ]);
 
-// URLs we never want to import AS saved links (the bot echoes archive snapshots
-// + Telegram-internal links into the chat).
-const IMP_SKIP_HOSTS = new Set(['web.archive.org', 'archive.org', 't.me', 'telegram.org', 'telegram.me']);
+// Hosts we never import AS saved links: the bot echoes Internet Archive snapshots
+// + Telegram-internal links into the chat, and Holocene's own remote-access host
+// (holo.stdgeo.com — the Cloudflare tunnel) shows up as "view in Holocene" / login
+// pointers, not real content.
+const IMP_SKIP_HOSTS = new Set([
+  'web.archive.org', 'archive.org', 't.me', 'telegram.org', 'telegram.me',
+  'holo.stdgeo.com',
+]);
+
+// Is this a host we skip on import (and purge from saved links if it slipped in)?
+export function isSkippedUrl(url) { return IMP_SKIP_HOSTS.has(impHost(url)); }
 
 const IMP_URL_RE = /https?:\/\/[^\s<>"'\])]+/g;
 
@@ -24,7 +32,7 @@ export function isWrappedUrl(url) {
 function impHost(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
 }
-function impSkip(url) { return IMP_SKIP_HOSTS.has(impHost(url)); }
+function impSkip(url) { return isSkippedUrl(url); }
 
 // A Telegram export message's text is either a string or an array of segments
 // (plain strings + entity objects). Reconstruct the plain text + collect URLs.

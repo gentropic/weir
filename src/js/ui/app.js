@@ -5,7 +5,7 @@
 
 import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, fmtBytes, dailyCounts, sparkPoints } from './format.js';
 import { parseOpml, buildOpml } from '../opml.js';
-import { detectImport, isWrappedUrl } from '../importers.js';
+import { detectImport, isWrappedUrl, isSkippedUrl } from '../importers.js';
 import { hash32 } from '../store/schema.js';
 import { DEFAULT_ROUTING } from '../router.js';
 import { parseWatchDigest } from '../affinity.js';
@@ -1005,6 +1005,7 @@ export class App {
     showMenu(x, y, [
       { label: 'Show only this feed', onClick: () => { this.catFilter = null; this.route = null; this.smartView = null; this.feedFilter = feedId; this.renderAll(); } },
       feedId === 'saved' && { label: '⧉ Resolve links now', onClick: () => this.resolveLinksNow() },
+      feedId === 'saved' && { label: '⌦ Remove non-content links', onClick: () => this.cleanSavedLinks() },
       (feed.site_url || feed.url) && { label: 'Open site ↗', onClick: () => window.open(feed.site_url || feed.url, '_blank', 'noopener') },
       { sep: true },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
@@ -1416,6 +1417,19 @@ export class App {
     const n = this.linkResolver.status().pending;
     const sub = document.getElementById('view-sub');
     if (sub) sub.textContent = n ? `resolving ${n} link${n === 1 ? '' : 's'} in the background…` : 'no links pending resolution';
+  }
+
+  // Purge saved links that point at a skipped host (archive.org / telegram /
+  // holo.stdgeo.com — Holocene-internal pointers, not real content) that slipped
+  // in before the host was on the skip list. prune() tombstones them so they can't
+  // resurface on a re-import. Saved (starred) items are exempt.
+  async cleanSavedLinks() {
+    const sub = document.getElementById('view-sub');
+    const ids = this.store.query({ feed_id: 'saved' }).filter((it) => isSkippedUrl(it.url)).map((it) => it.id);
+    if (!ids.length) { if (sub) sub.textContent = 'no non-content links to remove'; return; }
+    const { pruned } = await this.store.prune(ids, 'non-content-link');
+    this.renderAll();
+    if (sub) sub.textContent = `removed ${pruned} non-content link${pruned === 1 ? '' : 's'}`;
   }
 
   // Resolve + fetch metadata (thumbnail/title/excerpt) for one saved link right
