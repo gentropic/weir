@@ -473,7 +473,7 @@ export class App {
   async _catalogOpts() {
     const s = this.store.getSettings();
     const provider = s.catalog_provider || 'ollama';
-    return { provider, model: s.catalog_model, baseUrl: s.catalog_base_url, key: await getKey(provider), fetch: this.poller.fetch, maxBodyChars: s.catalog_max_body_chars || 6000 };
+    return { provider, model: s.catalog_model, baseUrl: s.catalog_base_url, key: await getKey(provider), fetch: this.poller.fetch, mailto: s.catalog_mailto || '', maxBodyChars: s.catalog_max_body_chars || 6000 };
   }
 
   async catalogItem(id) {

@@ -14,6 +14,7 @@ import '../../vendor/librarian.js';      // → Librarian (BM25F/CSR search engi
 import './store/schema.js';              // data model + helpers (before store)
 import './affinity.js';                  // → channelIdOf, affinityScore (before store)
 import './glass.js';                     // → buildCard, nextGlassId (glass catalog; before store)
+import './biblio.js';                    // → detectBiblio, fetchBiblio (authoritative paper/book metadata; before cataloger; uses decodeEntities from xml.js)
 import './llm.js';                       // → chat, PROVIDERS, inputMultiplier (before store + cataloger)
 import './cataloger.js';                 // → catalogStoreItem (glass cataloger service; uses llm + glass)
 import './llmkeys.js';                   // → getKey/saveKey (OPFS LLM key vault, browser-only)

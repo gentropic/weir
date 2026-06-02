@@ -6,6 +6,7 @@
 
 import { chat } from './llm.js';
 import { buildCard } from './glass.js';
+import { detectBiblio, fetchBiblio, applyBiblio } from './biblio.js';
 
 export function stripToText(html) {
   return String(html || '').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;|&#\d+;/gi, ' ').replace(/\s+/g, ' ').trim();
@@ -64,7 +65,14 @@ export async function catalogStoreItem(store, id, opts = {}) {
   const feed = store.getFeed(item.feed_id);
   let body = item.excerpt || '';
   if (item.has_content) { try { const html = await store.getContent(id); if (html) body = stripToText(html).slice(0, opts.maxBodyChars || 6000); } catch { /* excerpt only */ } }
-  const base = (item.glass_id && await store.getCard(item.glass_id)) || buildCard(item, feed);
+  let base = (item.glass_id && await store.getCard(item.glass_id)) || buildCard(item, feed);
+  // Authoritative bibliographic metadata for arXiv/DOI/ISBN items (free open APIs
+  // via the bridge) → real Dublin Core; the abstract also becomes the LLM's body,
+  // so its facets + summary are grounded. Best-effort; skipped without a fetch.
+  if (opts.fetch && opts.biblio !== false) {
+    const det = detectBiblio(item.url);
+    if (det) { const bib = await fetchBiblio(det, { fetch: opts.fetch, mailto: opts.mailto }); if (bib) { base = applyBiblio(base, bib); if (bib.abstract) body = bib.abstract; } }
+  }
   const { card: enriched, usage, model, provider, ok } = await catalogItem({ ...opts, item, card: base, body });
   const glass_id = await store.writeCard(enriched);
   await store.recordUsage(provider, model, usage);

@@ -41,6 +41,7 @@ export const DEFAULT_SETTINGS = {
   feed_stale_days: 120,                  // a feed quiet longer than this reads as "stale" in health
   catalog_provider: 'ollama',            // glass cataloger LLM provider (ollama | nanogpt | groq | custom)
   catalog_model: '',                     // model id ('' → provider default)
+  catalog_mailto: '',                    // optional contact for the Crossref/OpenAlex "polite pool" (good-citizen biblio enrich)
   catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
