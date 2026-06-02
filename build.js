@@ -124,9 +124,46 @@ function licensesComment() {
   return `<!--\n${lines.join('\n')}\n-->\n`;
 }
 
+// Guard against the flat-concatenation footgun: every module is inlined into one
+// classic-script scope, so two modules declaring the same top-level name collide.
+// A duplicate `let`/`const`/`class` is a hard SyntaxError that crashes the whole
+// app on load; a duplicate `function` silently lets the last definition win
+// (shadowing). We only inspect column-0 declarations — the convention for
+// top-level names here — which is exactly where past collisions (_el, escapeText)
+// lived. (Multi-declarator lines like `let a, b` are matched by their first name.)
+function checkDuplicateDecls(js) {
+  const decls = new Map();   // name → [{ kind, file }]
+  let file = 'src/js/main.js';
+  for (const line of js.split('\n')) {
+    // Only build's own chunk markers (real .js paths) start a file; vendored
+    // bundles carry their own `// ── section ──` comments that must not count.
+    const fm = line.match(/^\/\/ ── (\S+\.js) ──/);
+    if (fm) { file = fm[1]; continue; }
+    // Vendored bundles are self-contained (own scope/IIFE); a line-based scan
+    // can't see their nesting, so trust them and only police our own source.
+    if (file.startsWith('vendor/')) continue;
+    const m = line.match(/^(?:export\s+)?(?:async\s+)?(const|let|class|function)\s+([A-Za-z_$][\w$]*)/);
+    if (!m) continue;
+    (decls.get(m[2]) || decls.set(m[2], []).get(m[2])).push({ kind: m[1], file });
+  }
+  const fatal = [], warn = [];
+  for (const [name, sites] of decls) {
+    if (sites.length < 2) continue;
+    const where = sites.map((s) => `${s.kind} @ ${s.file}`).join(', ');
+    if (sites.some((s) => s.kind !== 'function')) fatal.push(`  '${name}' — ${where}`);
+    else warn.push(`  '${name}' redeclared (last wins, shadowing risk) — ${where}`);
+  }
+  if (warn.length) console.warn(`⚠ build: top-level function shadowing —\n${warn.join('\n')}`);
+  if (fatal.length) {
+    console.error(`Error: duplicate top-level lexical declarations would crash the bundle —\n${fatal.join('\n')}\nRename one of each pair to a unique global.`);
+    process.exit(1);
+  }
+}
+
 // ── Build ──────────────────────────────────────────────────────────────────
 
 let js = processModules(path.join(SRC, 'js', 'main.js'), path.join(SRC, 'js'));
+checkDuplicateDecls(js);
 js = js
   .replace(/__WEIR_VERSION__/g, pkg.version || '0.0.0')
   .replace(/__WEIR_BUILD_DATE__/g, BUILD_DATE);

@@ -12,7 +12,7 @@ import { isWrappedUrl } from './importers.js';
 
 const SAVED_FEED = 'saved';
 
-function decodeEntities(s) {
+function lrDecodeEntities(s) {
   return String(s).replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#(\d+);/g, (_, n) => { try { return String.fromCodePoint(+n); } catch { return _; } });
 }
 
@@ -25,11 +25,11 @@ export function parseLinkMeta(html) {
     const tag = head.match(re);
     if (!tag) return null;
     const c = tag[0].match(/\bcontent\s*=\s*["']([^"']*)["']/i);
-    return c ? decodeEntities(c[1].trim()) || null : null;
+    return c ? lrDecodeEntities(c[1].trim()) || null : null;
   };
   const titleTag = head.match(/<title[^>]*>([^<]*)<\/title>/i);
   return {
-    title: meta('og:title') || meta('twitter:title') || (titleTag ? decodeEntities(titleTag[1].trim()) : null) || null,
+    title: meta('og:title') || meta('twitter:title') || (titleTag ? lrDecodeEntities(titleTag[1].trim()) : null) || null,
     image: meta('og:image:secure_url') || meta('og:image') || meta('twitter:image') || meta('twitter:image:src') || null,
     description: meta('og:description') || meta('twitter:description') || meta('description') || null,
   };
@@ -47,7 +47,7 @@ function isWeakTitle(title, url) {
 }
 
 function absUrl(href, base) { try { return new URL(href, base).href; } catch { return null; } }
-function hostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return String(u).slice(0, 48); } }
+function lrHostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return String(u).slice(0, 48); } }
 
 export class LinkResolver {
   constructor(store, { fetch, extract, intervalMs = 15_000, batch = 2, maxMisses = 8 } = {}) {
@@ -112,7 +112,7 @@ export class LinkResolver {
     if (outcome === 'resolved') { this.log.resolved++; return; }
     if (outcome === 'parked') {
       this.log.parked++;
-      this.log.recent.unshift({ at: Date.now(), host: hostOf(item.url), reason: res.reason });
+      this.log.recent.unshift({ at: Date.now(), host: lrHostOf(item.url), reason: res.reason });
       if (this.log.recent.length > 50) this.log.recent.length = 50;
     }
   }
