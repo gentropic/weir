@@ -17,6 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const ROOT = __dirname;
 const SRC = path.join(ROOT, 'src');
@@ -164,11 +165,17 @@ function checkDuplicateDecls(js) {
 
 let js = processModules(path.join(SRC, 'js', 'main.js'), path.join(SRC, 'js'));
 checkDuplicateDecls(js);
-js = js
-  .replace(/__WEIR_VERSION__/g, pkg.version || '0.0.0')
-  .replace(/__WEIR_BUILD_DATE__/g, BUILD_DATE);
 
 const css = buildCss();
+// Build id = short content hash of the bundle. A git SHA can't go here (a commit
+// can't contain its own hash), so we hash the code itself: deterministic, changes
+// on every meaningful rebuild, and lets the footer be verified against what I
+// report. Hashed BEFORE placeholder substitution so it's a pure function of source.
+const buildId = crypto.createHash('sha256').update(js + css).digest('hex').slice(0, 7);
+js = js
+  .replace(/__WEIR_VERSION__/g, pkg.version || '0.0.0')
+  .replace(/__WEIR_BUILD_DATE__/g, BUILD_DATE)
+  .replace(/__WEIR_COMMIT__/g, buildId);
 const template = fs.readFileSync(path.join(SRC, 'template.html'), 'utf8');
 
 const html = `<!DOCTYPE html>
@@ -200,4 +207,4 @@ ${js}
 const outPath = path.join(ROOT, 'index.html');
 fs.writeFileSync(outPath, html);
 const kb = (fs.statSync(outPath).size / 1024).toFixed(1);
-console.log(`Built index.html (${kb} KB)`);
+console.log(`Built index.html (${kb} KB) — build ${buildId}`);

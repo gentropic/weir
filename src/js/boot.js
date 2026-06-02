@@ -24,6 +24,7 @@ import { hasBridge, bridgeVersion, gcuFetch } from '../../vendor/bridge-client.j
 
 const VERSION = '__WEIR_VERSION__';        // replaced at build time
 const BUILD_DATE = '__WEIR_BUILD_DATE__';  // replaced at build time
+const COMMIT = '__WEIR_COMMIT__';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -37,7 +38,8 @@ async function probeBridge() {
 }
 
 async function boot() {
-  setText('weir-version', `weir ${VERSION}`);
+  setText('weir-version', `weir ${VERSION === '0.0.0' ? COMMIT : `${VERSION}·${COMMIT}`}`);
+  { const wv = $('weir-version'); if (wv) wv.title = `build ${COMMIT}${BUILD_DATE ? ` · ${BUILD_DATE}` : ''}`; }
   document.title = `@gcu/weir`;
   initPwa();
   probeBridge();

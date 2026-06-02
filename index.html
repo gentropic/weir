@@ -11707,6 +11707,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
+const COMMIT = '8ab77a2';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -11720,7 +11721,8 @@ async function probeBridge() {
 }
 
 async function boot() {
-  setText('weir-version', `weir ${VERSION}`);
+  setText('weir-version', `weir ${VERSION === '0.0.0' ? COMMIT : `${VERSION}·${COMMIT}`}`);
+  { const wv = $('weir-version'); if (wv) wv.title = `build ${COMMIT}${BUILD_DATE ? ` · ${BUILD_DATE}` : ''}`; }
   document.title = `@gcu/weir`;
   initPwa();
   probeBridge();
