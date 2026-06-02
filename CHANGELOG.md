@@ -6,6 +6,16 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Cataloger: defer un-enriched saved links from the batch — 2026-06-01
+
+- The catalog batch (`catalogVisible` / `catalogAll` / the WebMCP start) now
+  **skips saved links the resolver hasn't fetched yet** — otherwise a still-wrapped
+  `share.google` link would catalog from its placeholder title into facets that
+  then *stick* (a `glass_id` is set, so it won't auto-recatalog once it resolves).
+  A later run sweeps them up as the drip marks them `enriched`; the status reports
+  how many are deferred. The per-item "Catalog with AI" / `weir_catalogItem` is
+  unaffected (an explicit choice).
+
 ### Saved-link import: skip Holocene-internal hosts + one-click cleanup — 2026-06-01
 
 - **`holo.stdgeo.com`** (Holocene's Cloudflare-tunnel remote-access host) joins the
