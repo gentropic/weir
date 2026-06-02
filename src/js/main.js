@@ -27,6 +27,7 @@ import './adapters/github.js';           // → parseGithub, githubAdapter (rele
 import './extract.js';                   // → extractArticle (readability; browser DOMParser)
 import './opml.js';                      // → parseOpml, buildOpml (uses parseXml)
 import './importers.js';                 // → detectImport, parseTelegramExport (multi-format link import)
+import './linkresolver.js';              // → LinkResolver (background drip resolving wrapped saved links)
 import './router.js';                    // → Router, compileRules, DEFAULT_ROUTING
 import './wayback.js';                    // → cdxSnapshots, recoverFeed (uses parseFeed at call time)
 import './recovery.js';                   // → RecoveryDrip (uses cdxSnapshots)

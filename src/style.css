@@ -73,6 +73,7 @@ body {
 .source-filter { display: block; width: 100%; box-sizing: border-box; margin: -2px 0 6px; padding: 4px 8px; background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg); color: var(--au-fg); font-family: var(--au-font-mono); font-size: 11px; }
 .source-filter:focus { outline: none; border-color: var(--au-action); }
 .source-filter::placeholder { color: var(--au-fg-soft); }
+.tag.unresolved { color: var(--au-fg-soft); border-color: var(--au-border); opacity: 0.8; font-family: var(--au-font-mono); }
 
 /* Flight-deck — rendered inside a Document Picture-in-Picture window (the page's
    stylesheet is copied in, so these rules apply there too). */

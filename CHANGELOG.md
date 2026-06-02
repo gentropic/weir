@@ -6,6 +6,23 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Saved links: never auto-archive + background resolver drip + marker — 2026-06-01
+
+- **Fix (data wasn't lost — auto-archived):** imported saved links carry their
+  *original* publish dates (often months old), so retention treated them as
+  expired and archived them the moment they landed → "Saved Links: 0 items" while
+  they sat in Archived. The **Saved Links source now never expires** (forever
+  retention) — a deliberately-saved link must not auto-archive on age.
+- Import now **stores + flushes immediately** (no blocking inline unwrap), so an
+  import can't be lost to a refresh.
+- New **LinkResolver** — a gentle background drip (≈2 links / 15s, idle when
+  hidden, cache-busted) that resolves share.google/shortener links to their real
+  URL *over time*, dodging the burst rate-limit a one-shot import hits. Updates the
+  url in place (id is hashed from the original, so identity never changes). No more
+  re-import dance — import, walk away, links resolve themselves.
+- **"⧉ unresolved" marker** on items still pointing at a wrapper; it disappears as
+  the drip resolves each one.
+
 ### WebMCP: navigate sources — feed filter + `weir_listSources` — 2026-06-01
 
 - `weir_queryItems` gains **`feed`** (a source by id *or* display name, e.g.

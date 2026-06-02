@@ -5,6 +5,7 @@ import { Store } from './store/store.js';
 import { Poller } from './poller.js';
 import { Router } from './router.js';
 import { RecoveryDrip } from './recovery.js';
+import { LinkResolver } from './linkresolver.js';
 import { Retainer } from './retainer.js';
 import { FaviconFetcher } from './favicon.js';
 import { App } from './ui/app.js';
@@ -118,7 +119,14 @@ async function boot() {
   app.renderDripStatus(drip.status());
   if (drip.queue.length || drip.current) drip.start();
 
-  window.__weir = { store, poller, router, drip, retainer, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
+  // Background link resolver — politely resolves wrapped saved links (share.google
+  // etc.) over time, so imports never have to burst-hit (and get throttled by) the
+  // shortener. Resumes any unresolved links from prior imports.
+  const linkResolver = new LinkResolver(store, { fetch: gcuFetch });
+  app.linkResolver = linkResolver;
+  linkResolver.kick();
+
+  window.__weir = { store, poller, router, drip, retainer, linkResolver, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();
       const provider = o.provider || s.catalog_provider || 'ollama';

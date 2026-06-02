@@ -782,7 +782,8 @@ export class App {
     const cls = `item${it.id === this.selectedId ? ' sel' : ''}${it.read ? ' read' : ''}${it.id === this.expandedId ? ' expanded' : ''}`;
     const meta = [feed ? escapeHtml(feed.name) : escapeHtml(it.feed_id), it.author && escapeHtml(it.author),
       `<span title="${escapeHtml(isoTitle(it.published_at))}">${relativeTime(it.published_at)}</span>`].filter(Boolean).join('<span class="dot-sep">·</span>');
-    const tags = (it.tags || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('');
+    const tags = (it.tags || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')
+      + (isWrappedUrl(it.url) ? '<span class="tag unresolved" title="Shortened/share link — resolving to its real URL in the background">⧉ unresolved</span>' : '');
     const saved = it.saved ? '<span class="flag">★</span>' : '';
 
     let body;
@@ -1358,94 +1359,51 @@ export class App {
   }
 
   // ── saved-link import (Telegram export / URL list / JSON) ──
-  // Imports into the non-pollable 'saved' source. Share-sheet/shortener URLs
-  // (share.google/…) are resolved to their real destination via gcuFetch so the
-  // stored url is useful — but the item ID is hashed from the ORIGINAL (received)
-  // url, NOT the resolved one, so a failed/flaky unwrap never changes identity:
-  // re-importing is idempotent and simply mops up stragglers (share.google rate-
-  // limits bursts, so resolving is gentle + retried, and the store/bridge cache
-  // makes a second pass cheap). Imported links catalog like any item.
+  // Imports into the non-pollable 'saved' source. Items are stored IMMEDIATELY
+  // with whatever url we have (a wrapper like share.google is fine) and flushed,
+  // so nothing is lost on a refresh — the gentle background LinkResolver follows
+  // the redirects to the real destination over time (a one-shot burst just gets
+  // throttled by the shortener). The item id is hashed from the ORIGINAL url, so
+  // resolution updates the url IN PLACE without changing identity → re-import is
+  // idempotent. Imported links catalog like any item.
   async importLinks(links, format = 'import') {
     const sub = document.getElementById('view-sub');
     if (!links || !links.length) { if (sub) sub.textContent = `no links found in that ${format} file`; return { inserted: 0, updated: 0 }; }
     await this._ensureSavedSource();
 
-    // Stable id from the as-received url; reuse an already-resolved url from a
-    // prior import, and only (re)resolve wrapped links still pointing at a wrapper.
-    const toResolve = [];
-    for (const l of links) {
-      l.id = `saved:h${hash32(String(l.url).toLowerCase())}`;
-      const ex = this.store.getItem(l.id);
-      if (ex && ex.url && !isWrappedUrl(ex.url)) { l.url = ex.url; continue; }   // resolved on a prior run
-      if (l.wrapped) toResolve.push(l);
-    }
-
-    if (toResolve.length && this.poller?.fetch) {
-      let done = 0;
-      if (sub) sub.textContent = `resolving ${toResolve.length} shortened link${toResolve.length === 1 ? '' : 's'}…`;
-      await this._poolEach(toResolve, async (l) => {
-        l.url = await this._resolveUrl(l.url);
-        done++;
-        if (sub && done % 5 === 0) sub.textContent = `resolving links… ${done}/${toResolve.length}`;
-      }, 2);   // gentle — share.google throttles bursts
-    }
-
-    const raws = links.map((l) => ({
-      id: l.id,
-      feed_id: 'saved',
-      url: l.url,
-      title: l.title || (() => { try { return new URL(l.url).hostname.replace(/^www\./, ''); } catch { return l.url; } })(),
-      type: /(?:youtube\.com|youtu\.be)\//i.test(l.url) ? 'video' : 'article',
-      published_at: l.date || undefined,
-      tags: [],
-    }));
+    const raws = links.map((l) => {
+      const id = `saved:h${hash32(String(l.url).toLowerCase())}`;
+      const ex = this.store.getItem(id);
+      const url = (ex && ex.url && !isWrappedUrl(ex.url)) ? ex.url : l.url;   // keep a previously-resolved url
+      return {
+        id, feed_id: 'saved', url,
+        title: l.title || (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })(),
+        type: /(?:youtube\.com|youtu\.be)\//i.test(url) ? 'video' : 'article',
+        published_at: l.date || undefined,
+        tags: [],
+      };
+    });
     const res = await this.store.upsertItems(raws);
+    await this.store.flush();          // persist now — never lose an import to a refresh
+    this.linkResolver?.kick();         // resolve any wrapped links gently, in the background
     this.renderRail();
     this.renderStream();
-    const unresolved = links.filter((l) => isWrappedUrl(l.url)).length;
+    const wrapped = raws.filter((r) => isWrappedUrl(r.url)).length;
     // set the summary AFTER re-rendering (renderStream rewrites view-sub).
     if (sub) sub.textContent = `imported ${res.inserted} new${res.updated ? `, updated ${res.updated}` : ''} from ${format} → Saved Links`
-      + (unresolved ? ` · ${unresolved} link${unresolved === 1 ? '' : 's'} couldn't resolve — re-import to retry` : '');
+      + (wrapped ? ` · resolving ${wrapped} shortened link${wrapped === 1 ? '' : 's'} in the background…` : '');
     return res;
   }
 
-  // Resolve a share-sheet/shortener url to its real destination by following
-  // redirects (gcuFetch → response.url). Retries with backoff because share.google
-  // rate-limits bursts (a transient 429/failure shouldn't strand the link wrapped).
-  // Returns the original url if it can't be resolved — the caller keeps it stable.
-  async _resolveUrl(url) {
-    const sleep = (ms) => new Promise((res) => (this._pipWin || window).setTimeout(res, ms));
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        // The bridge caches every response (even a 429) and re-serves it as a
-        // synthetic 200 within its freshness window — so a link that got rate-
-        // limited on a prior burst would stay "resolved" to the wrapper forever.
-        // After the first try, force a real re-fetch past that stale cache entry.
-        const opts = { redirect: 'follow' };
-        if (attempt > 0) opts.headers = { 'cache-control': 'no-cache' };
-        const r = await this.poller.fetch(url, opts);
-        if (r && r.ok && r.url && r.url !== url && !isWrappedUrl(r.url)) return r.url;   // resolved
-        // ok-but-no-redirect (stale wrapper) or a non-ok status (rate-limited) → back off + retry
-      } catch { /* network blip → retry */ }
-      await sleep(600 * (attempt + 1));
-    }
-    return url;   // give up — keep the wrapper; a later re-import will retry (cache-busted)
-  }
-
-  // The 'saved' source holds imported links + (later) Telegram captures. It has
-  // no feed URL, so it must never be polled — a far-future next_poll_at keeps the
-  // poller's due-check from ever selecting it (no special-casing needed).
+  // The 'saved' source holds imported links + (later) Telegram captures. It is
+  // never polled (no feed url → a far-future next_poll_at keeps the poller's
+  // due-check from ever selecting it) and never expires (retention 'forever') — a
+  // deliberately-saved link must NOT get auto-archived just because its original
+  // publish date is old. Re-applied each import so an older 'saved' feed is fixed.
   async _ensureSavedSource() {
-    if (this.store.getFeed('saved')) return;
-    await this.store.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15 });
-  }
-
-  // Run `fn` over items with at most `n` in flight (the unwrap pool).
-  async _poolEach(items, fn, n = 4) {
-    const q = [...items];
-    await Promise.all(Array.from({ length: Math.min(n, q.length) }, async () => {
-      while (q.length) await fn(q.shift());
-    }));
+    const cur = this.store.getFeed('saved');
+    if (cur && cur.retention && cur.retention.unread_days === 'forever') return;
+    await this.store.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever', read_days: 'forever' } });
   }
 
   exportOpml() {
