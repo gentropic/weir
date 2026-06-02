@@ -6143,7 +6143,9 @@ class Store {
     this.settings = { ...DEFAULT_SETTINGS };
     this.router = null;              // optional Router; applied to new items on insert
     this.notifications = [];         // items a rule flagged notify:true (ephemeral)
+    this.cards = new Map();          // glass_id → catalog card (in-memory; persisted as bucketed shards)
     this._dirtyFeeds = new Set();
+    this._dirtyCards = new Set();     // card-shard buckets needing a rewrite
     this._archivedDirty = false;
     this._ensured = new Set();       // dirs already mkdir'd
     this._listeners = new Map();
@@ -6228,6 +6230,35 @@ class Store {
       if (feed && feed.id) { this.feeds.set(feed.id, makeFeed(feed)); this._feedSet(feed.id); }
     }
     for (const fid of this.feeds.keys()) await this._loadShard(fid);
+    await this._loadCatalog();
+  }
+
+  // Hydrate the in-memory card index from packed shards, migrating any legacy
+  // per-file cards (/catalog/glass-*.json — one file each) into shards once. The
+  // migration is non-destructive + idempotent: it writes the shards FIRST and only
+  // then removes the legacy files, so an interruption just re-runs next load.
+  async _loadCatalog() {
+    await this._ensureDir('/catalog');
+    let files = [];
+    try { files = await this.vfs.readdir('/catalog'); } catch { return; }
+    for (const f of files) {
+      if (!/^cards-[0-9a-f]{2}\.ndjson$/.test(f)) continue;
+      for (const line of (await this._readText(`/catalog/${f}`)).split('\n')) {
+        if (!line.trim()) continue;
+        try { const c = JSON.parse(line); const gid = c.glass && c.glass.glass_id; if (gid) this.cards.set(String(gid), c); } catch { /* skip bad line */ }
+      }
+    }
+    const legacy = files.filter((f) => /^glass-.*\.json$/.test(f));
+    if (legacy.length) {
+      for (const f of legacy) {
+        const c = await this._readJSON(`/catalog/${f}`, null);
+        const gid = c && c.glass && c.glass.glass_id;
+        if (gid) { this.cards.set(String(gid), c); this._dirtyCards.add(this._cardBucket(gid)); }
+      }
+      for (const b of this._dirtyCards) await this._writeCardShard(b);   // shards written first
+      this._dirtyCards.clear();
+      for (const f of legacy) { try { await this.vfs.unlink(`/catalog/${f}`); } catch { /* leave it; re-run is safe */ } }
+    }
   }
 
   async _loadShard(feedId) {
@@ -6553,6 +6584,20 @@ class Store {
 
   // ── persistence ──
   _markFeedDirty(feedId) { this._dirtyFeeds.add(feedId); this._scheduleFlush(); }
+  // Catalog cards are bucketed into ~256 shards by a hash of their glass_id (not
+  // one file per card) — so the FSA mount + hydration + every write touch dozens
+  // of files, not thousands. Same dirty-flush model as feed shards.
+  _markCardDirty(glassId) { this._dirtyCards.add(this._cardBucket(glassId)); this._scheduleFlush(); }
+  _cardBucket(glassId) { return hash32(String(glassId)).slice(0, 2); }
+  _cardShardPath(bucket) { return `/catalog/cards-${bucket}.ndjson`; }
+  async _writeCardShard(bucket) {
+    await this._ensureDir('/catalog');
+    const lines = [];
+    for (const c of this.cards.values()) { const gid = c.glass && c.glass.glass_id; if (gid && this._cardBucket(gid) === bucket) lines.push(JSON.stringify(c)); }
+    const path = this._cardShardPath(bucket);
+    if (lines.length) await this.vfs.writeFile(path, lines.join('\n'));
+    else { try { await this.vfs.unlink(path); } catch { /* already gone */ } }
+  }
   _scheduleFlush() {
     if (this._flushTimer) return;
     this._flushTimer = setTimeout(() => { this._flushTimer = null; this.flush().catch((e) => console.error('flush failed', e)); }, FLUSH_DELAY_MS);
@@ -6563,6 +6608,8 @@ class Store {
     if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
     for (const fid of this._dirtyFeeds) await this._writeShard(fid);
     this._dirtyFeeds.clear();
+    for (const b of this._dirtyCards) await this._writeCardShard(b);
+    this._dirtyCards.clear();
     if (this._archivedDirty) {
       await this.vfs.writeFile('/archived_index.ndjson', this.tombstones.map((t) => JSON.stringify(t)).join('\n'));
       this._archivedDirty = false;
@@ -6662,7 +6709,8 @@ class Store {
       if (item.glass_id && !overwrite) { skipped++; continue; }
       const glass_id = (overwrite && item.glass_id) ? item.glass_id : nextGlassId(day, ++n);
       const card = buildCard(item, this.feeds.get(item.feed_id), { glass_id, cataloged: day });
-      await this.vfs.writeFile(`/catalog/${glass_id}.json`, JSON.stringify(card, null, 2));
+      this.cards.set(String(glass_id), card);
+      this._dirtyCards.add(this._cardBucket(glass_id));
       if (item.glass_id !== glass_id) { item.glass_id = glass_id; touched.add(item.feed_id); }
       created++;
     }
@@ -6672,12 +6720,12 @@ class Store {
     return { created, skipped, total: this.items.size };
   }
 
-  async getCard(glassId) { return this._readJSON(`/catalog/${String(glassId)}.json`, null); }
+  async getCard(glassId) { return this.cards.get(String(glassId)) || null; }
 
   // Confirm/correct a cataloger card: clear needs_review, stamp the human review,
   // and optionally overwrite specific facets. Used by the review queue (UI + MCP).
   async markCardReviewed(glassId, opts = {}) {
-    const card = await this.getCard(glassId);
+    const card = this.cards.get(String(glassId));
     if (!card) throw new Error(`no such card: ${glassId}`);
     card.glass = card.glass || {};
     card.glass.needs_review = false;
@@ -6686,18 +6734,20 @@ class Store {
     if (opts.confidence != null) card.glass.confidence = opts.confidence;
     else if (!(card.glass.confidence >= 0.9)) card.glass.confidence = 0.9;
     if (opts.facets && typeof opts.facets === 'object') card.facets = { ...card.facets, ...opts.facets };
-    await this.vfs.writeFile(`/catalog/${glassId}.json`, JSON.stringify(card, null, 2));
+    this._markCardDirty(glassId);
     this.emit('catalog', { id: glassId, reviewed: true });
     return card;
   }
-  async catalogCount() { try { return (await this.vfs.readdir('/catalog')).filter((f) => f.endsWith('.json')).length; } catch { return 0; } }
+  async catalogCount() { return this.cards.size; }
 
   // Wipe the catalog: delete every card file and un-stamp every item, so a fresh
   // catalog pass starts clean. (Cleanup for corruption like the seq-001 collision;
   // safe to re-run.) Does NOT touch items, content, usage, or the archive.
   async clearCatalog() {
-    let cleared = 0;
-    try { for (const f of await this.vfs.readdir('/catalog')) { if (f.endsWith('.json')) { await this.vfs.unlink(`/catalog/${f}`); cleared++; } } } catch { /* no dir */ }
+    const cleared = this.cards.size;
+    this.cards.clear();
+    this._dirtyCards.clear();
+    try { for (const f of await this.vfs.readdir('/catalog')) { if (/\.(ndjson|json)$/.test(f)) await this.vfs.unlink(`/catalog/${f}`); } } catch { /* no dir */ }
     const touched = new Set();
     for (const it of this.items.values()) { if (it.glass_id) { delete it.glass_id; touched.add(it.feed_id); } }
     for (const fid of touched) this._markFeedDirty(fid);
@@ -6706,27 +6756,30 @@ class Store {
     return { cleared };
   }
 
-  // Next free daily sequence for a glass_id (glass-YYYYMMDD-NNN), collision-safe.
-  async _nextCatalogSeq(day) {
+  // Next free daily sequence for a glass_id (glass-YYYYMMDD-NNN). In-memory + sync,
+  // so it's collision-safe even under concurrent writeCard (no await between
+  // reading the max and the cards.set below — atomic in JS's single thread).
+  _nextCatalogSeq(day) {
     const tag = `glass-${String(day).replace(/-/g, '')}-`;
     let max = 0;
-    try { for (const f of await this.vfs.readdir('/catalog')) { if (f.startsWith(tag)) { const k = parseInt(f.slice(tag.length), 10); if (k > max) max = k; } } } catch { /* none */ }
+    for (const gid of this.cards.keys()) { if (gid.startsWith(tag)) { const k = parseInt(gid.slice(tag.length), 10); if (k > max) max = k; } }
     return max + 1;
   }
 
-  // Persist an (enriched) catalog card: assign a glass_id if missing, write the
-  // file, and stamp the referenced item. Used by the Stage-1 cataloger.
+  // Persist an (enriched) catalog card: assign a glass_id if missing, set it in the
+  // in-memory index + mark its shard dirty (debounced flush — no per-card file
+  // write / dir scan), and stamp the referenced item. Used by the Stage-1 cataloger.
   async writeCard(card) {
-    await this._ensureDir('/catalog');
     card.glass = card.glass || {};
     if (!card.glass.glass_id) {
       const day = card.glass.cataloged || new Date().toISOString().slice(0, 10);
-      card.glass.glass_id = nextGlassId(day, await this._nextCatalogSeq(day));
+      card.glass.glass_id = nextGlassId(day, this._nextCatalogSeq(day));
     }
-    const gid = card.glass.glass_id;
-    await this.vfs.writeFile(`/catalog/${gid}.json`, JSON.stringify(card, null, 2));
+    const gid = String(card.glass.glass_id);
+    this.cards.set(gid, card);
+    this._markCardDirty(gid);
     const ref = card.glass.document_ref;
-    if (ref) { const it = this.items.get(ref); if (it && it.glass_id !== gid) { it.glass_id = gid; this._markFeedDirty(it.feed_id); await this.flush(); } }
+    if (ref) { const it = this.items.get(ref); if (it && it.glass_id !== gid) { it.glass_id = gid; this._markFeedDirty(it.feed_id); } }
     this.emit('catalog', { id: gid });
     return gid;
   }

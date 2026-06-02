@@ -6,6 +6,24 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Storage: catalog cards packed into shards (was one file per card) — 2026-06-02
+
+- Catalog cards were **one `/catalog/glass-*.json` file per item** (~3,500+). On
+  IDB invisible; on **FSAA it's death-by-papercuts** — the folder copy + every op
+  paid per-file overhead, and `writeCard` did a **full-directory `readdir` for the
+  seq counter on *every* card written.** Now cards live in an **in-memory index
+  persisted as ~256 bucketed shards** (`cards-XX.ndjson`, hashed `glass_id`), the
+  same dirty-flush model as feed items.
+- **Wins:** the FSA copy / hydration / every backend op now touch **dozens of files,
+  not thousands**; `writeCard` is in-memory + debounced (no per-card file write or
+  dir scan); the glass-id sequence is in-memory + synchronous (**collision-safe even
+  under concurrent cataloging** — clears that prerequisite for free).
+- **Migration is automatic + safe:** existing per-file cards convert to shards on
+  first load — **non-destructive + idempotent** (shards written *before* the legacy
+  files are removed, so an interruption just re-runs). Tests: `smoke-cards`
+  (sharded persistence round-trip, post-reload seq continuity, review persistence,
+  legacy migration + idempotency) + headless (app facet-loading on sharded cards).
+
 ### Saved links: stash the article body during resolve (full-content catalog + inline read) — 2026-06-02
 
 - The resolver already fetched each link's page (to find its URL + OpenGraph) and
