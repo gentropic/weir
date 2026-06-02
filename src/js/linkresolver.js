@@ -62,8 +62,13 @@ export class LinkResolver {
   emit() { const st = this.status(); this._listeners.forEach((fn) => { try { fn(st); } catch { /* ignore */ } }); }
 
   _pending() {
+    // Everything not yet successfully fetched: wrapped links (need resolving) AND
+    // direct links (need enriching for a thumbnail). Resolve wrappers FIRST — they
+    // all hit the same host (share.google) so they're the throttle-prone ones; the
+    // direct links spread across many hosts. An item drops out once `enriched` is set.
     return this.store.query({ feed_id: SAVED_FEED })
-      .filter((r) => !r.archived && isWrappedUrl(r.url) && (this._misses.get(r.id) || 0) < this.maxMisses);
+      .filter((r) => !r.archived && !r.enriched && (this._misses.get(r.id) || 0) < this.maxMisses)
+      .sort((a, b) => (isWrappedUrl(b.url) ? 1 : 0) - (isWrappedUrl(a.url) ? 1 : 0));
   }
   status() { return { pending: this._pending().length, running: !!this._timer }; }
 
@@ -96,7 +101,7 @@ export class LinkResolver {
 
     const meta = parseLinkMeta(html);
     const img = meta.image && absUrl(meta.image, finalUrl);
-    const patch = { id: item.id, feed_id: SAVED_FEED, url: finalUrl };   // url write clears the "unresolved" state
+    const patch = { id: item.id, feed_id: SAVED_FEED, url: finalUrl, enriched: true };   // url write clears "unresolved"; enriched = fetched+parsed (won't re-fetch)
     if (img) patch.media = { ...(item.media || {}), thumbnail: img };
     if (meta.title && isWeakTitle(item.title, finalUrl)) patch.title = meta.title;
     if (meta.description && !item.excerpt) patch.excerpt = meta.description.slice(0, 300);

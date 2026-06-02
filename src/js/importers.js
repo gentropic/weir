@@ -61,9 +61,25 @@ function impTitleFrom(text, urls) {
 // dedup naturally drops the bot's confirmations.
 export function parseTelegramExport(json) {
   const msgs = json && Array.isArray(json.messages) ? json.messages : [];
+  // In a bot/DM chat the bot only REPLIES, so take links from the chat OWNER (you)
+  // only: the sender of the most link-bearing messages. (Single-sender export →
+  // owner null → take all.) This excludes the bot's own suggestions/answers, on
+  // top of the archive/telegram-link skip + url dedup below.
+  const senderOf = (m) => m.from || m.from_id || '?';
+  const linkCount = {};
+  for (const m of msgs) {
+    if (impMsgUrls(m).some((u) => /^https?:\/\//i.test(u) && !impSkip(u))) {
+      const s = senderOf(m);
+      linkCount[s] = (linkCount[s] || 0) + 1;
+    }
+  }
+  const senders = Object.keys(linkCount);
+  const owner = senders.length > 1 ? senders.reduce((a, b) => (linkCount[b] > linkCount[a] ? b : a)) : null;
+
   const links = [];
   const seen = new Set();
   for (const m of msgs) {
+    if (owner && senderOf(m) !== owner) continue;   // skip the bot's messages
     const urls = impMsgUrls(m).filter((u) => /^https?:\/\//i.test(u) && !impSkip(u));
     if (!urls.length) continue;
     const text = impMsgText(m);

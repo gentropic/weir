@@ -40,7 +40,24 @@ assert.equal(it.media.thumbnail, 'https://hackaday.com/thumb.png', 'relative og:
 assert.equal(it.title, 'Real Article', 'weak (hostname-ish) title upgraded to og:title');
 assert.equal(it.excerpt, 'the desc', 'og:description → excerpt');
 assert.equal(it.id, id, 'id unchanged (hashed from original url — stable identity)');
+assert.equal(it.enriched, true, 'resolved wrapper marked enriched (won’t re-fetch)');
 assert.equal(lr._pending().length, 0, 'resolved item no longer pending');
+
+// ── direct (non-wrapped) links also enrich + get marked ──
+const id3 = `saved:h${hash32('https://hackaday.com/direct')}`;
+await store.upsertItems([{ id: id3, feed_id: 'saved', url: 'https://hackaday.com/direct', title: 'Direct', type: 'article' }]);
+await lr.enrichOne(store.getItem(id3));
+assert.equal(store.getItem(id3).enriched, true, 'direct link marked enriched');
+assert.ok(store.getItem(id3).media?.thumbnail, 'direct link got a thumbnail too');
+assert.ok(!lr._pending().some((r) => r.id === id3), 'enriched item drops out of pending');
+
+// ── an unresolvable wrapper stays pending (not marked enriched) ──
+const id4 = `saved:h${hash32('https://share.google/stuck')}`;
+await store.upsertItems([{ id: id4, feed_id: 'saved', url: 'https://share.google/stuck', title: 'share.google', type: 'article' }]);
+const lrStuck = new LinkResolver(store, { fetch: async (u) => ({ ok: true, status: 200, url: u, async text() { return ''; } }) });
+assert.equal(await lrStuck.enrichOne(store.getItem(id4)), null, 'no redirect surfaced → null');
+assert.ok(!store.getItem(id4).enriched, 'unresolvable wrapper NOT marked enriched');
+assert.ok(lrStuck._pending().some((r) => r.id === id4), 'stays pending for a later retry');
 
 // a strong message title is NOT clobbered
 const id2 = `saved:h${hash32('https://share.google/def')}`;

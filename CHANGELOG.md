@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Saved-link import: your messages only + batch direct-enrich — 2026-06-01
+
+- **Telegram import takes links from *you* only** — the chat owner, detected as the
+  sender of the most link-bearing messages. In a bot chat the bot only replies, so
+  its own suggestions/answers are excluded (belt-and-suspenders with the existing
+  archive/telegram-link skip + url dedup). Single-sender exports import everything.
+- **The resolver drip now enriches *all* saved links, not just wrapped ones** — so
+  direct links get thumbnails too. Each link is marked `enriched` after a
+  successful fetch (persisted), making it a **one-time pass that survives reloads**
+  (never re-fetches a page). Wrappers resolve first (same-host → throttle-prone);
+  direct links spread across many hosts. Stays gentle (~2 every 15s, idle when
+  hidden).
+
 ### Saved links: a built-in "Links" view — 2026-06-01
 
 - New built-in **Links** view in the Views list (below Articles) = your

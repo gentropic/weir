@@ -248,13 +248,15 @@ the trigger/query layer on top.
   `weir_resolveLinks`; built-in **Links** view = the `saved` capture source, with a
   one-time "inject missing built-in" migration that respects deletion). The Links
   view is a *view* not a type — captures still flow into Articles/Videos + catalog
-  correctly. **Remaining:** (a) a routing **action: auto-save** — let a rule
-  *capture* matching feed items into the saved collection ("auto-bookmark anything
-  from feed X / matching `kicad`"), the natural way routing feeds the links
-  collection. (b) optional: drip-enrich *direct* saved links too (not just wrapped)
-  — needs a persisted "enrichment tried" marker so it doesn't re-fetch every page
-  each session. (c) widen the Links view to the *union* of capture sources once
-  Telegram/glean land (a `captured`/provenance signal, not just feed_id='saved').
+  correctly. ✅ *Owner-only import + batch direct-enrich shipped 2026-06-01* (import
+  takes only the chat owner's links, not the bot's; the drip enriches ALL saved
+  links — direct ones get thumbnails too — marking each `enriched` so it's a
+  one-time, reload-surviving pass). **Remaining:** (a) a routing **action:
+  auto-save** — let a rule *capture* matching feed items into the saved collection
+  ("auto-bookmark anything from feed X / matching `kicad`"), the natural way
+  routing feeds the links collection. (b) widen the Links view to the *union* of
+  capture sources once Telegram/glean land (a `captured`/provenance signal, not
+  just feed_id='saved').
 - **Remote thin interface via a Telegram Mini App** *(back-pocket / speculative)*.
   A tiny phone-side UI for weir-on-desktop — notes input, maybe light control —
   with **no server and no webhook**. Two tiers:

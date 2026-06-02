@@ -6335,6 +6335,7 @@ class Store {
         if (raw.url != null) existing.url = raw.url;
         if (raw.author !== undefined) existing.author = raw.author || undefined;
         if (raw.media !== undefined) existing.media = raw.media;
+        if (raw.enriched !== undefined) existing.enriched = raw.enriched;   // link-resolver: fetched+parsed marker
         if (raw.structured !== undefined) existing.structured = raw.structured;
         if (raw.excerpt !== undefined) existing.excerpt = raw.excerpt;
         else if (raw.content !== undefined) existing.excerpt = deriveExcerpt(raw.content);
@@ -7514,9 +7515,25 @@ function impTitleFrom(text, urls) {
 // dedup naturally drops the bot's confirmations.
 function parseTelegramExport(json) {
   const msgs = json && Array.isArray(json.messages) ? json.messages : [];
+  // In a bot/DM chat the bot only REPLIES, so take links from the chat OWNER (you)
+  // only: the sender of the most link-bearing messages. (Single-sender export →
+  // owner null → take all.) This excludes the bot's own suggestions/answers, on
+  // top of the archive/telegram-link skip + url dedup below.
+  const senderOf = (m) => m.from || m.from_id || '?';
+  const linkCount = {};
+  for (const m of msgs) {
+    if (impMsgUrls(m).some((u) => /^https?:\/\//i.test(u) && !impSkip(u))) {
+      const s = senderOf(m);
+      linkCount[s] = (linkCount[s] || 0) + 1;
+    }
+  }
+  const senders = Object.keys(linkCount);
+  const owner = senders.length > 1 ? senders.reduce((a, b) => (linkCount[b] > linkCount[a] ? b : a)) : null;
+
   const links = [];
   const seen = new Set();
   for (const m of msgs) {
+    if (owner && senderOf(m) !== owner) continue;   // skip the bot's messages
     const urls = impMsgUrls(m).filter((u) => /^https?:\/\//i.test(u) && !impSkip(u));
     if (!urls.length) continue;
     const text = impMsgText(m);
@@ -7642,8 +7659,13 @@ class LinkResolver {
   emit() { const st = this.status(); this._listeners.forEach((fn) => { try { fn(st); } catch { /* ignore */ } }); }
 
   _pending() {
+    // Everything not yet successfully fetched: wrapped links (need resolving) AND
+    // direct links (need enriching for a thumbnail). Resolve wrappers FIRST — they
+    // all hit the same host (share.google) so they're the throttle-prone ones; the
+    // direct links spread across many hosts. An item drops out once `enriched` is set.
     return this.store.query({ feed_id: SAVED_FEED })
-      .filter((r) => !r.archived && isWrappedUrl(r.url) && (this._misses.get(r.id) || 0) < this.maxMisses);
+      .filter((r) => !r.archived && !r.enriched && (this._misses.get(r.id) || 0) < this.maxMisses)
+      .sort((a, b) => (isWrappedUrl(b.url) ? 1 : 0) - (isWrappedUrl(a.url) ? 1 : 0));
   }
   status() { return { pending: this._pending().length, running: !!this._timer }; }
 
@@ -7676,7 +7698,7 @@ class LinkResolver {
 
     const meta = parseLinkMeta(html);
     const img = meta.image && absUrl(meta.image, finalUrl);
-    const patch = { id: item.id, feed_id: SAVED_FEED, url: finalUrl };   // url write clears the "unresolved" state
+    const patch = { id: item.id, feed_id: SAVED_FEED, url: finalUrl, enriched: true };   // url write clears "unresolved"; enriched = fetched+parsed (won't re-fetch)
     if (img) patch.media = { ...(item.media || {}), thumbnail: img };
     if (meta.title && isWeakTitle(item.title, finalUrl)) patch.title = meta.title;
     if (meta.description && !item.excerpt) patch.excerpt = meta.description.slice(0, 300);

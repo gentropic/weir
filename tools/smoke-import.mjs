@@ -22,10 +22,13 @@ const TG = {
       text: 'this is just a note, no link' },
     { id: 6, type: 'message', from: 'Me', date: '2026-05-05T10:00:00', date_unixtime: '1777968000',
       text: 'http://www.e-basteln.de/papertape/' },   // dup of #1
+    { id: 7, type: 'message', from: 'aeDB', date: '2026-05-06T10:00:00', date_unixtime: '1778054400',
+      text: 'you might also like https://bot-suggestion.example/x' },   // bot's OWN link — must be excluded
   ],
 };
 
 const links = parseTelegramExport(TG);
+assert.ok(!links.some((l) => /bot-suggestion/.test(l.url)), "bot's own link excluded (owner = dominant link-sender)");
 const byUrl = Object.fromEntries(links.map((l) => [l.url, l]));
 assert.equal(links.length, 3, 'three unique importable links (dup + note + archive echo dropped)');
 assert.ok(byUrl['http://www.e-basteln.de/papertape/'], 'bare url kept');

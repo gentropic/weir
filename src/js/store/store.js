@@ -228,6 +228,7 @@ export class Store {
         if (raw.url != null) existing.url = raw.url;
         if (raw.author !== undefined) existing.author = raw.author || undefined;
         if (raw.media !== undefined) existing.media = raw.media;
+        if (raw.enriched !== undefined) existing.enriched = raw.enriched;   // link-resolver: fetched+parsed marker
         if (raw.structured !== undefined) existing.structured = raw.structured;
         if (raw.excerpt !== undefined) existing.excerpt = raw.excerpt;
         else if (raw.content !== undefined) existing.excerpt = deriveExcerpt(raw.content);
