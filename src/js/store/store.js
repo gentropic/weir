@@ -554,6 +554,23 @@ export class Store {
     return { archived };
   }
 
+  // Bring every archived item back to active AND clear its expiry (recomputed →
+  // null by default, so retention can't re-shelve it). The "I keep everything"
+  // restore that reverses an over-eager auto-archive sweep. Nothing is deleted;
+  // fully reversible. Returns the count unarchived.
+  unarchiveAll() {
+    let n = 0; const feeds = new Set();
+    for (const r of this.items.values()) {
+      if (!r.archived) continue;
+      r.archived = false;
+      r.expires_at = computeExpiry(r, this.feeds.get(r.feed_id));
+      feeds.add(r.feed_id); n++;
+    }
+    for (const fid of feeds) this._markFeedDirty(fid);
+    if (n) this.emit('items', { inserted: 0, updated: n, skipped: 0 });
+    return n;
+  }
+
   // ── settings / tags / routing ──
   getSettings() { return { ...this.settings }; }
   async setSettings(patch) {

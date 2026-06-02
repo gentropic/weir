@@ -183,6 +183,15 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return projItem(store, store.getItem(it.id), true);
   }
 
+  // Bring every archived item back to active (+ clear expiry so retention can't
+  // re-shelve them). One-shot "I keep everything" restore. Reversible; no deletes.
+  async function unarchiveAll() {
+    const n = store.unarchiveAll();
+    await store.flush();
+    if (app && app.renderAll) app.renderAll();
+    return { unarchived: n };
+  }
+
   // Bulk-tag every item matching a query (the "tag all these search results" verb).
   // Same scope args as weir_queryItems (q/feed/category/type/view/unread/saved).
   // Tags are stamped source:'llm'. Returns how many items were matched/changed.
@@ -352,7 +361,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { queued, pending: r.status().pending };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, tagItems, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, tagItems, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -454,6 +463,12 @@ const TOOLS = [
       },
     },
     annotations: { title: 'Bulk-tag a query' },
+  },
+  {
+    name: 'weir_unarchiveAll', fn: 'unarchiveAll',
+    description: 'Bring EVERY archived item back to active and clear its expiry (so retention won\'t re-shelve it) — the one-shot "I keep everything" restore that reverses an over-eager auto-archive sweep. Reversible; nothing is deleted. Returns { unarchived }.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { title: 'Unarchive everything' },
   },
   {
     name: 'weir_catalogItem', fn: 'catalogItem',

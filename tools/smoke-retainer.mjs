@@ -43,4 +43,11 @@ assert.equal(store.query({ view: 'archived' }).some((x) => x.id === 'f:old'), tr
 // Idempotent — already-archived not re-counted.
 assert.deepEqual(r.sweep(), { archived: 0 }, 'second sweep is a no-op');
 
+// unarchiveAll restores everything + clears expiry, so it can't be re-shelved.
+assert.equal(store.unarchiveAll(), 1, 'one archived item restored');
+assert.equal(store.getItem('f:old').archived, false, 'back to active');
+assert.equal(store.getItem('f:old').expires_at, null, 'expiry cleared → keep forever');
+assert.deepEqual(r.sweep(), { archived: 0 }, 'retention does NOT re-shelve the restored item');
+assert.equal(store.query({ view: 'inbox' }).some((x) => x.id === 'f:old'), true, 'restored item is back in the inbox');
+
 console.log('retainer smoke ok:', JSON.stringify(store.counts()));
