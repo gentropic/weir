@@ -201,6 +201,8 @@ body {
 .palette-hint { font-family: var(--au-font-mono); font-size: 10.5px; color: var(--au-fg-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
 .palette-kind { font-family: var(--au-font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--au-fg-soft); border: 1px solid var(--au-border); border-radius: 3px; padding: 1px 5px; flex-shrink: 0; }
 .palette-empty { padding: 18px; text-align: center; font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg-soft); }
+.palette-hintbar { flex-shrink: 0; border-top: 1px solid var(--au-border); padding: 6px 14px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); letter-spacing: 0.02em; }
+.palette-hintbar b { color: var(--au-fg-muted); font-weight: 700; }
 .ititle { font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--au-fg); }
 .ititle .flag { color: var(--au-action); margin-right: 5px; }
 .iexcerpt { font-size: 13px; color: var(--au-fg-muted); margin-top: 5px; line-height: 1.5; max-width: 70ch; }

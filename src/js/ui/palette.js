@@ -29,13 +29,27 @@ function rankText(text, q) {
   return contiguous + span + idx[0] * 0.5;
 }
 
+// A leading sigil scopes the search to one kind (the rest of the list is hidden):
+// `>` commands, `@` sources, `#` routes. No sigil → search everything.
+const SCOPE_SIGILS = { '>': 'Command', '@': 'Source', '#': 'Route' };
+
+// Split a raw query into its scope (a kind, or null) and the bare query text.
+export function parseScoped(query) {
+  let q = (query || '').replace(/^\s+/, '');
+  const kind = q && SCOPE_SIGILS[q[0]] ? SCOPE_SIGILS[q[0]] : null;
+  if (kind) q = q.slice(1);
+  return { kind, q: q.trim() };
+}
+
 // Filter + rank actions for a query. Empty query → original order (groups intact).
 // Label matches beat matches that only hit the kind/hint haystack.
 export function filterActions(actions, query) {
-  const q = (query || '').trim().toLowerCase();
-  if (!q) return actions.slice();
+  const { kind, q: bare } = parseScoped(query);
+  const pool = kind ? actions.filter((a) => a.kind === kind) : actions;
+  const q = bare.toLowerCase();
+  if (!q) return pool.slice();
   const scored = [];
-  for (const a of actions) {
+  for (const a of pool) {
     let r = rankText(a.label.toLowerCase(), q);
     if (r == null) {
       const hay = `${a.kind || ''} ${a.label} ${a.hint || ''}`.toLowerCase();
@@ -75,7 +89,8 @@ export function showPalette(actions) {
   overlay.className = 'palette-overlay';
   overlay.innerHTML = '<div class="palette" role="dialog" aria-label="Command palette">'
     + '<input class="palette-input" type="text" placeholder="Jump to a source or view, or run a command…" autocomplete="off" autocapitalize="off" spellcheck="false">'
-    + '<div class="palette-list" role="listbox"></div></div>';
+    + '<div class="palette-list" role="listbox"></div>'
+    + '<div class="palette-hintbar"><b>&gt;</b> commands&nbsp;&nbsp;<b>@</b> sources&nbsp;&nbsp;<b>#</b> routes</div></div>';
   document.body.appendChild(overlay);
   _palEl = overlay;
   const input = overlay.querySelector('.palette-input');
@@ -84,7 +99,7 @@ export function showPalette(actions) {
   let filtered = actions, active = 0;
 
   const render = () => {
-    const q = input.value;
+    const q = parseScoped(input.value).q;   // highlight the bare query, not the sigil
     list.innerHTML = filtered.length
       ? filtered.map((a, i) =>
         `<div class="palette-row${i === active ? ' active' : ''}" role="option" data-i="${i}">`
