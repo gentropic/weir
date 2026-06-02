@@ -71,6 +71,16 @@ assert.equal(lr429.log.reasons['http-429'], 2, 'each throttled try tallied as ht
 assert.equal(lr429.log.parked, 1, 'parked after maxMisses');
 assert.equal(lr429.log.recent[0].host, 'share.google', 'recent park records the host');
 assert.equal(lr429.log.resolved, 0, 'nothing resolved');
+// durable park: the dead link is marked on the ITEM so a reload (fresh _misses) can't resurface it
+assert.equal(ls.getItem('saved:tA').resolve_parked, true, 'parked link marked durably on the item');
+const lrReload = new LinkResolver(ls, { fetch: async () => ({}) });   // fresh instance = empty _misses, like a page reload
+assert.ok(!lrReload._pending().some((r) => r.id === 'saved:tA'), 'durably-parked link stays OUT of the queue after reload (no thrash)');
+// an explicit re-enrich is a deliberate retry → un-parks it
+const reParked = await lrReload.reEnrich((r) => r.id === 'saved:tA');
+lrReload.stop();
+assert.equal(reParked, 1, 're-enrich re-queues the parked link');
+assert.equal(ls.getItem('saved:tA').resolve_parked, undefined, 're-enrich clears resolve_parked');
+assert.ok(lrReload._pending().some((r) => r.id === 'saved:tA'), 'un-parked link is back in the queue');
 // log persists + reloads
 await lr429._saveLog(true);
 const lr429b = new LinkResolver(ls, { fetch: async () => ({}) });

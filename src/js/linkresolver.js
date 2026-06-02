@@ -91,7 +91,7 @@ export class LinkResolver {
     // all hit the same host (share.google) so they're the throttle-prone ones; the
     // direct links spread across many hosts. An item drops out once `enriched` is set.
     return this.store.query({ feed_id: SAVED_FEED })
-      .filter((r) => !r.archived && !r.enriched && (this._misses.get(r.id) || 0) < this.maxMisses)
+      .filter((r) => !r.archived && !r.enriched && !r.resolve_parked && (this._misses.get(r.id) || 0) < this.maxMisses)
       .sort((a, b) => (isWrappedUrl(b.url) ? 1 : 0) - (isWrappedUrl(a.url) ? 1 : 0));
   }
   status() { return { pending: this._pending().length, running: !!this._timer, log: this._logSummary() }; }
@@ -127,7 +127,7 @@ export class LinkResolver {
   // article — fast, no share.google throttle. Returns how many were queued.
   async reEnrich(matchFn) {
     const items = this.store.query({ feed_id: SAVED_FEED }).filter((r) => !r.archived && matchFn(r));
-    for (const it of items) await this.store.upsertItems([{ id: it.id, feed_id: SAVED_FEED, enriched: false }]);
+    for (const it of items) await this.store.upsertItems([{ id: it.id, feed_id: SAVED_FEED, enriched: false, resolve_parked: false }]);   // un-park too: an explicit re-enrich is a deliberate retry
     if (items.length) { await this.store.flush(); this.kick(); }
     return items.length;
   }
@@ -193,7 +193,14 @@ export class LinkResolver {
           const m = (this._misses.get(it.id) || 0) + 1;
           this._misses.set(it.id, m);
           this.log.reasons[res.reason] = (this.log.reasons[res.reason] || 0) + 1;   // counts every failed try (throttle visibility)
-          if (m >= this.maxMisses) this._record('parked', it, res);
+          if (m >= this.maxMisses) {
+            this._record('parked', it, res);
+            // Persist the park so a dead link (e.g. a no-redirect share.google wrapper)
+            // doesn't resurface on every reload and starve fresh work. Cleared only by
+            // an explicit re-enrich. _misses is in-memory; resolve_parked is durable.
+            await this.store.upsertItems([{ id: it.id, feed_id: SAVED_FEED, resolve_parked: true }]);
+            changed++;
+          }
         }
       }
       if (changed) await this.store.flush();

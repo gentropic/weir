@@ -260,6 +260,7 @@ export class Store {
         if (raw.author !== undefined) existing.author = raw.author || undefined;
         if (raw.media !== undefined) existing.media = raw.media;
         if (raw.enriched !== undefined) existing.enriched = raw.enriched;   // link-resolver: fetched+parsed marker
+        if (raw.resolve_parked !== undefined) existing.resolve_parked = raw.resolve_parked || undefined;   // durable: link gave up after maxMisses (survives reload; cleared on explicit re-enrich)
         if (raw.structured !== undefined) existing.structured = raw.structured;
         if (raw.excerpt !== undefined) existing.excerpt = raw.excerpt;
         else if (raw.content !== undefined) existing.excerpt = deriveExcerpt(raw.content);
