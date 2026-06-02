@@ -98,6 +98,7 @@ export class App {
       const s = e.target.closest('.source'); const h = e.target.closest('.cat-head');
       if (s) { e.preventDefault(); this.feedMenu(s.dataset.feed, e.clientX, e.clientY); }
       else if (h) { e.preventDefault(); this.catMenu(h.dataset.cat, e.clientX, e.clientY); }
+      else { e.preventDefault(); this.railMenu(e.clientX, e.clientY); }
     });
 
     const form = document.getElementById('addfeed');
@@ -1129,7 +1130,24 @@ export class App {
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ category: cat }) },
       { label: this.collapsedCats.has(cat) ? 'Expand' : 'Collapse', onClick: () => this.toggleCat(cat) },
       { sep: true },
+      { label: 'Collapse all folders', onClick: () => this.collapseAllCats() },
+      { label: 'Expand all folders', onClick: () => this.expandAllCats() },
+      { sep: true },
       { label: 'Reorder feeds…', onClick: () => this.openReorder(cat) },
+    ]);
+  }
+
+  // Collapse / expand every folder at once (folder menu + the rail-background
+  // menu). collapseAll seeds collapsedCats from the live category set (incl. ''
+  // = ungrouped); expandAll just clears it.
+  collapseAllCats() { this.collapsedCats = new Set(this.store.listFeeds().map((f) => f.category || '')); this.renderRail(); }
+  expandAllCats() { this.collapsedCats.clear(); this.renderRail(); }
+
+  // Right-click on empty rail space (not a feed or folder header).
+  railMenu(x, y) {
+    showMenu(x, y, [
+      { label: 'Collapse all folders', onClick: () => this.collapseAllCats() },
+      { label: 'Expand all folders', onClick: () => this.expandAllCats() },
     ]);
   }
 

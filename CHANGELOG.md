@@ -6,6 +6,12 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Rail: collapse-all / expand-all folders — 2026-06-01
+
+- **Collapse all folders** / **Expand all folders** on the folder context menu
+  *and* on right-clicking empty rail space — no more closing folders one by one to
+  get a clean overview.
+
 ### Multi-format link import (Holocene/Telegram backlog → weir) — 2026-06-01
 
 - The **Import** button / file drop now **sniffs the file** and routes it
