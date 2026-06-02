@@ -49,11 +49,11 @@ export function filterActions(actions, query) {
   return scored.map((s) => s.a);
 }
 
-let _el = null, _onDoc = null;
+let _palEl = null, _onDoc = null;
 
 export function closePalette() {
-  if (!_el) return;
-  _el.remove(); _el = null;
+  if (!_palEl) return;
+  _palEl.remove(); _palEl = null;
   if (_onDoc) { document.removeEventListener('keydown', _onDoc, true); _onDoc = null; }
 }
 
@@ -77,6 +77,7 @@ export function showPalette(actions) {
     + '<input class="palette-input" type="text" placeholder="Jump to a source or view, or run a command…" autocomplete="off" autocapitalize="off" spellcheck="false">'
     + '<div class="palette-list" role="listbox"></div></div>';
   document.body.appendChild(overlay);
+  _palEl = overlay;
   const input = overlay.querySelector('.palette-input');
   const list = overlay.querySelector('.palette-list');
 
