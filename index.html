@@ -3957,11 +3957,20 @@ async function viaBridge(url, opts = {}) {
         if (e.data.bodyEncoding === 'base64' && typeof resBody === 'string') {
           resBody = arrayBufferFromBase64(resBody);
         }
-        resolve(new Response(resBody, {
+        const res = new Response(resBody, {
           status: e.data.status,
           statusText: e.data.statusText,
           headers: e.data.headers
-        }));
+        });
+        // A manually-constructed Response has url === '' (the browser only sets
+        // it on real network responses). The service worker sends back the FINAL
+        // (post-redirect) url, so surface it — callers rely on response.url to
+        // resolve share-sheet/shortener redirects (an own data prop shadows the
+        // inherited Response.prototype.url getter).
+        if (e.data.url) {
+          try { Object.defineProperty(res, 'url', { value: e.data.url, configurable: true }); } catch { /* read-only env — leave '' */ }
+        }
+        resolve(res);
       } else {
         reject(new Error(e.data.error));
       }
