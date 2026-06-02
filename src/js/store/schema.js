@@ -113,8 +113,11 @@ export function deriveSearchText(rec) {
 // expire. Computed against the unread TTL at insert (read TTL handling is v0.2).
 export function computeExpiry(rec, feed) {
   if (rec.saved) return null;
+  // Keep-forever by DEFAULT — retention is opt-in PER FEED (feed.retention.unread_days).
+  // weir is a library, not a clear-the-inbox reader: nothing auto-expires unless you
+  // ask a specific feed to. RETENTION holds suggested values for that opt-in.
   const override = feed && feed.retention && feed.retention.unread_days;
-  const ttl = override != null ? override : (RETENTION[rec.type]?.unread ?? 'forever');
+  const ttl = override != null ? override : 'forever';
   if (ttl === 'forever') return null;
   return rec.published_at + ttl * DAY_MS;
 }
