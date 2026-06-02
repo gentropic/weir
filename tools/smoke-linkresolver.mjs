@@ -94,4 +94,19 @@ await lrX.enrichOne(store.getItem(id5));
 assert.equal(store.getItem(id5).has_content, true, 'content stored (has_content) from the same fetch');
 assert.match(await store.getContent(id5), /extracted body of https:\/\/hackaday\.com\/body/, 'stored body is the extractor output, against the FINAL url');
 
-console.log('linkresolver smoke ok:', JSON.stringify({ title: it.title, thumb: !!it.media.thumbnail, pending: lr._pending().length, content: store.getItem(id5).has_content }));
+// ── rework: reEnrichWeakTitles re-queues only weak-title links ("Source: X" fix) ──
+const wr = new Store(await VFS.create()); await wr._hydrate();
+await wr.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever' } });
+await wr.upsertItems([
+  { id: 'saved:weak', feed_id: 'saved', url: 'https://hackaday.com/a', title: 'Source: Hackaday', type: 'article' },
+  { id: 'saved:good', feed_id: 'saved', url: 'https://hackaday.com/b', title: 'A Real Article Title', type: 'article' },
+]);
+await wr.upsertItems([{ id: 'saved:weak', feed_id: 'saved', enriched: true }, { id: 'saved:good', feed_id: 'saved', enriched: true }]);
+const wlr = new LinkResolver(wr, { fetch: async () => ({ ok: false, status: 0 }) });
+const requeued = await wlr.reEnrichWeakTitles();
+wlr.stop();
+assert.equal(requeued, 1, 'only the "Source: X" weak-title link is re-queued');
+assert.equal(wr.getItem('saved:weak').enriched, false, 'weak-title link: enriched cleared (will re-fetch og:title)');
+assert.equal(wr.getItem('saved:good').enriched, true, 'real-title link: left enriched (untouched)');
+
+console.log('linkresolver smoke ok:', JSON.stringify({ title: it.title, thumb: !!it.media.thumbnail, pending: lr._pending().length, content: store.getItem(id5).has_content, reEnriched: requeued }));

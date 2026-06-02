@@ -1024,6 +1024,7 @@ export class App {
       { label: 'Show only this feed', onClick: () => { this.catFilter = null; this.route = null; this.smartView = null; this.feedFilter = feedId; this.renderAll(); } },
       feedId === 'saved' && { label: '⧉ Resolve links now', onClick: () => this.resolveLinksNow() },
       feedId === 'saved' && { label: '⌦ Remove non-content links', onClick: () => this.cleanSavedLinks() },
+      feedId === 'saved' && { label: '⧉ Re-fetch weak-title links', onClick: () => this.reEnrichWeak() },
       (feed.site_url || feed.url) && { label: 'Open site ↗', onClick: () => window.open(feed.site_url || feed.url, '_blank', 'noopener') },
       { sep: true },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
@@ -1473,6 +1474,14 @@ export class App {
     const { pruned } = await this.store.prune(ids, 'non-content-link');
     this.renderAll();
     if (sub) sub.textContent = `removed ${pruned} non-content / bot link${pruned === 1 ? '' : 's'}`;
+  }
+
+  // Rework: re-fetch metadata for saved links whose title is weak (e.g. a Google
+  // Discover "Source: X" attribution) → the drip re-applies a real og:title.
+  async reEnrichWeak() {
+    const n = await (this.linkResolver ? this.linkResolver.reEnrichWeakTitles() : 0);
+    const sub = document.getElementById('view-sub');
+    if (sub) sub.textContent = n ? `re-fetching ${n} weak-title link${n === 1 ? '' : 's'} in the background…` : 'no weak-title links to re-fetch';
   }
 
   // Resolve + fetch metadata (thumbnail/title/excerpt) for one saved link right

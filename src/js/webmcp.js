@@ -292,7 +292,20 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { pending: st.pending, running: st.running, ...st.log };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
+  // Rework: re-enrich already-processed saved links (clears `enriched` → the drip
+  // re-fetches + re-applies metadata). { weakTitles:true } targets links whose
+  // title is weak (so a better og:title is applied); { all:true } re-does all.
+  async function reEnrich(input = {}) {
+    if (!app || !app.linkResolver) throw new Error('reEnrich is only available in the running app');
+    const r = app.linkResolver;
+    let queued;
+    if (input.weakTitles) queued = await r.reEnrichWeakTitles();
+    else if (input.all) queued = await r.reEnrich(() => true);
+    else throw new Error('pass { weakTitles: true } or { all: true }');
+    return { queued, pending: r.status().pending };
+  }
+
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -334,6 +347,12 @@ const TOOLS = [
     description: 'Read the background link-resolver run log — { pending, running, resolved, parked, reasons, recent, startedAt, updatedAt }. `resolved` = links fully resolved+enriched; `parked` = gave up after retries; `reasons` tallies every failed try (http-429 = share.google throttling, no-redirect, network); `recent` = the last few parked links (host + reason). Use it to review an overnight run.',
     inputSchema: { type: 'object', properties: {} },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'Resolver run log' },
+  },
+  {
+    name: 'weir_reEnrich', fn: 'reEnrich',
+    description: 'Rework saved links: clear their enriched flag so the background resolver re-fetches + re-applies metadata (title/thumbnail/excerpt). `weakTitles:true` re-does only links with a weak title (e.g. "Source: Hackaday" → real og:title); `all:true` re-does every saved link. Already-resolved urls are re-fetched directly (fast, no share.google throttle). Returns { queued, pending }.',
+    inputSchema: { type: 'object', properties: { weakTitles: { type: 'boolean', description: 'Only links whose title is weak' }, all: { type: 'boolean', description: 'Every saved link' } } },
+    annotations: { title: 'Re-enrich saved links' },
   },
   {
     name: 'weir_getItem', fn: 'getItem',

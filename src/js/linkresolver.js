@@ -40,7 +40,8 @@ export function parseLinkMeta(html) {
 function isWeakTitle(title, url) {
   if (!title || title === '(untitled)') return true;
   const t = String(title).trim();
-  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(t)) return true;   // looks like a bare domain
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(t)) return true;        // looks like a bare domain
+  if (/^source\s*[:\-–—|]/i.test(t)) return true;                 // Google Discover attribution: "Source: Hackaday"
   try { if (t === new URL(url).hostname.replace(/^www\./, '')) return true; } catch { /* ignore */ }
   return false;
 }
@@ -120,6 +121,20 @@ export class LinkResolver {
   // parked-misses so a fresh import retries everything (throttle may have lifted).
   kick() { this._misses.clear(); if (!this.log.startedAt) this.log.startedAt = Date.now(); if (!this._timer && this._pending().length) this.start(); }
 
+  // ── rework ── Clear the `enriched` flag on saved links matching `matchFn` so
+  // the drip re-fetches + re-applies metadata (after improving the title logic /
+  // extractor, etc.). The url is already resolved, so this re-fetches the REAL
+  // article — fast, no share.google throttle. Returns how many were queued.
+  async reEnrich(matchFn) {
+    const items = this.store.query({ feed_id: SAVED_FEED }).filter((r) => !r.archived && matchFn(r));
+    for (const it of items) await this.store.upsertItems([{ id: it.id, feed_id: SAVED_FEED, enriched: false }]);
+    if (items.length) { await this.store.flush(); this.kick(); }
+    return items.length;
+  }
+  // Re-enrich enriched items whose title is weak by the CURRENT rule — so a better
+  // og:title is applied after isWeakTitle is improved (the "Source: X" fix).
+  reEnrichWeakTitles() { return this.reEnrich((r) => r.enriched && isWeakTitle(r.title, r.url)); }
+
   start() {
     if (this._timer) return;
     this._timer = setInterval(() => this.tick().catch((e) => console.error('linkresolver', e)), this.intervalMs);
@@ -150,7 +165,7 @@ export class LinkResolver {
     // cataloger gets full content + the link reads inline. Images stay suppressed
     // (weir's default; "load images" per-item still works).
     let content = null;
-    if (this.extract) { try { content = this.extract(html, finalUrl); } catch { /* unparseable page */ } }
+    if (this.extract && !item.has_content) { try { content = this.extract(html, finalUrl); } catch { /* unparseable page */ } }   // skip re-extraction on a re-enrich (already stored)
 
     const patch = { id: item.id, feed_id: SAVED_FEED, url: finalUrl, enriched: true };   // url write clears "unresolved"; enriched = fetched+parsed (won't re-fetch)
     if (img) patch.media = { ...(item.media || {}), thumbnail: img };
