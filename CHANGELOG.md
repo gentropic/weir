@@ -6,6 +6,15 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### WebMCP: navigate sources — feed filter + `weir_listSources` — 2026-06-01
+
+- `weir_queryItems` gains **`feed`** (a source by id *or* display name, e.g.
+  "Saved Links") and **`category`** (folder) filters — list a whole source
+  reliably instead of fighting substring `q` search.
+- New **`weir_listSources`** — the source tree (feeds grouped by folder, each with
+  its inbox count) so an agent can see what exists before drilling in. Makes
+  driving weir from Claude Code actually navigable.
+
 ### Sources rail: filter box + collapse/expand-all — 2026-06-01
 
 - **Filter box** in the Sources header — narrow the list by feed name *or* folder

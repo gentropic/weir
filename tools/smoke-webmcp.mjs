@@ -39,6 +39,15 @@ assert.equal(p2.hasMore, false, 'no more after last'); assert.ok(!p2.nextCursor,
 const pBad = await tools.queryItems({ cursor: 'garbage!!' });
 assert.equal(pBad.count, 2, 'bad cursor → ignored, full set');
 
+// ── feed filter (by id or name) + listSources ──
+assert.equal((await tools.queryItems({ feed: 'f' })).count, 2, 'feed filter by id');
+assert.equal((await tools.queryItems({ feed: 'Boing Boing' })).count, 2, 'feed filter by display name');
+assert.equal((await tools.queryItems({ feed: 'boing boing' })).count, 2, 'feed name is case-insensitive');
+assert.equal((await tools.queryItems({ feed: 'Nope' })).count, 0, 'unknown feed → empty set');
+const srcs = await tools.listSources();
+assert.equal(srcs.feedCount, 1, 'listSources: one feed');
+assert.ok(srcs.sources.some((c) => c.feeds.some((f) => f.name === 'Boing Boing' && f.inbox === 2)), 'listSources: feed + inbox count');
+
 // ── getItem ──
 const it = await tools.getItem({ id: 'a1', content: true });
 assert.equal(it.title, 'Jack Daniel preacher');

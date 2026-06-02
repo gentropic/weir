@@ -59,13 +59,26 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return (live && live.get(it.id)) || facetsOf(it, store.getFeed(it.feed_id));
   };
 
+  // Resolve a `feed` arg (a feed id OR a display name, case-insensitive) to a
+  // feed_id, so the model can say feed:"Saved Links" without knowing the id.
+  function resolveFeedId(feed) {
+    if (!feed) return undefined;
+    const s = String(feed);
+    if (store.getFeed(s)) return s;
+    const lc = s.toLowerCase();
+    const hit = store.listFeeds().find((f) => (f.name || '').toLowerCase() === lc);
+    return hit ? hit.id : s;   // fall back to the raw value (yields an empty set if unknown)
+  }
+
   async function queryItems(input = {}) {
-    const { q, type, view, unread, saved, cursor } = input;
+    const { q, type, view, unread, saved, cursor, category } = input;
     const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
     const opts = {};   // no limit → full matching set; we page it here with a keyset cursor
     if (q) opts.text = String(q);
     if (type) opts.type = String(type);
     if (view) opts.view = String(view);
+    if (input.feed) opts.feed_id = resolveFeedId(input.feed);
+    if (category !== undefined) opts.category = String(category);   // '' = ungrouped
     if (unread === true) opts.read = false;
     if (saved !== undefined) opts.saved = !!saved;
     // Stable total order: newest first, id as tie-breaker (so the cursor is exact
@@ -243,7 +256,26 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { provider: s.catalog_provider, model: s.catalog_model, baseUrl: s.catalog_base_url || undefined, paceMs: s.catalog_pace_ms, maxBodyChars: s.catalog_max_body_chars, note: 'key unchanged (set it in the UI)' };
   }
 
-  return { queryItems, getItem, listFacets, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
+  // The source tree — feeds grouped by folder, with inbox counts — so the model
+  // can see what sources exist before drilling in with queryItems({ feed }).
+  // Optional `category` scopes to one folder ('' = ungrouped).
+  async function listSources(input = {}) {
+    const stats = store.counts();   // { byFeed: { feed_id: inboxCount }, … }
+    const onlyCat = input.category !== undefined ? String(input.category) : null;
+    const folders = new Map();
+    for (const f of store.listFeeds()) {
+      const cat = f.category || '';
+      if (onlyCat != null && cat !== onlyCat) continue;
+      if (!folders.has(cat)) folders.set(cat, []);
+      folders.get(cat).push({ id: f.id, name: f.name, adapter: f.adapter, inbox: stats.byFeed[f.id] || 0 });
+    }
+    const sources = [...folders.entries()]
+      .map(([category, feeds]) => ({ category: category || '(ungrouped)', feeds: feeds.sort((a, b) => b.inbox - a.inbox || a.name.localeCompare(b.name)) }))
+      .sort((a, b) => a.category.localeCompare(b.category));
+    return { folders: sources.length, feedCount: store.listFeeds().length, sources };
+  }
+
+  return { queryItems, getItem, listFacets, listSources, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -252,10 +284,12 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
 const TOOLS = [
   {
     name: 'weir_queryItems', fn: 'queryItems',
-    description: 'Search/list weir feed items, newest first. Filters: q (substring over title/excerpt/text), type (article|video|release|paper|status|track|podcast|commit|issue|note), view (inbox|saved|archived), unread (bool), saved (bool), limit (default 30, max 100). Paginated: returns { count, total, hasMore, items, nextCursor }. To page, pass nextCursor back with the SAME filters. Items are compact (id, title, url, feed, published, tags, excerpt).',
+    description: 'Search/list weir feed items, newest first. Filters: q (substring over title/excerpt/text), feed (a source by id OR name, e.g. "Saved Links"), category (folder name; "" = ungrouped), type (article|video|release|paper|status|track|podcast|commit|issue|note), view (inbox|saved|archived), unread (bool), saved (bool), limit (default 30, max 100). Filters combine. Use feed/category to LIST a whole source (more reliable than q, which is substring-only). Paginated: returns { count, total, hasMore, items, nextCursor }; page by passing nextCursor back with the SAME filters. Items are compact (id, title, url, feed, published, tags, excerpt). Use weir_listSources first to see feed/folder names.',
     inputSchema: {
       type: 'object', properties: {
         q: { type: 'string', description: 'Substring search over title/excerpt/text' },
+        feed: { type: 'string', description: 'Scope to one source — its feed id or display name (e.g. "Saved Links")' },
+        category: { type: 'string', description: 'Scope to one folder by name ("" = ungrouped)' },
         type: { type: 'string', description: 'Item type filter' },
         view: { type: 'string', enum: ['inbox', 'saved', 'archived'], description: 'Which view to scope to' },
         unread: { type: 'boolean', description: 'Only unread items' },
@@ -265,6 +299,12 @@ const TOOLS = [
       },
     },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'Query weir items' },
+  },
+  {
+    name: 'weir_listSources', fn: 'listSources',
+    description: 'List weir’s sources (feeds) grouped by folder, each with its inbox item count — the source tree, so you can see what exists and then drill in with weir_queryItems({ feed }). Optional `category` scopes to one folder. Returns { folders, feedCount, sources: [{ category, feeds: [{ id, name, adapter, inbox }] }] }.',
+    inputSchema: { type: 'object', properties: { category: { type: 'string', description: 'Only this folder ("" = ungrouped)' } } },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'List weir sources' },
   },
   {
     name: 'weir_getItem', fn: 'getItem',
