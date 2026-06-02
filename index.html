@@ -9710,24 +9710,36 @@ class App {
     this._renderCatRun();
     if (this._pipWin) this._renderFlightDeck();   // flip the deck to "cataloging…" immediately, not after item #1
     this._acquireWakeLock();                 // keep the display awake for the run
-    let n = 0, ok = 0, fails = 0, streak = 0, bailed = false;
+    let n = 0, ok = 0, fails = 0, streak = 0, bailed = false, i = 0;
     try {
-      for (const it of todo) {
+      while (i < todo.length) {
         if (job.cancel) break;
-        this._catStatus(`cataloging ${n + 1}/${todo.length}…  ${ok} done${fails ? `, ${fails} failed` : ''} · click to stop`);
+        const it = todo[i];
+        this._catStatus(`cataloging ${ok + 1}/${todo.length}…  ${ok} done${fails ? `, ${fails} failed` : ''} · click to stop`);
         const r = await this.catalogItem(it.id);
-        n++;
-        if (r) { ok++; streak = 0; } else if (++streak >= 8) {
-          // 8 misses in a row → the LLM or bridge is down; stop instead of
-          // churning through thousands of no-ops.
-          bailed = true; this._catStatus(`stopped after ${streak} failures in a row — is Lemonade running / the bridge active? ${ok} cataloged so far; click to resume.`); break;
-        } else { fails++; }
+        if (r) { ok++; streak = 0; i++; }
+        else if (!navigator.onLine) {
+          // Offline — the machine likely slept (lid close / power pull) or the
+          // network dropped. Park the run and wait for it to come back, then retry
+          // the SAME item. Not the LLM's fault, so it doesn't count toward the bail.
+          if (!await this._pauseAndAwaitResume(job, ok, todo.length)) { bailed = true; break; }
+          streak = 0;   // i not advanced → re-attempt this item
+        } else {
+          fails++; streak++; i++;
+          if (streak >= 8) {
+            // 8 ONLINE failures in a row → the provider/bridge is erroring. Pause +
+            // backoff-retry instead of dying, so a blip doesn't end an overnight run.
+            if (!await this._pauseAndAwaitResume(job, ok, todo.length)) { bailed = true; break; }
+            streak = 0;
+          }
+        }
+        n = ok + fails;
         this._catalogProgress = { total: todo.length, done: ok, failed: fails };
         if (this._pipWin) this._renderFlightDeck();                  // live progress on the pop-out
         if (n % 25 === 0 && this.catalog) this.renderAll();          // throttled refresh
         // Pace via the flight-deck window's timer when it's open: its timers stay
         // un-throttled (always-visible), so a buried main tab no longer crawls.
-        if (pace && !job.cancel) await new Promise((res) => (this._pipWin || window).setTimeout(res, pace));
+        if (pace && r && !job.cancel) await new Promise((res) => (this._pipWin || window).setTimeout(res, pace));
       }
     } finally {
       this._batch = false;
@@ -9762,6 +9774,45 @@ class App {
     } catch { /* unsupported / denied / not visible — best effort */ }
   }
   _releaseWakeLock() { if (this._wakeLock) { try { this._wakeLock.release(); } catch { /* ignore */ } this._wakeLock = null; } }
+
+  // Pause-and-auto-resume — instead of dying on a failure run (usually the machine
+  // sleeping on a lid-close, or a transient provider blip), park the batch and
+  // resume when conditions recover: an `online`/visible wake signal (both fire when
+  // a slept machine wakes), or a growing backoff for provider errors. Reports the
+  // cause in catalogStatus ({paused, reason}). Cancelable — the stop button still
+  // works while paused. Returns false only if the user stopped it mid-pause.
+  async _pauseAndAwaitResume(job, done, total) {
+    let backoff = 15_000;
+    while (!job.cancel) {
+      const offline = !navigator.onLine;
+      this._catalogProgress = { total, done, failed: this._catalogProgress?.failed || 0, paused: true, reason: offline ? 'offline' : 'provider' };
+      this._catStatus(offline
+        ? `paused — offline (machine asleep?). ${done}/${total} cataloged · resumes automatically when you’re back online · click to stop`
+        : `paused — provider not responding. ${done}/${total} cataloged · retrying in ${Math.round(backoff / 1000)}s · click to stop`);
+      if (this._pipWin) this._renderFlightDeck();
+      await this._awaitWakeSignal(job, backoff);
+      if (job.cancel) return false;
+      if (navigator.onLine) { await this._acquireWakeLock(); return true; }   // back online → resume
+      backoff = Math.min(backoff * 2, 120_000);
+    }
+    return false;
+  }
+
+  // Resolve on the FIRST of: an `online` event, the tab becoming visible, `ms`
+  // elapsed (backoff), or the job being canceled. Both online + visible fire when a
+  // slept machine wakes, so resume is near-immediate on lid-open.
+  _awaitWakeSignal(job, ms) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const fin = () => { if (settled) return; settled = true; cleanup(); resolve(); };
+      const onVis = () => { if (document.visibilityState === 'visible') fin(); };
+      const poll = setInterval(() => { if (job.cancel) fin(); }, 1000);
+      const timer = setTimeout(fin, ms);
+      function cleanup() { clearTimeout(timer); clearInterval(poll); window.removeEventListener('online', fin); document.removeEventListener('visibilitychange', onVis); }
+      window.addEventListener('online', fin);
+      document.addEventListener('visibilitychange', onVis);
+    });
+  }
 
   // ── flight-deck: a Document Picture-in-Picture pop-out (always-on-top) showing
   // catalog progress + the latest items. Its timers aren't background-throttled,
@@ -11888,7 +11939,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'af1e5a9';          // short content hash of the bundle (build id)
+const COMMIT = '80f5055';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
