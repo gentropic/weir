@@ -205,6 +205,9 @@ export class App {
     this.layout = this.store.getSettings().stream_layout === 'gallery' ? 'gallery' : 'list';
     { const b = document.getElementById('btn-layout'); if (b) { b.textContent = this.layout === 'gallery' ? '☰' : '▦'; b.title = this.layout === 'gallery' ? 'List view' : 'Gallery view'; } }
     document.getElementById('btn-layout')?.addEventListener('click', () => this.setLayout(this.layout === 'gallery' ? 'list' : 'gallery'));
+    this.unreadOnly = !!this.store.getSettings().stream_unread_only;
+    document.getElementById('btn-unread')?.addEventListener('click', () => this.toggleUnread());
+    document.getElementById('btn-mark-read')?.addEventListener('click', () => this.markAllHere());
     { const fd = document.getElementById('btn-flightdeck'); if (fd) { if ('documentPictureInPicture' in window) fd.addEventListener('click', () => this.openFlightDeck()); else fd.hidden = true; } }
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && this._cataloging) this._acquireWakeLock(); });   // wake lock auto-releases when hidden; re-take on return
     document.addEventListener('keydown', (e) => this.onKey(e));
@@ -226,6 +229,7 @@ export class App {
     else if (this.route) { opts = { route: this.route }; text = this.searchText || ''; }
     else if (this.catFilter != null) { opts = { category: this.catFilter }; text = this.searchText || ''; }   // '' = ungrouped
     else { opts = { view: this.view, feed_id: this.feedFilter || undefined }; text = this.searchText || ''; }
+    if (this.unreadOnly) opts.read = false;   // unread-only toggle (topbar)
 
     // Ranked full-text (librarian) when we have text + a ready index — scoped to
     // the current view by filtering on its allowed id set; relevance order.
@@ -275,6 +279,13 @@ export class App {
     else if (!feeds) sub = 'no feeds yet';
     else sub = `${n} item${n === 1 ? '' : 's'}${feed ? '' : ` · ${feeds} source${feeds === 1 ? '' : 's'}`}`;
     document.getElementById('view-sub').textContent = sub;
+    const ub = document.getElementById('btn-unread');
+    if (ub) {
+      const unread = this.items.reduce((a, i) => a + (i.read ? 0 : 1), 0);
+      ub.classList.toggle('active', this.unreadOnly);
+      ub.textContent = `● ${unread} unread`;
+      ub.title = this.unreadOnly ? 'Showing only unread — click to show all (u)' : 'Show only unread (u)';
+    }
     this._reflectSearch();
   }
 
@@ -833,6 +844,31 @@ export class App {
     const b = document.getElementById('btn-layout');
     if (b) { b.textContent = this.layout === 'gallery' ? '☰' : '▦'; b.title = this.layout === 'gallery' ? 'List view' : 'Gallery view'; }
     this.renderStream();
+  }
+
+  // The current view's scope as a store-query filter — what "mark all read here"
+  // and other view-scoped actions act on. Mirrors what query() is showing.
+  _readScope() {
+    if (this.feedFilter) return { feed_id: this.feedFilter };
+    if (this.catFilter != null) return { category: this.catFilter };
+    if (this.route) return { route: this.route };
+    if (this.smartView) return { ...this.smartView.query };
+    return { view: this.view || 'inbox' };
+  }
+
+  // Unread-only filter (topbar ● button / `u`). Folds read:false into the current
+  // view's query; persisted so it sticks across sessions.
+  toggleUnread() {
+    this.unreadOnly = !this.unreadOnly;
+    this.store.setSettings({ stream_unread_only: this.unreadOnly });
+    this.selectedId = null; this.expandedId = null;
+    this.renderStream(); this.renderTopbar();
+  }
+
+  // Mark everything the current view/feed/folder shows as read (topbar ✓ button).
+  markAllHere() {
+    this.store.markAllRead(this._readScope());
+    this.renderAll();
   }
 
   // Gallery tile — kept as `.item` (plus `.tile`) so the click/select/reflect
@@ -1539,10 +1575,8 @@ export class App {
       { label: 'Archived', kind: 'View', run: () => this.setView('archived') },
       { label: 'Catalog', kind: 'View', run: () => this.setCatalog() },
     ];
-    const readScope = this.feedFilter ? { feed_id: this.feedFilter }
-      : this.catFilter != null ? { category: this.catFilter }
-        : (!this.smartView && !this.route && !this.catalog) ? { view: this.view || 'inbox' } : null;
     const cmds = [
+      { label: this.unreadOnly ? 'Show all (not just unread)' : 'Show only unread', kind: 'Command', run: () => this.toggleUnread() },
       { label: 'Add source / paste…', kind: 'Command', hint: 'feed URL, OPML, links', run: () => document.getElementById('addfeed-input')?.focus() },
       { label: 'Search items', kind: 'Command', run: () => this.searchEl?.focus() },
       this.searchText && this.searchText.trim() && { label: 'Save current search as view', kind: 'Command', run: () => this.saveSearchAsView() },
@@ -1555,7 +1589,7 @@ export class App {
       { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },
       { label: 'Retry flagged feeds', kind: 'Command', run: () => this.retryFlaggedFeeds() },
       { label: `Switch to ${this.layout === 'gallery' ? 'list' : 'gallery'} view`, kind: 'Command', run: () => this.setLayout(this.layout === 'gallery' ? 'list' : 'gallery') },
-      readScope && { label: 'Mark all read here', kind: 'Command', run: () => this.store.markAllRead(readScope) },
+      { label: 'Mark all read here', kind: 'Command', run: () => this.markAllHere() },
       { label: 'Collapse all folders', kind: 'Command', run: () => this.collapseAllCats() },
       { label: 'Expand all folders', kind: 'Command', run: () => this.expandAllCats() },
       { label: 'Flight deck', kind: 'Command', run: () => this.openFlightDeck() },
@@ -1613,6 +1647,7 @@ export class App {
       case 'e': if (this.selectedId) { const cur = this.selectedId; this.moveSelection(1); this.doAct('archive', cur); } break;
       case 'o': if (this.selectedId) this.doAct('open', this.selectedId); break;
       case 't': if (this.selectedId) { e.preventDefault(); this.openTagEditor(this.selectedId); } break;
+      case 'u': e.preventDefault(); this.toggleUnread(); break;
       case 'g': this._g = true; setTimeout(() => { this._g = false; }, 800); break;
       case '/': e.preventDefault(); this.searchEl.focus(); break;
       default: break;
