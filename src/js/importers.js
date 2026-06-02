@@ -69,25 +69,29 @@ function impTitleFrom(text, urls) {
 // dedup naturally drops the bot's confirmations.
 export function parseTelegramExport(json) {
   const msgs = json && Array.isArray(json.messages) ? json.messages : [];
-  // In a bot/DM chat the bot only REPLIES, so take links from the chat OWNER (you)
-  // only: the sender of the most link-bearing messages. (Single-sender export →
-  // owner null → take all.) This excludes the bot's own suggestions/answers, on
-  // top of the archive/telegram-link skip + url dedup below.
+  // Take only YOUR messages, not the bot's. In a bot/DM chat `json.name` IS the
+  // counterparty (the bot — e.g. "Holocene") and equals the `from` on its
+  // messages, so skip those: the bot's "Link Added" confirmations echo the real
+  // url, so link-counting can't tell you apart (it'd often pick the bot). Fallback
+  // when there's no usable chat name: keep only the dominant link-sender.
   const senderOf = (m) => m.from || m.from_id || '?';
-  const linkCount = {};
-  for (const m of msgs) {
-    if (impMsgUrls(m).some((u) => /^https?:\/\//i.test(u) && !impSkip(u))) {
-      const s = senderOf(m);
-      linkCount[s] = (linkCount[s] || 0) + 1;
+  const isDM = json && (json.type === 'bot_chat' || json.type === 'personal_chat');
+  const bot = isDM && json.name ? String(json.name) : null;
+  let keep = bot ? ((m) => senderOf(m) !== bot) : null;
+  if (!keep) {
+    const linkCount = {};
+    for (const m of msgs) {
+      if (impMsgUrls(m).some((u) => /^https?:\/\//i.test(u) && !impSkip(u))) { const s = senderOf(m); linkCount[s] = (linkCount[s] || 0) + 1; }
     }
+    const senders = Object.keys(linkCount);
+    const owner = senders.length > 1 ? senders.reduce((a, b) => (linkCount[b] > linkCount[a] ? b : a)) : null;
+    if (owner) keep = (m) => senderOf(m) === owner;
   }
-  const senders = Object.keys(linkCount);
-  const owner = senders.length > 1 ? senders.reduce((a, b) => (linkCount[b] > linkCount[a] ? b : a)) : null;
 
   const links = [];
   const seen = new Set();
   for (const m of msgs) {
-    if (owner && senderOf(m) !== owner) continue;   // skip the bot's messages
+    if (keep && !keep(m)) continue;   // skip the bot / non-owner messages
     const urls = impMsgUrls(m).filter((u) => /^https?:\/\//i.test(u) && !impSkip(u));
     if (!urls.length) continue;
     const text = impMsgText(m);

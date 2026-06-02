@@ -26,11 +26,14 @@ const TG = {
       text: 'you might also like https://bot-suggestion.example/x' },   // bot's OWN link — must be excluded
     { id: 8, type: 'message', from: 'Me', date: '2026-05-07T10:00:00', date_unixtime: '1778140800',
       text: 'saved! https://holo.stdgeo.com/links/123' },   // Holocene-internal pointer — must be skipped
+    { id: 9, type: 'message', from: 'aeDB', date: '2026-05-08T10:00:00', date_unixtime: '1778227200',
+      text: '✅ Link Added Cool Thing 📋 Link ID: 99 https://bot-echo.example/real' },   // bot confirmation w/ a REAL url — must be excluded by chat-name
   ],
 };
 
-const links = parseTelegramExport(TG);
-assert.ok(!links.some((l) => /bot-suggestion/.test(l.url)), "bot's own link excluded (owner = dominant link-sender)");
+const links = parseTelegramExport(TG);   // TG.name='aeDB', type='bot_chat' → bot = 'aeDB'
+assert.ok(!links.some((l) => /bot-suggestion/.test(l.url)), "bot's own link excluded (chat name = bot)");
+assert.ok(!links.some((l) => /bot-echo/.test(l.url)), "bot's Link-Added confirmation (real url, bot title) excluded by chat name");
 assert.ok(!links.some((l) => /holo\.stdgeo/.test(l.url)), 'Holocene-internal host (holo.stdgeo.com) skipped');
 assert.equal(isSkippedUrl('https://holo.stdgeo.com/x'), true, 'isSkippedUrl: holo.stdgeo.com');
 assert.equal(isSkippedUrl('https://hackaday.com/x'), false, 'isSkippedUrl: real host not skipped');

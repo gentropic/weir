@@ -1425,11 +1425,18 @@ export class App {
   // resurface on a re-import. Saved (starred) items are exempt.
   async cleanSavedLinks() {
     const sub = document.getElementById('view-sub');
-    const ids = this.store.query({ feed_id: 'saved' }).filter((it) => isSkippedUrl(it.url)).map((it) => it.id);
-    if (!ids.length) { if (sub) sub.textContent = 'no non-content links to remove'; return; }
+    // Junk that slipped in: skipped hosts (holo.stdgeo.com / archive / telegram),
+    // and bot "Link Added" confirmations imported before the bot was filtered out
+    // (these carry a real url but the bot's confirmation text as the title — a dup
+    // of your own saved link, which keeps its proper version + resolves normally).
+    const botConfirm = (t) => /Link ID:\s*\d/.test(t || '') || /^[\s✅]*Link Added\b/.test(t || '');
+    const ids = this.store.query({ feed_id: 'saved' })
+      .filter((it) => isSkippedUrl(it.url) || botConfirm(it.title))
+      .map((it) => it.id);
+    if (!ids.length) { if (sub) sub.textContent = 'no non-content / bot links to remove'; return; }
     const { pruned } = await this.store.prune(ids, 'non-content-link');
     this.renderAll();
-    if (sub) sub.textContent = `removed ${pruned} non-content link${pruned === 1 ? '' : 's'}`;
+    if (sub) sub.textContent = `removed ${pruned} non-content / bot link${pruned === 1 ? '' : 's'}`;
   }
 
   // Resolve + fetch metadata (thumbnail/title/excerpt) for one saved link right
