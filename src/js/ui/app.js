@@ -164,6 +164,7 @@ export class App {
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
+    document.getElementById('resolver-status')?.addEventListener('click', () => { this.catFilter = null; this.route = null; this.smartView = null; this.feedFilter = 'saved'; this.renderAll(); });
     document.getElementById('review-status')?.addEventListener('click', () => this.openReview());
     document.getElementById('review-close')?.addEventListener('click', () => { document.getElementById('review-overlay').hidden = true; });
     document.getElementById('review-body')?.addEventListener('click', (e) => {
@@ -1580,6 +1581,22 @@ export class App {
     if (!st || (!st.current && !st.queued)) { el.textContent = ''; return; }
     const cur = st.current ? `recovering ${st.current.idx}/${st.current.total}` : 'recovery queued';
     el.textContent = `⏪ ${cur}${st.queued ? ` · ${st.queued} waiting` : ''}`;
+  }
+
+  // Saved-link resolver tally in the status bar (flight-deck principle: never
+  // wonder what the overnight drip did). Compact line + a hover tooltip with the
+  // failure-reason breakdown + recent parked links; click opens Saved Links.
+  renderResolverStatus(st) {
+    const el = document.getElementById('resolver-status'); if (!el) return;
+    const lg = st && st.log;
+    const pending = (st && st.pending) || 0;
+    if (!lg || (!lg.resolved && !lg.parked && !pending)) { el.textContent = ''; return; }
+    el.textContent = `⧉ ${lg.resolved}✓${lg.parked ? ` ${lg.parked}⊘` : ''}${pending ? ` · ${pending}…` : ''}`;
+    const reasons = Object.entries(lg.reasons || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${v}`).join(', ');
+    const recent = (lg.recent || []).slice(0, 5).map((r) => `  ${r.host} (${r.reason})`).join('\n');
+    el.title = `Saved-link resolver — click to open Saved Links\nresolved ${lg.resolved} · parked ${lg.parked} · ${pending} pending`
+      + (reasons ? `\nfailure reasons — ${reasons}` : '')
+      + (recent ? `\nrecent parked:\n${recent}` : '');
   }
 
   renderNotify() {

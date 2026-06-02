@@ -126,6 +126,8 @@ async function boot() {
   const linkResolver = new LinkResolver(store, { fetch: gcuFetch, extract: extractArticle });
   app.linkResolver = linkResolver;
   await linkResolver._loadLog();   // resume the run log (so the overnight tally survives reloads)
+  linkResolver.on((st) => app.renderResolverStatus(st));
+  app.renderResolverStatus(linkResolver.status());
   linkResolver.kick();
 
   window.__weir = { store, poller, router, drip, retainer, linkResolver, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),

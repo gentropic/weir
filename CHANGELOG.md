@@ -19,6 +19,10 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
   (WebMCP) reads the whole tally so it can be reviewed from a Claude session. The
   log saves are throttled (~once/30s, forced on stop) so an all-night FSAA run
   isn't a write every tick.
+- **Status-bar indicator** (`⧉ 1140✓ 60⊘ · 200…`) — resolved / parked / pending at
+  a glance, **hover** for the failure-reason breakdown + recent parked links,
+  **click** to jump to Saved Links. So you can just *look* in the morning instead
+  of querying.
 
 ### Storage: catalog cards packed into shards (was one file per card) — 2026-06-02
 
