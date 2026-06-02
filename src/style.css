@@ -387,3 +387,13 @@ body {
 .rv-actions { display: flex; gap: 8px; margin-top: 6px; }
 .rv-actions button { font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg-muted); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 4px 10px; cursor: pointer; }
 .rv-actions button:hover { color: var(--au-action); border-color: var(--au-action); }
+.rv-row { padding: 10px 8px; border-radius: var(--au-radius); }
+.rv-row.sel { background: var(--sw-bg-bright); box-shadow: inset 2px 0 0 var(--au-action); }
+.rv-editor { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 6px 0; align-items: flex-end; }
+.rv-field { display: flex; flex-direction: column; gap: 2px; }
+.rv-field span { font-family: var(--au-font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--au-fg-soft); }
+.rv-field input { width: 150px; padding: 3px 6px; background: var(--au-bg); border: 1px solid var(--au-border); border-radius: var(--au-radius); color: var(--au-fg); font-family: var(--au-font-mono); font-size: 11px; }
+.rv-field input:focus { outline: none; border-color: var(--au-action); }
+.rv-edit-actions { display: flex; gap: 8px; }
+.rv-edit-actions button { font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg-muted); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 4px 10px; cursor: pointer; }
+.rv-edit-actions button:hover { color: var(--au-action); border-color: var(--au-action); }

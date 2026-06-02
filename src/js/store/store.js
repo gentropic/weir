@@ -665,6 +665,19 @@ export class Store {
   }
   async catalogCount() { return this.cards.size; }
 
+  // Discard one cataloger card (reject from the review queue): drop the card +
+  // un-stamp the item so it's uncataloged again (re-cataloguable, or left out).
+  // Mirrors clearCatalog for a single item; items/content/reading state untouched.
+  async uncatalogItem(id) {
+    const it = this.items.get(String(id)); if (!it || !it.glass_id) return null;
+    const gid = it.glass_id;
+    if (this.cards.has(gid)) { this.cards.delete(gid); this._markCardDirty(gid); }
+    delete it.glass_id;
+    this._markFeedDirty(it.feed_id);
+    this.emit('catalog', { id: gid, discarded: true });
+    return { discarded: gid };
+  }
+
   // Wipe the catalog: delete every card file and un-stamp every item, so a fresh
   // catalog pass starts clean. (Cleanup for corruption like the seq-001 collision;
   // safe to re-run.) Does NOT touch items, content, usage, or the archive.

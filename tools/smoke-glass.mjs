@@ -62,4 +62,19 @@ const re = new Store(store.vfs); await re._hydrate();
 assert.equal(re.getItem('p1').glass_id, store.getItem('p1').glass_id, 'glass_id survived reload');
 assert.equal(await re.catalogCount(), 2, 'cards survived reload');
 
+// ── review-queue verbs: markCardReviewed(facets) approves+corrects; uncatalogItem discards ──
+const p1gid = store.getItem('p1').glass_id;
+const reviewed = await store.markCardReviewed(p1gid, { facets: { domain: ['geostatistics'], stance: [] } });
+assert.equal(reviewed.glass.needs_review, false, 'approve clears needs_review');
+assert.equal(reviewed.glass.reviewer, 'human', 'stamps human reviewer');
+assert.deepEqual(reviewed.facets.domain, ['geostatistics'], 'facet correction applied');
+assert.deepEqual(reviewed.facets.form, ['paper'], 'untouched facets preserved');
+// discard (reject): card gone, item un-stamped, re-cataloguable
+const before = await store.catalogCount();
+const disc = await store.uncatalogItem('v1');
+assert.ok(disc && disc.discarded, 'uncatalogItem reports the discarded card');
+assert.equal(store.getItem('v1').glass_id, undefined, 'item un-stamped after discard');
+assert.equal(await store.catalogCount(), before - 1, 'one card removed');
+assert.equal(await store.uncatalogItem('v1'), null, 'discarding an uncataloged item is a no-op');
+
 console.log('glass smoke ok:', JSON.stringify({ created: r1.created, cards: await store.catalogCount() }));

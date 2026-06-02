@@ -167,13 +167,19 @@ export class App {
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
     document.getElementById('resolver-status')?.addEventListener('click', () => { this.catFilter = null; this.route = null; this.smartView = null; this.feedFilter = 'saved'; this.renderAll(); });
     document.getElementById('review-status')?.addEventListener('click', () => this.openReview());
-    document.getElementById('review-close')?.addEventListener('click', () => { document.getElementById('review-overlay').hidden = true; });
+    document.getElementById('review-close')?.addEventListener('click', () => this._reviewClose());
     document.getElementById('review-body')?.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-rvact]'); if (!btn) return;
-      const row = btn.closest('.rv-row'); const id = row && row.dataset.id; if (!id) return;
+      const btn = e.target.closest('[data-rvact]');
+      const row = e.target.closest('.rv-row'); if (!row) return;
+      const id = row.dataset.id; if (!id) return;
+      if (!btn) { const i = this._reviewRows().indexOf(row); if (i >= 0) this._reviewSelect(i); return; }   // click a row → select it
       const act = btn.dataset.rvact;
       if (act === 'ok') this.markReviewed(id);
       else if (act === 'recat') this.catalogItem(id).then(() => this.markReviewed(id));
+      else if (act === 'edit') this.reviewEdit(id);
+      else if (act === 'save') this.reviewSaveEdit(id);
+      else if (act === 'cancel') this._reviewCancelEdit();
+      else if (act === 'discard') this.discardCard(id);
       else if (act === 'open') { const it = this.store.getItem(id); if (it && it.url) window.open(it.url, '_blank', 'noopener'); }
     });
     document.getElementById('health-close')?.addEventListener('click', () => this.closeHealth());
@@ -1190,31 +1196,132 @@ export class App {
     el.textContent = n ? `⚑ ${n} to review` : '';
     el.classList.toggle('clickable', n > 0);
   }
+  // Editable (LLM-language) facet axes — the ones worth correcting by hand;
+  // temporal/form/provenance are deterministic so they're shown, not edited.
+  static get RV_EDIT() { return ['domain', 'entity', 'process', 'method', 'scale', 'spatial', 'stance']; }
+
+  _reviewRows() { return [...document.querySelectorAll('#review-body .rv-row')]; }
+
+  _reviewRowHtml(id) {
+    const it = this.store.getItem(id); if (!it) return '';
+    const feed = this.store.getFeed(it.feed_id);
+    const f = (this._cardFacets && this._cardFacets.get(id)) || {};
+    const chips = FACETS.flatMap((k) => (f[k] || []).map((t) => `<span class="rv-chip">${escapeHtml(k[0])}:${escapeHtml(t)}</span>`)).slice(0, 16).join('');
+    return `<div class="rv-row" data-id="${escapeHtml(id)}"><div class="rv-head"><span class="pill ${escapeHtml(it.type)}">${escapeHtml(it.type)}</span>`
+      + `<span class="rv-name">${escapeHtml(it.title || '(untitled)')}</span><span class="rv-feed">${escapeHtml(feed ? feed.name : it.feed_id)}</span></div>`
+      + `<div class="rv-facets">${chips || '<span class="dim">no facets</span>'}</div>`
+      + `<div class="rv-actions"><button data-rvact="ok">✓ Approve</button><button data-rvact="edit">✎ Edit</button>`
+      + `<button data-rvact="recat">⟳ Re-catalog</button><button data-rvact="discard">✕ Discard</button>`
+      + (it.url ? `<button data-rvact="open">Open ↗</button>` : '') + `</div></div>`;
+  }
+
+  // Keyboard-first triage queue: j/k move · a/Enter approve · e edit facets ·
+  // r re-catalog · x discard · o open · Esc close. Pairs the LLM's draft cards
+  // with a fast human confirm/correct pass — the other half of co-curation.
   openReview() {
     const ensure = (this._cardReview && this._cardReview.size) ? Promise.resolve() : this.loadCardFacets();
     ensure.then(() => {
       const ids = this._reviewIds().slice(0, 150);
-      const body = ids.map((id) => {
-        const it = this.store.getItem(id); if (!it) return '';
-        const feed = this.store.getFeed(it.feed_id);
-        const f = (this._cardFacets && this._cardFacets.get(id)) || {};
-        const chips = FACETS.flatMap((k) => (f[k] || []).map((t) => `<span class="rv-chip">${escapeHtml(k[0])}:${escapeHtml(t)}</span>`)).slice(0, 14).join('');
-        return `<div class="rv-row" data-id="${escapeHtml(id)}"><div class="rv-head"><span class="pill ${escapeHtml(it.type)}">${escapeHtml(it.type)}</span>`
-          + `<span class="rv-name">${escapeHtml(it.title || '(untitled)')}</span><span class="rv-feed">${escapeHtml(feed ? feed.name : it.feed_id)}</span></div>`
-          + `<div class="rv-facets">${chips || '<span class="dim">no facets</span>'}</div>`
-          + `<div class="rv-actions"><button data-rvact="ok">✓ Looks good</button><button data-rvact="recat">⟳ Re-catalog</button>`
-          + (it.url ? `<button data-rvact="open">Open ↗</button>` : '') + `</div></div>`;
-      }).join('') || '<div class="hint">Nothing flagged for review — the cataloger was confident on everything loaded.</div>';
-      document.getElementById('review-body').innerHTML = body;
+      document.getElementById('review-body').innerHTML = ids.map((id) => this._reviewRowHtml(id)).filter(Boolean).join('')
+        || '<div class="hint">Nothing flagged for review — the cataloger was confident on everything loaded.</div>';
       document.getElementById('review-overlay').hidden = false;
+      this._reviewSel = 0;
+      if (this._reviewRows().length) this._reviewSelect(0);
+      if (!this._reviewKeyFn) { this._reviewKeyFn = (e) => this._reviewKey(e); document.addEventListener('keydown', this._reviewKeyFn, true); }
     });
   }
+
+  _reviewClose() {
+    document.getElementById('review-overlay').hidden = true;
+    if (this._reviewKeyFn) { document.removeEventListener('keydown', this._reviewKeyFn, true); this._reviewKeyFn = null; }
+  }
+
+  _reviewSelect(i) {
+    const rows = this._reviewRows(); if (!rows.length) return;
+    const n = Math.max(0, Math.min(i, rows.length - 1));
+    this._reviewSel = n;
+    rows.forEach((r, j) => r.classList.toggle('sel', j === n));
+    rows[n].scrollIntoView({ block: 'nearest' });
+  }
+
+  // After a row leaves the queue (approved/discarded), keep a valid selection;
+  // close + report when the queue empties.
+  _reviewReselect() {
+    const ov = document.getElementById('review-overlay'); if (!ov || ov.hidden) return;
+    const rows = this._reviewRows();
+    if (!rows.length) { this._reviewClose(); this._catStatus('review queue clear ✓'); return; }
+    this._reviewSelect(Math.min(this._reviewSel || 0, rows.length - 1));
+  }
+
+  _reviewKey(e) {
+    const ov = document.getElementById('review-overlay'); if (!ov || ov.hidden) return;
+    const typing = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (typing) this._reviewCancelEdit(); else this._reviewClose(); return; }
+    if (typing) {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); const row = e.target.closest('.rv-row'); if (row) this.reviewSaveEdit(row.dataset.id); }
+      return;   // let other keys type into the facet inputs
+    }
+    e.stopPropagation();   // modal: don't leak keys to the main stream handler
+    const rows = this._reviewRows(); if (!rows.length) return;
+    const cur = this._reviewSel || 0;
+    const sel = rows[Math.max(0, Math.min(cur, rows.length - 1))];
+    const idOf = () => sel && sel.dataset.id;
+    if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); this._reviewSelect(cur + 1); }
+    else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); this._reviewSelect(cur - 1); }
+    else if (e.key === 'a' || e.key === 'Enter') { e.preventDefault(); const id = idOf(); if (id) this.markReviewed(id); }
+    else if (e.key === 'e') { e.preventDefault(); const id = idOf(); if (id) this.reviewEdit(id); }
+    else if (e.key === 'r') { e.preventDefault(); const id = idOf(); if (id) this.catalogItem(id).then(() => this.markReviewed(id)); }
+    else if (e.key === 'x') { e.preventDefault(); const id = idOf(); if (id) this.discardCard(id); }
+    else if (e.key === 'o') { e.preventDefault(); const it = idOf() && this.store.getItem(idOf()); if (it && it.url) window.open(it.url, '_blank', 'noopener'); }
+  }
+
+  // Swap the selected row's facet chips for an inline editor (one input per
+  // editable axis). Save → markCardReviewed({facets}) approves AND corrects.
+  reviewEdit(id) {
+    const row = this._reviewRows().find((r) => r.dataset.id === id); if (!row) return;
+    const f = (this._cardFacets && this._cardFacets.get(id)) || {};
+    const fields = App.RV_EDIT.map((k) => `<label class="rv-field"><span>${k}</span>`
+      + `<input data-facet="${k}" value="${escapeHtml((f[k] || []).join(', '))}"></label>`).join('');
+    row.querySelector('.rv-facets').innerHTML = `<div class="rv-editor">${fields}`
+      + `<div class="rv-edit-actions"><button data-rvact="save">Save ✓</button><button data-rvact="cancel">Cancel</button></div></div>`;
+    const first = row.querySelector('.rv-editor input'); if (first) { first.focus(); first.select(); }
+  }
+
+  _reviewCancelEdit() {
+    const editing = this._reviewRows().find((r) => r.querySelector('.rv-editor')); if (!editing) return;
+    const f = (this._cardFacets && this._cardFacets.get(editing.dataset.id)) || {};
+    const chips = FACETS.flatMap((k) => (f[k] || []).map((t) => `<span class="rv-chip">${escapeHtml(k[0])}:${escapeHtml(t)}</span>`)).slice(0, 16).join('');
+    editing.querySelector('.rv-facets').innerHTML = chips || '<span class="dim">no facets</span>';
+  }
+
+  async reviewSaveEdit(id) {
+    const row = this._reviewRows().find((r) => r.dataset.id === id); if (!row) return;
+    const it = this.store.getItem(id); if (!it || !it.glass_id) return;
+    const facets = {};
+    for (const inp of row.querySelectorAll('.rv-editor input[data-facet]')) facets[inp.dataset.facet] = inp.value.split(',').map((s) => s.trim()).filter(Boolean);
+    try { await this.store.markCardReviewed(it.glass_id, { facets }); } catch (e) { this._catStatus(`save failed: ${e.message}`); return; }
+    if (this._cardFacets) this._cardFacets.set(id, { ...(this._cardFacets.get(id) || {}), ...facets });
+    if (this._cardReview && this._cardReview.get(id)) this._cardReview.get(id).needs_review = false;
+    this.renderReviewStatus(); row.remove(); this._reviewReselect();
+  }
+
+  async discardCard(id) {
+    const it = this.store.getItem(id); if (!it || !it.glass_id) return;
+    try { await this.store.uncatalogItem(id); } catch (e) { this._catStatus(`discard failed: ${e.message}`); return; }
+    if (this._cardFacets) this._cardFacets.delete(id);
+    if (this._cardReview) this._cardReview.delete(id);
+    this.renderReviewStatus();
+    const row = this._reviewRows().find((r) => r.dataset.id === id); if (row) row.remove();
+    this._reviewReselect();
+  }
+
   async markReviewed(id) {
     const it = this.store.getItem(id); if (!it || !it.glass_id) return;
     try { await this.store.markCardReviewed(it.glass_id); } catch (e) { this._catStatus(`review failed: ${e.message}`); return; }
     if (this._cardReview && this._cardReview.get(id)) this._cardReview.get(id).needs_review = false;
     this.renderReviewStatus();
-    for (const r of document.querySelectorAll('#review-body .rv-row')) if (r.dataset.id === id) { r.remove(); break; }
+    const row = this._reviewRows().find((r) => r.dataset.id === id); if (row) row.remove();
+    this._reviewReselect();
   }
 
   closeHealth() { document.getElementById('health-overlay').hidden = true; }
