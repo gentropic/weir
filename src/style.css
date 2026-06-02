@@ -203,6 +203,27 @@ body {
 .palette-empty { padding: 18px; text-align: center; font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg-soft); }
 .palette-hintbar { flex-shrink: 0; border-top: 1px solid var(--au-border); padding: 6px 14px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); letter-spacing: 0.02em; }
 .palette-hintbar b { color: var(--au-fg-muted); font-weight: 700; }
+
+/* ── Tag chips (clickable to filter) + provenance glyph ── */
+.tag[data-tag] { cursor: pointer; }
+.tag[data-tag]:hover { color: var(--au-action); border-color: var(--au-action); }
+.tag-src { font-size: 8px; margin-right: 3px; vertical-align: middle; }
+.tag-src.h { color: var(--au-action); }
+.tag-src.l { color: var(--au-success); }
+.tag-src.r { color: var(--au-fg-soft); }
+
+/* ── Tag editor (keyboard `t`) ── */
+.tag-editor { width: min(460px, 92vw); background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg); box-shadow: 0 18px 60px rgba(0,0,0,0.55); padding: 14px; }
+.te-title { font-size: 13px; color: var(--au-fg-muted); margin-bottom: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.te-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; min-height: 22px; }
+.te-chip { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 2px 7px; cursor: pointer; }
+.te-chip:hover { border-color: var(--au-error); }
+.te-chip b { color: var(--au-fg-soft); margin-left: 2px; }
+.te-chip:hover b { color: var(--au-error); }
+.te-empty { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); }
+.te-input { width: 100%; box-sizing: border-box; padding: 8px 10px; background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius); color: var(--au-fg); font-family: var(--au-font-sans); font-size: 13px; }
+.te-input:focus { outline: none; border-color: var(--au-action); }
+.te-hint { margin-top: 8px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
 .ititle { font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--au-fg); }
 .ititle .flag { color: var(--au-action); margin-right: 5px; }
 .iexcerpt { font-size: 13px; color: var(--au-fg-muted); margin-top: 5px; line-height: 1.5; max-width: 70ch; }

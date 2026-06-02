@@ -398,6 +398,37 @@ export class Store {
     return r;
   }
 
+  // ── tagging (shared verb: human via the UI, llm via WebMCP, rule via router) ──
+  // Add a tag to an item, recording WHO applied it in tag_src for provenance. Tags
+  // are searchable (deriveSearchText folds them in), queryable (query({tag})), and
+  // feed the glass `entity` facet on the next catalog. Registers the tag name in
+  // /tags.json so it's offered for autocomplete. Idempotent; returns the item.
+  addTag(id, tag, source = 'human') {
+    const r = this.items.get(String(id)); if (!r) return null;
+    const t = String(tag).trim(); if (!t) return r;
+    if (!r.tags.includes(t)) {
+      r.tags = [...r.tags, t];
+      r.tag_src = { ...(r.tag_src || {}), [t]: source };
+      r.search_text = deriveSearchText(r);
+      this.setTag(t, {});   // register the name (fire-and-forget persist)
+      this._markFeedDirty(r.feed_id);
+      this.emit('item', { id: r.id, patch: { tags: r.tags } });
+    }
+    return r;
+  }
+  removeTag(id, tag) {
+    const r = this.items.get(String(id)); if (!r) return null;
+    const t = String(tag).trim();
+    if (r.tags.includes(t)) {
+      r.tags = r.tags.filter((x) => x !== t);
+      if (r.tag_src) { const ts = { ...r.tag_src }; delete ts[t]; r.tag_src = Object.keys(ts).length ? ts : undefined; }
+      r.search_text = deriveSearchText(r);
+      this._markFeedDirty(r.feed_id);
+      this.emit('item', { id: r.id, patch: { tags: r.tags } });
+    }
+    return r;
+  }
+
   // Bulk mark-read over exactly the items a view/folder/feed shows — reuses the
   // query predicate so scope always matches what's visible.
   markAllRead(opts = {}) {

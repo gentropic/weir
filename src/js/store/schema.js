@@ -106,7 +106,7 @@ export function deriveExcerpt(htmlOrText, n = 300) {
 }
 
 export function deriveSearchText(rec) {
-  return [rec.title, rec.author, rec.excerpt].filter(Boolean).join(' ').toLowerCase();
+  return [rec.title, rec.author, rec.excerpt, ...(rec.tags || [])].filter(Boolean).join(' ').toLowerCase();
 }
 
 // expires_at = published_at + ttl(type, feed); null = never. Saved items never
@@ -138,6 +138,7 @@ export function makeItem(raw, feed) {
     saved: false,
     archived: false,
     tags: Array.isArray(raw.tags) ? [...raw.tags] : [],
+    tag_src: raw.tag_src ? { ...raw.tag_src } : undefined,   // tag → who applied it ('human'|'llm'|'rule')
     media: raw.media || undefined,
     structured: raw.structured || undefined,
     has_content: !!(raw.content && String(raw.content).length),

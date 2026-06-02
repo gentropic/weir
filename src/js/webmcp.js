@@ -160,6 +160,21 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return projItem(store, store.getItem(it.id), true);
   }
 
+  // Add/remove tags on an item. Tags applied here are stamped source:'llm' (so the
+  // UI can show who tagged what); the user's own tags are source:'human'. Searchable
+  // + queryable immediately; feed the glass `entity` facet on the next catalog.
+  async function tagItem(input = {}) {
+    const it = input.id != null && store.getItem(String(input.id));
+    if (!it) throw new Error(`No item with id "${input.id}".`);
+    const add = [].concat(input.add || []).filter(Boolean);
+    const remove = [].concat(input.remove || []).filter(Boolean);
+    if (!add.length && !remove.length) throw new Error('Provide tags to add and/or remove.');
+    for (const t of add) store.addTag(it.id, t, 'llm');
+    for (const t of remove) store.removeTag(it.id, t);
+    await store.flush();
+    return projItem(store, store.getItem(it.id), true);
+  }
+
   // Catalog one item with the configured LLM now → returns its enriched facets.
   async function catalogItem(input = {}) {
     if (!app || !app.catalogItem) throw new Error('cataloging is only available in the running app');
@@ -313,7 +328,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { queued, pending: r.status().pending };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -385,6 +400,18 @@ const TOOLS = [
       }, required: ['id'],
     },
     annotations: { title: 'Set item state' },
+  },
+  {
+    name: 'weir_tagItem', fn: 'tagItem',
+    description: "Add and/or remove tags on an item. Tags you apply here are stamped source:'llm' (the UI distinguishes them from the user's 'human' tags). Tags are immediately searchable + queryable (weir_queryItems can filter by them later) and feed the glass `entity` facet on the next catalog. Returns the updated item with its tag list.",
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'Item id (from weir_queryItems)' },
+        add: { type: 'array', items: { type: 'string' }, description: 'Tags to add' },
+        remove: { type: 'array', items: { type: 'string' }, description: 'Tags to remove' },
+      }, required: ['id'],
+    },
+    annotations: { title: 'Tag an item' },
   },
   {
     name: 'weir_catalogItem', fn: 'catalogItem',

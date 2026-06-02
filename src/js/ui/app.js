@@ -811,7 +811,9 @@ export class App {
     const cls = `item${it.id === this.selectedId ? ' sel' : ''}${it.read ? ' read' : ''}${it.id === this.expandedId ? ' expanded' : ''}`;
     const meta = [feed ? escapeHtml(feed.name) : escapeHtml(it.feed_id), it.author && escapeHtml(it.author),
       `<span title="${escapeHtml(isoTitle(it.published_at))}">${relativeTime(it.published_at)}</span>`].filter(Boolean).join('<span class="dot-sep">·</span>');
-    const tags = (it.tags || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join('')
+    const tsrc = it.tag_src || {};
+    const tagGlyph = { human: '<span class="tag-src h" title="your tag">●</span>', llm: '<span class="tag-src l" title="tagged by Claude">◆</span>', rule: '<span class="tag-src r" title="rule-applied">⋔</span>' };
+    const tags = (it.tags || []).map((t) => `<span class="tag" data-tag="${escapeHtml(t)}" title="filter by ${escapeHtml(t)}">${tagGlyph[tsrc[t]] || ''}${escapeHtml(t)}</span>`).join('')
       + (isWrappedUrl(it.url) ? '<span class="tag unresolved" title="Shortened/share link — resolving to its real URL in the background">⧉ unresolved</span>' : '');
     const saved = it.saved ? '<span class="flag">★</span>' : '';
 
@@ -898,6 +900,8 @@ export class App {
     const row = e.target.closest('.item');
     if (!row) return;
     const id = row.dataset.id;
+    const tagEl = e.target.closest('.tag[data-tag]');
+    if (tagEl) { e.stopPropagation(); this.filterByTag(tagEl.dataset.tag); return; }
     if (btn) { e.stopPropagation(); this.doAct(btn.dataset.act, id); return; }
     if (e.metaKey || e.ctrlKey) { const it = this.store.getItem(id); if (it?.url) window.open(it.url, '_blank', 'noopener'); return; }
     if (e.target.closest('.iexpand')) return;   // clicks inside the open article (links, text) — leave alone
@@ -1020,6 +1024,7 @@ export class App {
       { sep: true },
       { label: it.saved ? 'Unsave' : 'Save', onClick: () => this.doAct('save', id) },
       { label: it.read ? 'Mark unread' : 'Mark read', onClick: () => this.doAct('read', id) },
+      { label: 'Tag…', onClick: () => this.openTagEditor(id) },
       { label: it.archived ? 'Unarchive' : 'Archive', onClick: () => { if (it.archived) { this.store.setState(id, { archived: false }); this.reflectItem(id); } else this.doAct('archive', id); } },
       { sep: true },
       { label: it.glass_id ? 'Re-catalog with AI' : 'Catalog with AI', onClick: () => this.catalogItem(id) },
@@ -1315,6 +1320,55 @@ export class App {
   setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   selectFeed(id) { this.feedFilter = id; this.view = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
 
+  // Filter the stream to one tag — a transient (unsaved) smart view, so it reuses
+  // the existing smartView query plumbing + active-state handling. "Save view" in
+  // the search box turns an ad-hoc tag filter into a permanent one.
+  filterByTag(tag) {
+    this.smartView = { id: `__tag:${tag}`, name: `#${tag}`, query: { tag }, transient: true };
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null;
+    this.selectedId = null; this.expandedId = null; this.renderAll();
+  }
+
+  // The human side of the tagging loop: a small editor over the selected item's
+  // tags. Add (Enter, autocompleting against tags we already use) or remove (×).
+  // Tags are stamped source:'human'; the WebMCP weir_tagItem path stamps 'llm'.
+  openTagEditor(id) {
+    const it = this.store.getItem(id); if (!it) return;
+    document.getElementById('tag-editor')?.remove();
+    const datalist = Object.keys(this.store.getTags() || {}).sort()
+      .map((t) => `<option value="${escapeHtml(t)}">`).join('');
+    const overlay = document.createElement('div');
+    overlay.id = 'tag-editor'; overlay.className = 'palette-overlay';
+    overlay.innerHTML = `<div class="tag-editor" role="dialog" aria-label="Edit tags">`
+      + `<div class="te-title">${escapeHtml((it.title || '(untitled)').slice(0, 90))}</div>`
+      + `<div class="te-chips"></div>`
+      + `<input class="te-input" list="te-sugg" placeholder="add a tag, then Enter…" autocomplete="off" autocapitalize="off" spellcheck="false">`
+      + `<datalist id="te-sugg">${datalist}</datalist>`
+      + `<div class="te-hint">Enter adds · click × to remove · Esc closes</div></div>`;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector('.te-input');
+    const chipsEl = overlay.querySelector('.te-chips');
+    const render = () => {
+      const cur = this.store.getItem(id) || it;
+      chipsEl.innerHTML = (cur.tags || []).length
+        ? (cur.tags).map((t) => `<span class="te-chip" data-rm="${escapeHtml(t)}">${escapeHtml(t)} <b>×</b></span>`).join('')
+        : '<span class="te-empty">no tags yet</span>';
+    };
+    const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+    document.addEventListener('keydown', onKey, true);
+    overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) close(); });
+    chipsEl.addEventListener('click', (e) => { const c = e.target.closest('[data-rm]'); if (!c) return; this.store.removeTag(id, c.dataset.rm); this.store.flush(); render(); this._refreshRow(id); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const v = input.value.trim();
+      if (v) { this.store.addTag(id, v, 'human'); this.store.flush(); input.value = ''; render(); this._refreshRow(id); }
+    });
+    render();
+    input.focus();
+  }
+
   // ── command palette (Cmd/Ctrl-K) ── A flat, fuzzy launcher over every
   // navigation target (views, folders, sources, routes, smart views) and the
   // actions otherwise buried in context menus. Built fresh on each open so it
@@ -1337,6 +1391,7 @@ export class App {
       { label: 'Catalog visible items with AI', kind: 'Command', run: () => this.catalogVisible() },
       { label: 'Catalog all items with AI', kind: 'Command', run: () => this.catalogAll() },
       { label: 'Review queue', kind: 'Command', run: () => this.openReview() },
+      this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
       { label: 'Re-fetch weak-title links', kind: 'Command', run: () => this.reEnrichWeak() },
       { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },
@@ -1399,6 +1454,7 @@ export class App {
       case 's': if (this.selectedId) this.doAct('save', this.selectedId); break;
       case 'e': if (this.selectedId) { const cur = this.selectedId; this.moveSelection(1); this.doAct('archive', cur); } break;
       case 'o': if (this.selectedId) this.doAct('open', this.selectedId); break;
+      case 't': if (this.selectedId) { e.preventDefault(); this.openTagEditor(this.selectedId); } break;
       case 'g': this._g = true; setTimeout(() => { this._g = false; }, 800); break;
       case '/': e.preventDefault(); this.searchEl.focus(); break;
       default: break;

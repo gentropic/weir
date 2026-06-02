@@ -87,6 +87,15 @@ assert.equal(store.getItem('a1').saved, false, 'reversible');
 await assert.rejects(tools.setState({ id: 'a1' }), /at least one/, 'needs a field');
 await assert.rejects(tools.setState({ id: 'ghost', read: true }), /No item/);
 
+// ── mutations: tagItem (add/remove, llm provenance) ──
+const tg = await tools.tagItem({ id: 'a1', add: ['ml', 'geo'] });
+assert.ok(tg.tags.includes('ml') && tg.tags.includes('geo'), 'tagItem added tags');
+assert.equal(store.getItem('a1').tag_src.ml, 'llm', 'WebMCP tags stamped source:llm');
+await tools.tagItem({ id: 'a1', remove: ['geo'] });
+assert.ok(!store.getItem('a1').tags.includes('geo') && store.getItem('a1').tags.includes('ml'), 'tagItem removed only the named tag');
+await assert.rejects(tools.tagItem({ id: 'a1' }), /add and\/or remove/, 'needs add or remove');
+await assert.rejects(tools.tagItem({ id: 'ghost', add: ['x'] }), /No item/);
+
 // ── catalog control (mock app) ──
 const calls = [];
 const mockApp = {

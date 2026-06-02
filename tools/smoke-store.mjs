@@ -48,6 +48,24 @@ assert.equal(store.getItem('arxiv:2026.001').read, true, 'read preserved on re-f
 assert.equal(store.getItem('arxiv:2026.002').saved, true, 'saved preserved on re-fetch');
 assert.match(store.getItem('arxiv:2026.003').title, /v2/, 'mutable field updated');
 
+// ── tagging: shared verb with provenance (human / llm), idempotent, queryable ──
+store.addTag('arxiv:2026.001', 'kriging', 'human');
+store.addTag('arxiv:2026.001', 'kriging', 'human');   // idempotent
+store.addTag('arxiv:2026.002', 'geo', 'llm');
+assert.deepEqual(store.getItem('arxiv:2026.001').tags, ['kriging'], 'tag added once (idempotent)');
+assert.equal(store.getItem('arxiv:2026.001').tag_src.kriging, 'human', 'human provenance recorded');
+assert.equal(store.getItem('arxiv:2026.002').tag_src.geo, 'llm', 'llm provenance recorded');
+assert.equal(store.query({ tag: 'kriging' }).length, 1, 'query by tag');
+assert.match(store.getItem('arxiv:2026.001').search_text, /kriging/, 'tag folded into search_text');
+// a re-fetch must NOT drop tags or their provenance (the dedup gotcha)
+await store.upsertItems([{ ...RAW[0], title: 'changed again' }]);
+assert.deepEqual(store.getItem('arxiv:2026.001').tags, ['kriging'], 'tags survive re-fetch');
+assert.equal(store.getItem('arxiv:2026.001').tag_src.kriging, 'human', 'provenance survives re-fetch');
+// remove clears the provenance entry (and the map when empty)
+store.removeTag('arxiv:2026.002', 'geo');
+assert.deepEqual(store.getItem('arxiv:2026.002').tags, [], 'tag removed');
+assert.equal(store.getItem('arxiv:2026.002').tag_src, undefined, 'tag_src cleared when last tag removed');
+
 // Prune one, then prove it cannot be resurrected by a later poll.
 assert.deepEqual(await store.prune(['arxiv:2026.003']), { pruned: 1 }, 'prune one');
 assert.equal(store.getItem('arxiv:2026.003'), null, 'pruned item gone');
@@ -61,6 +79,8 @@ await reopened._hydrate();
 assert.equal(reopened.items.size, 2, 'rehydrated item count');
 assert.equal(reopened.archived.has('arxiv:2026.003'), true, 'tombstone survived reload');
 assert.equal(reopened.getItem('arxiv:2026.001').read, true, 'read flag survived reload');
+assert.deepEqual(reopened.getItem('arxiv:2026.001').tags, ['kriging'], 'tags survived reload');
+assert.equal(reopened.getItem('arxiv:2026.001').tag_src?.kriging, 'human', 'tag provenance survived reload');
 assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content survived reload');
 
 // clearFeedItems: drop a feed's items without tombstoning (feed re-point),

@@ -66,7 +66,7 @@ export class Router {
       catch (e) { console.warn(`routing rule "${rule.name || '?'}" action error:`, e.message); continue; }
       if (!action) continue;
 
-      if (action.tag) for (const t of [].concat(action.tag)) if (t && !item.tags.includes(t)) item.tags.push(t);
+      if (action.tag) for (const t of [].concat(action.tag)) if (t && !item.tags.includes(t)) { item.tags.push(t); (item.tag_src ||= {})[t] = 'rule'; }
       if (action.mark) for (const m of [].concat(action.mark)) { if (m === 'read') item.read = true; if (m === 'saved') item.saved = true; }
       if (action.retain !== undefined && out.retain === undefined) out.retain = action.retain;
       if (action.route && out.route === undefined) out.route = action.route;
