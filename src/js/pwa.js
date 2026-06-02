@@ -12,17 +12,33 @@ export function setAutoCheck(value) {
   navigator.serviceWorker?.controller?.postMessage({ type: 'weir:set-auto-check', value: !!value });
 }
 
-// Ask the SW to revalidate the shell now; resolves when it replies. If a new
-// build is found the SW posts weir:update-available → the toast shows.
-export function checkForUpdateNow() {
-  return new Promise((resolve) => {
-    const ctrl = navigator.serviceWorker?.controller;
-    if (!ctrl) { resolve(null); return; }
+// Check for a shell update. Robust to the page not currently being CONTROLLED by
+// the SW — which is a normal state for an installed PWA (a cold start, or the
+// browser evicting the idle worker), NOT "no service worker". An uncontrolled
+// page loaded straight from the network, so it's already current; a reload just
+// re-attaches the worker. Returns { state }:
+//   unsupported  — no SW capability (file:// / unsupported browser)
+//   none         — no SW registered yet (reload once to register)
+//   waiting      — a new worker is installed + waiting (reload to apply)
+//   uncontrolled — SW registered but not driving this tab (already latest; reload to attach)
+//   checked      — controlling; asked it to revalidate the shell (toast if changed)
+export async function checkForUpdateNow() {
+  if (!('serviceWorker' in navigator) || location.protocol === 'file:') return { state: 'unsupported' };
+  let reg = null;
+  try { reg = await navigator.serviceWorker.getRegistration(); } catch { /* ignore */ }
+  if (!reg) return { state: 'none' };
+  if (reg.waiting) return { state: 'waiting' };
+  try { await reg.update(); } catch { /* re-check sw.js; ignore failures */ }
+  if (reg.waiting) return { state: 'waiting' };
+  const ctrl = navigator.serviceWorker.controller;
+  if (!ctrl) return { state: 'uncontrolled' };
+  await new Promise((resolve) => {
     const ch = new MessageChannel();
-    ch.port1.onmessage = (e) => { if (e.data?.type === 'weir:check-complete') resolve(e.data.at); };
+    ch.port1.onmessage = (e) => { if (e.data?.type === 'weir:check-complete') resolve(); };
     ctrl.postMessage({ type: 'weir:check-now' }, [ch.port2]);
-    setTimeout(() => resolve(null), 8000);   // don't hang if the SW is silent
+    setTimeout(resolve, 8000);   // don't hang if the SW is silent
   });
+  return { state: 'checked' };
 }
 
 export function initPwa() {

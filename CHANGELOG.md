@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### PWA: "check now" is honest about an uncontrolled tab — 2026-06-02
+
+- "Check for updates" keyed entirely off `navigator.serviceWorker.controller`,
+  which is **null whenever the tab isn't currently controlled** — a *normal* state
+  for an installed PWA (cold start, or the browser evicting the idle worker). So it
+  wrongly reported **"no service worker (serve over https / install)"** for a
+  perfectly-installed PWA. Now `checkForUpdateNow` inspects the *registration*
+  directly (+ calls `reg.update()`) and reports the real state: `unsupported` /
+  `none` / `waiting` (reload to apply) / `uncontrolled` / `checked`. Crucially, an
+  **uncontrolled tab loaded fresh from the network, so it's already on the latest**
+  — the message now says exactly that (reload only re-attaches the worker for
+  offline + auto-update toasts), instead of implying the SW is missing.
+
 ### Resolver: keeps dripping in the flight-deck (backgrounded runs) — 2026-06-02
 
 - The flight-deck already kept the **catalog + poller** alive while the tab is

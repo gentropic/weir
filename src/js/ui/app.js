@@ -1914,8 +1914,15 @@ export class App {
   async checkUpdates() {
     const el = document.getElementById('update-check-status');
     if (el) el.textContent = 'checking…';
-    const at = await checkForUpdateNow();
-    if (el) el.textContent = at == null ? 'no service worker (serve over https / install)' : 'checked — a reload prompt appears if there’s an update';
+    const { state } = (await checkForUpdateNow()) || {};
+    const MSG = {
+      unsupported: 'no service worker here — needs https or installing as an app',
+      none: 'no service worker registered yet — reload once to register it',
+      waiting: 'update ready — reload to apply',
+      uncontrolled: 'this tab loaded without the service worker (so you’re already on the latest) — reload to re-attach it for offline + auto-updates',
+      checked: 'checked — a reload prompt appears if there’s an update',
+    };
+    if (el) el.textContent = MSG[state] || 'check failed';
   }
 
   async requestPersist() {
