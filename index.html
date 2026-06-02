@@ -372,6 +372,20 @@ body {
 .te-input { width: 100%; box-sizing: border-box; padding: 8px 10px; background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius); color: var(--au-fg); font-family: var(--au-font-sans); font-size: 13px; }
 .te-input:focus { outline: none; border-color: var(--au-action); }
 .te-hint { margin-top: 8px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
+
+/* ── Tag manager ── */
+.tm-row { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--au-radius); border-bottom: 1px solid var(--au-border); }
+.tm-row:hover { background: var(--sw-bg-bright); }
+.tm-swatch { width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%; border: 1px solid var(--au-border); cursor: pointer; }
+.tm-swatch:hover { box-shadow: 0 0 0 2px var(--au-action); }
+.tm-name { flex: 1; font-size: 13px; color: var(--au-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tm-count { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); }
+.tm-acts { display: flex; gap: 6px; }
+.tm-acts button { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); background: none; border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 2px 8px; cursor: pointer; }
+.tm-acts button:hover { color: var(--au-action); border-color: var(--au-action); }
+.tm-palette { display: inline-flex; gap: 4px; margin-left: 4px; }
+.tm-pick { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--au-border); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; color: var(--au-fg-soft); }
+.tm-pick:hover { box-shadow: 0 0 0 2px var(--au-action); }
 .ititle { font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--au-fg); }
 .ititle .flag { color: var(--au-action); margin-right: 5px; }
 .iexcerpt { font-size: 13px; color: var(--au-fg-muted); margin-top: 5px; line-height: 1.5; max-width: 70ch; }
@@ -795,6 +809,18 @@ body {
     <div class="panel-foot">
       <span class="hint">j/k move · a approve · e edit facets · r re-catalog · x discard · o open · Esc close</span>
       <button class="btn" id="review-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tag manager — rename / merge / delete / recolor tags -->
+<div class="overlay" id="tags-overlay" hidden>
+  <div class="panel">
+    <div class="panel-head"><span>tags</span></div>
+    <div class="review-body" id="tags-body"></div>
+    <div class="panel-foot">
+      <span class="hint">click a swatch to recolor · rename into an existing tag to merge</span>
+      <button class="btn" id="tags-close">Close</button>
     </div>
   </div>
 </div>
@@ -6624,6 +6650,57 @@ class Store {
     return n;
   }
 
+  // Rename a tag across every item + the registry. If `newName` already exists,
+  // this MERGES (items carrying both end up with one; provenance keeps the target's
+  // for merged items, else carries the source's). Returns items changed.
+  renameTag(oldName, newName) {
+    const from = String(oldName).trim(); const to = String(newName).trim();
+    if (!from || !to || from === to) return 0;
+    let n = 0; const feeds = new Set();
+    for (const r of this.items.values()) {
+      if (!r.tags.includes(from)) continue;
+      const had = r.tags.includes(to);
+      r.tags = r.tags.filter((t) => t !== from);
+      if (!had) r.tags.push(to);
+      if (r.tag_src) {
+        const src = r.tag_src[from]; const ts = { ...r.tag_src }; delete ts[from];
+        if (!had && src) ts[to] = src;   // carry provenance only when not merging into an existing tag
+        r.tag_src = Object.keys(ts).length ? ts : undefined;
+      }
+      r.search_text = deriveSearchText(r); feeds.add(r.feed_id); n++;
+    }
+    if (this.tags[from]) { if (!this.tags[to]) this.tags[to] = { ...this.tags[from], name: to }; delete this.tags[from]; }
+    this.vfs.writeFile('/tags.json', JSON.stringify(this.tags, null, 2)).catch(() => {});
+    for (const fid of feeds) this._markFeedDirty(fid);
+    if (n) this.emit('items', { inserted: 0, updated: n, skipped: 0 });
+    return n;
+  }
+
+  // Remove a tag from every item + the registry. Returns items changed.
+  deleteTag(name) {
+    const t = String(name).trim(); if (!t) return 0;
+    let n = 0; const feeds = new Set();
+    for (const r of this.items.values()) {
+      if (!r.tags.includes(t)) continue;
+      r.tags = r.tags.filter((x) => x !== t);
+      if (r.tag_src) { const ts = { ...r.tag_src }; delete ts[t]; r.tag_src = Object.keys(ts).length ? ts : undefined; }
+      r.search_text = deriveSearchText(r); feeds.add(r.feed_id); n++;
+    }
+    delete this.tags[t];
+    this.vfs.writeFile('/tags.json', JSON.stringify(this.tags, null, 2)).catch(() => {});
+    for (const fid of feeds) this._markFeedDirty(fid);
+    if (n) this.emit('items', { inserted: 0, updated: n, skipped: 0 });
+    return n;
+  }
+
+  // Per-tag item counts (includes registered-but-unused tags at 0). For the manager.
+  tagCounts() {
+    const out = {};
+    for (const r of this.items.values()) for (const t of (r.tags || [])) out[t] = (out[t] || 0) + 1;
+    for (const t of Object.keys(this.tags)) if (!(t in out)) out[t] = 0;
+    return out;
+  }
+
   // Bulk mark-read over exactly the items a view/folder/feed shows — reuses the
   // query predicate so scope always matches what's visible.
   markAllRead(opts = {}) {
@@ -9439,6 +9516,8 @@ class App {
       else if (act === 'open') { const it = this.store.getItem(id); if (it && it.url) window.open(it.url, '_blank', 'noopener'); }
     });
     document.getElementById('health-close')?.addEventListener('click', () => this.closeHealth());
+    document.getElementById('tags-close')?.addEventListener('click', () => { document.getElementById('tags-overlay').hidden = true; });
+    document.getElementById('tags-body')?.addEventListener('click', (e) => this._onTagManagerClick(e));
     document.getElementById('health-retry')?.addEventListener('click', () => this.retryFlaggedFeeds());
     document.getElementById('health-body')?.addEventListener('click', (e) => this.onHealthClick(e));
     document.getElementById('reorder-list')?.addEventListener('click', (e) => this.onReorderClick(e));
@@ -10171,6 +10250,58 @@ class App {
     input.focus();
   }
 
+  // ── tag manager: rename / merge / delete / recolor (vocabulary control) ──
+  static get TAG_COLORS() { return ['#e06c75', '#d19a66', '#e5c07b', '#98c379', '#56b6c2', '#61afef', '#c678dd', '#9aa0aa']; }
+
+  openTagManager() { this._renderTagManager(); document.getElementById('tags-overlay').hidden = false; }
+
+  _renderTagManager() {
+    const counts = this.store.tagCounts(); const reg = this.store.getTags();
+    const names = Object.keys(counts).sort((a, b) => (counts[b] - counts[a]) || a.localeCompare(b));
+    const body = names.length ? names.map((t) => {
+      const col = (reg[t] || {}).color || '';
+      return `<div class="tm-row" data-tag="${escapeHtml(t)}">`
+        + `<span class="tm-swatch" data-tmact="swatch" style="background:${col || 'transparent'};border-color:${col || 'var(--au-border)'}"></span>`
+        + `<span class="tm-name">${escapeHtml(t)}</span><span class="tm-count">${counts[t]}</span>`
+        + `<span class="tm-acts"><button data-tmact="rename">rename</button><button data-tmact="delete">delete</button></span></div>`;
+    }).join('') : '<div class="hint">No tags yet — press <kbd>t</kbd> on an item, or use “⊕ tag all”.</div>';
+    document.getElementById('tags-body').innerHTML = body;
+  }
+
+  _onTagManagerClick(e) {
+    const row = e.target.closest('.tm-row'); if (!row) return;
+    const tag = row.dataset.tag; const btn = e.target.closest('[data-tmact]'); if (!btn) return;
+    const act = btn.dataset.tmact;
+    if (act === 'rename') {
+      const next = prompt(`Rename “${tag}” to… (an existing tag name merges the two):`, tag);
+      if (next == null) return;
+      const v = next.trim(); if (!v || v === tag) return;
+      const n = this.store.renameTag(tag, v); this.store.flush();
+      this._renderTagManager(); this.renderStream(); this.renderViews();
+      this._catStatus(`renamed “${tag}” → “${v}” on ${n} item${n === 1 ? '' : 's'}`);
+    } else if (act === 'delete') {
+      if (!confirm(`Remove the tag “${tag}” from all items? (the items themselves stay)`)) return;
+      const n = this.store.deleteTag(tag); this.store.flush();
+      this._renderTagManager(); this.renderStream(); this.renderViews();
+      this._catStatus(`deleted “${tag}” from ${n} item${n === 1 ? '' : 's'}`);
+    } else if (act === 'swatch') {
+      this._openTagColorPicker(row, tag);
+    }
+  }
+
+  _openTagColorPicker(row, tag) {
+    document.querySelectorAll('#tags-body .tm-palette').forEach((p) => p.remove());
+    const pal = document.createElement('span'); pal.className = 'tm-palette';
+    pal.innerHTML = ['', ...App.TAG_COLORS].map((c) =>
+      `<span class="tm-pick" data-color="${c}" style="background:${c || 'transparent'};border-color:${c || 'var(--au-fg-soft)'}" title="${c || 'none'}">${c ? '' : '∅'}</span>`).join('');
+    pal.addEventListener('click', async (e) => {
+      const p = e.target.closest('.tm-pick'); if (!p) return;
+      await this.store.setTag(tag, { color: p.dataset.color || undefined });
+      this._renderTagManager(); this.renderStream();
+    });
+    row.querySelector('.tm-swatch').after(pal);
+  }
+
   // Gallery tile — kept as `.item` (plus `.tile`) so the click/select/reflect
   // plumbing is shared with rows. Thumbnail where the item carries one (videos
   // always do); otherwise a colored type-tile. Expanding spans the full row.
@@ -10205,8 +10336,13 @@ class App {
     const meta = [feed ? escapeHtml(feed.name) : escapeHtml(it.feed_id), it.author && escapeHtml(it.author),
       `<span title="${escapeHtml(isoTitle(it.published_at))}">${relativeTime(it.published_at)}</span>`].filter(Boolean).join('<span class="dot-sep">·</span>');
     const tsrc = it.tag_src || {};
+    const treg = this.store.getTags();
     const tagGlyph = { human: '<span class="tag-src h" title="your tag">●</span>', llm: '<span class="tag-src l" title="tagged by Claude">◆</span>', rule: '<span class="tag-src r" title="rule-applied">⋔</span>' };
-    const tags = (it.tags || []).map((t) => `<span class="tag" data-tag="${escapeHtml(t)}" title="filter by ${escapeHtml(t)}">${tagGlyph[tsrc[t]] || ''}${escapeHtml(t)}</span>`).join('')
+    const tags = (it.tags || []).map((t) => {
+      const raw = (treg[t] || {}).color; const col = /^#[0-9a-f]{3,8}$/i.test(raw || '') ? raw : null;   // only our preset hexes → no style injection
+      const sty = col ? ` style="color:${col};border-color:${col}"` : '';
+      return `<span class="tag" data-tag="${escapeHtml(t)}"${sty} title="filter by ${escapeHtml(t)}">${tagGlyph[tsrc[t]] || ''}${escapeHtml(t)}</span>`;
+    }).join('')
       + (isWrappedUrl(it.url) ? '<span class="tag unresolved" title="Shortened/share link — resolving to its real URL in the background">⧉ unresolved</span>' : '');
     const saved = it.saved ? '<span class="flag">★</span>' : '';
 
@@ -10714,6 +10850,8 @@ class App {
     showMenu(x, y, [
       { label: 'Collapse all folders', onClick: () => this.collapseAllCats() },
       { label: 'Expand all folders', onClick: () => this.expandAllCats() },
+      { sep: true },
+      { label: 'Manage tags…', onClick: () => this.openTagManager() },
     ]);
   }
 
@@ -10885,6 +11023,7 @@ class App {
       { label: 'Review queue', kind: 'Command', run: () => this.openReview() },
       this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },
       { label: 'Tag all shown items…', kind: 'Command', run: () => this.openBulkTagEditor() },
+      { label: 'Manage tags…', kind: 'Command', run: () => this.openTagManager() },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
       { label: 'Re-fetch weak-title links', kind: 'Command', run: () => this.reEnrichWeak() },
       { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },
@@ -10914,7 +11053,7 @@ class App {
     if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); this.openPalette(); return; }
     // Esc closes any open overlay first, from anywhere.
     if (e.key === 'Escape') {
-      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay']) {
+      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; return; }
       }
@@ -12222,7 +12361,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '0614831';          // short content hash of the bundle (build id)
+const COMMIT = '99c0aa9';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

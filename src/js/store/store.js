@@ -450,6 +450,57 @@ export class Store {
     return n;
   }
 
+  // Rename a tag across every item + the registry. If `newName` already exists,
+  // this MERGES (items carrying both end up with one; provenance keeps the target's
+  // for merged items, else carries the source's). Returns items changed.
+  renameTag(oldName, newName) {
+    const from = String(oldName).trim(); const to = String(newName).trim();
+    if (!from || !to || from === to) return 0;
+    let n = 0; const feeds = new Set();
+    for (const r of this.items.values()) {
+      if (!r.tags.includes(from)) continue;
+      const had = r.tags.includes(to);
+      r.tags = r.tags.filter((t) => t !== from);
+      if (!had) r.tags.push(to);
+      if (r.tag_src) {
+        const src = r.tag_src[from]; const ts = { ...r.tag_src }; delete ts[from];
+        if (!had && src) ts[to] = src;   // carry provenance only when not merging into an existing tag
+        r.tag_src = Object.keys(ts).length ? ts : undefined;
+      }
+      r.search_text = deriveSearchText(r); feeds.add(r.feed_id); n++;
+    }
+    if (this.tags[from]) { if (!this.tags[to]) this.tags[to] = { ...this.tags[from], name: to }; delete this.tags[from]; }
+    this.vfs.writeFile('/tags.json', JSON.stringify(this.tags, null, 2)).catch(() => {});
+    for (const fid of feeds) this._markFeedDirty(fid);
+    if (n) this.emit('items', { inserted: 0, updated: n, skipped: 0 });
+    return n;
+  }
+
+  // Remove a tag from every item + the registry. Returns items changed.
+  deleteTag(name) {
+    const t = String(name).trim(); if (!t) return 0;
+    let n = 0; const feeds = new Set();
+    for (const r of this.items.values()) {
+      if (!r.tags.includes(t)) continue;
+      r.tags = r.tags.filter((x) => x !== t);
+      if (r.tag_src) { const ts = { ...r.tag_src }; delete ts[t]; r.tag_src = Object.keys(ts).length ? ts : undefined; }
+      r.search_text = deriveSearchText(r); feeds.add(r.feed_id); n++;
+    }
+    delete this.tags[t];
+    this.vfs.writeFile('/tags.json', JSON.stringify(this.tags, null, 2)).catch(() => {});
+    for (const fid of feeds) this._markFeedDirty(fid);
+    if (n) this.emit('items', { inserted: 0, updated: n, skipped: 0 });
+    return n;
+  }
+
+  // Per-tag item counts (includes registered-but-unused tags at 0). For the manager.
+  tagCounts() {
+    const out = {};
+    for (const r of this.items.values()) for (const t of (r.tags || [])) out[t] = (out[t] || 0) + 1;
+    for (const t of Object.keys(this.tags)) if (!(t in out)) out[t] = 0;
+    return out;
+  }
+
   // Bulk mark-read over exactly the items a view/folder/feed shows — reuses the
   // query predicate so scope always matches what's visible.
   markAllRead(opts = {}) {

@@ -183,6 +183,8 @@ export class App {
       else if (act === 'open') { const it = this.store.getItem(id); if (it && it.url) window.open(it.url, '_blank', 'noopener'); }
     });
     document.getElementById('health-close')?.addEventListener('click', () => this.closeHealth());
+    document.getElementById('tags-close')?.addEventListener('click', () => { document.getElementById('tags-overlay').hidden = true; });
+    document.getElementById('tags-body')?.addEventListener('click', (e) => this._onTagManagerClick(e));
     document.getElementById('health-retry')?.addEventListener('click', () => this.retryFlaggedFeeds());
     document.getElementById('health-body')?.addEventListener('click', (e) => this.onHealthClick(e));
     document.getElementById('reorder-list')?.addEventListener('click', (e) => this.onReorderClick(e));
@@ -915,6 +917,58 @@ export class App {
     input.focus();
   }
 
+  // ── tag manager: rename / merge / delete / recolor (vocabulary control) ──
+  static get TAG_COLORS() { return ['#e06c75', '#d19a66', '#e5c07b', '#98c379', '#56b6c2', '#61afef', '#c678dd', '#9aa0aa']; }
+
+  openTagManager() { this._renderTagManager(); document.getElementById('tags-overlay').hidden = false; }
+
+  _renderTagManager() {
+    const counts = this.store.tagCounts(); const reg = this.store.getTags();
+    const names = Object.keys(counts).sort((a, b) => (counts[b] - counts[a]) || a.localeCompare(b));
+    const body = names.length ? names.map((t) => {
+      const col = (reg[t] || {}).color || '';
+      return `<div class="tm-row" data-tag="${escapeHtml(t)}">`
+        + `<span class="tm-swatch" data-tmact="swatch" style="background:${col || 'transparent'};border-color:${col || 'var(--au-border)'}"></span>`
+        + `<span class="tm-name">${escapeHtml(t)}</span><span class="tm-count">${counts[t]}</span>`
+        + `<span class="tm-acts"><button data-tmact="rename">rename</button><button data-tmact="delete">delete</button></span></div>`;
+    }).join('') : '<div class="hint">No tags yet — press <kbd>t</kbd> on an item, or use “⊕ tag all”.</div>';
+    document.getElementById('tags-body').innerHTML = body;
+  }
+
+  _onTagManagerClick(e) {
+    const row = e.target.closest('.tm-row'); if (!row) return;
+    const tag = row.dataset.tag; const btn = e.target.closest('[data-tmact]'); if (!btn) return;
+    const act = btn.dataset.tmact;
+    if (act === 'rename') {
+      const next = prompt(`Rename “${tag}” to… (an existing tag name merges the two):`, tag);
+      if (next == null) return;
+      const v = next.trim(); if (!v || v === tag) return;
+      const n = this.store.renameTag(tag, v); this.store.flush();
+      this._renderTagManager(); this.renderStream(); this.renderViews();
+      this._catStatus(`renamed “${tag}” → “${v}” on ${n} item${n === 1 ? '' : 's'}`);
+    } else if (act === 'delete') {
+      if (!confirm(`Remove the tag “${tag}” from all items? (the items themselves stay)`)) return;
+      const n = this.store.deleteTag(tag); this.store.flush();
+      this._renderTagManager(); this.renderStream(); this.renderViews();
+      this._catStatus(`deleted “${tag}” from ${n} item${n === 1 ? '' : 's'}`);
+    } else if (act === 'swatch') {
+      this._openTagColorPicker(row, tag);
+    }
+  }
+
+  _openTagColorPicker(row, tag) {
+    document.querySelectorAll('#tags-body .tm-palette').forEach((p) => p.remove());
+    const pal = document.createElement('span'); pal.className = 'tm-palette';
+    pal.innerHTML = ['', ...App.TAG_COLORS].map((c) =>
+      `<span class="tm-pick" data-color="${c}" style="background:${c || 'transparent'};border-color:${c || 'var(--au-fg-soft)'}" title="${c || 'none'}">${c ? '' : '∅'}</span>`).join('');
+    pal.addEventListener('click', async (e) => {
+      const p = e.target.closest('.tm-pick'); if (!p) return;
+      await this.store.setTag(tag, { color: p.dataset.color || undefined });
+      this._renderTagManager(); this.renderStream();
+    });
+    row.querySelector('.tm-swatch').after(pal);
+  }
+
   // Gallery tile — kept as `.item` (plus `.tile`) so the click/select/reflect
   // plumbing is shared with rows. Thumbnail where the item carries one (videos
   // always do); otherwise a colored type-tile. Expanding spans the full row.
@@ -949,8 +1003,13 @@ export class App {
     const meta = [feed ? escapeHtml(feed.name) : escapeHtml(it.feed_id), it.author && escapeHtml(it.author),
       `<span title="${escapeHtml(isoTitle(it.published_at))}">${relativeTime(it.published_at)}</span>`].filter(Boolean).join('<span class="dot-sep">·</span>');
     const tsrc = it.tag_src || {};
+    const treg = this.store.getTags();
     const tagGlyph = { human: '<span class="tag-src h" title="your tag">●</span>', llm: '<span class="tag-src l" title="tagged by Claude">◆</span>', rule: '<span class="tag-src r" title="rule-applied">⋔</span>' };
-    const tags = (it.tags || []).map((t) => `<span class="tag" data-tag="${escapeHtml(t)}" title="filter by ${escapeHtml(t)}">${tagGlyph[tsrc[t]] || ''}${escapeHtml(t)}</span>`).join('')
+    const tags = (it.tags || []).map((t) => {
+      const raw = (treg[t] || {}).color; const col = /^#[0-9a-f]{3,8}$/i.test(raw || '') ? raw : null;   // only our preset hexes → no style injection
+      const sty = col ? ` style="color:${col};border-color:${col}"` : '';
+      return `<span class="tag" data-tag="${escapeHtml(t)}"${sty} title="filter by ${escapeHtml(t)}">${tagGlyph[tsrc[t]] || ''}${escapeHtml(t)}</span>`;
+    }).join('')
       + (isWrappedUrl(it.url) ? '<span class="tag unresolved" title="Shortened/share link — resolving to its real URL in the background">⧉ unresolved</span>' : '');
     const saved = it.saved ? '<span class="flag">★</span>' : '';
 
@@ -1458,6 +1517,8 @@ export class App {
     showMenu(x, y, [
       { label: 'Collapse all folders', onClick: () => this.collapseAllCats() },
       { label: 'Expand all folders', onClick: () => this.expandAllCats() },
+      { sep: true },
+      { label: 'Manage tags…', onClick: () => this.openTagManager() },
     ]);
   }
 
@@ -1629,6 +1690,7 @@ export class App {
       { label: 'Review queue', kind: 'Command', run: () => this.openReview() },
       this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },
       { label: 'Tag all shown items…', kind: 'Command', run: () => this.openBulkTagEditor() },
+      { label: 'Manage tags…', kind: 'Command', run: () => this.openTagManager() },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
       { label: 'Re-fetch weak-title links', kind: 'Command', run: () => this.reEnrichWeak() },
       { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },
@@ -1658,7 +1720,7 @@ export class App {
     if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); this.openPalette(); return; }
     // Esc closes any open overlay first, from anywhere.
     if (e.key === 'Escape') {
-      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay']) {
+      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; return; }
       }

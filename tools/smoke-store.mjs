@@ -78,6 +78,22 @@ assert.equal(store.getItem('arxiv:2026.002').tag_src, undefined, 'tag_src cleare
   assert.equal(bs.getItem('b2').tag_src.batch, 'human', 'bulk provenance recorded');
   assert.equal(bs.addTagBulk(['b1'], ['batch'], 'human'), 0, 'bulk is idempotent (no change → 0)');
   assert.equal(bs.query({ tag: 'batch' }).length, 2, 'both queryable by the bulk tag');
+
+  // rename carries provenance; renaming into an existing tag merges
+  bs.addTag('b1', 'old', 'human');
+  assert.equal(bs.renameTag('old', 'fresh'), 1, 'rename touched 1 item');
+  assert.ok(bs.getItem('b1').tags.includes('fresh') && !bs.getItem('b1').tags.includes('old'), 'tag renamed on the item');
+  assert.equal(bs.getItem('b1').tag_src.fresh, 'human', 'provenance carried through rename');
+  bs.renameTag('fresh', 'batch');   // merge into the existing 'batch'
+  assert.deepEqual(bs.getItem('b1').tags.filter((t) => t === 'batch'), ['batch'], 'merge dedups to a single tag');
+
+  // counts (registered-but-unused included), color, delete-everywhere
+  await bs.setTag('batch', { color: '#98c379' });
+  assert.equal(bs.getTags().batch.color, '#98c379', 'tag color stored in the registry');
+  assert.equal(bs.tagCounts().batch, 2, 'tagCounts: both items carry batch');
+  assert.equal(bs.deleteTag('batch'), 2, 'deleteTag removed from both items');
+  assert.equal(bs.query({ tag: 'batch' }).length, 0, 'tag gone from every item');
+  assert.ok(!('batch' in bs.getTags()), 'tag removed from the registry');
 }
 
 // Prune one, then prove it cannot be resurrected by a later poll.
