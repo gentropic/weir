@@ -1460,11 +1460,11 @@ export class App {
     if (!it || !this.linkResolver) return;
     const sub = document.getElementById('view-sub');
     if (sub) sub.textContent = 'fetching link metadata…';
-    let patch = null;
-    try { patch = await this.linkResolver.enrichOne(it); await this.store.flush(); } catch { /* surfaced below */ }
+    let res = null;
+    try { res = await this.linkResolver.enrichOne(it); await this.store.flush(); } catch { /* surfaced below */ }
     this.reflectItem(id);
     this.renderStream();
-    if (sub) sub.textContent = patch ? 'link metadata updated' : 'couldn’t fetch (rate-limited or offline) — try again later';
+    if (sub) sub.textContent = (res && res.ok) ? 'link metadata updated' : `couldn’t fetch${res && res.reason ? ` (${res.reason})` : ''} — try again later`;
   }
 
   exportOpml() {

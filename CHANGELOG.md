@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Resolver: a persistent run log (so an overnight drip is reviewable) — 2026-06-02
+
+- The link resolver now keeps a **persistent, classified run log**
+  (`/resolver-log.json`, survives reloads): **resolved** / **parked** counts,
+  **failure reasons** tallied (`http-429` = share.google throttling, `no-redirect`,
+  `network`), and the **recent parked links** (host + reason). So an unattended
+  overnight run actually teaches us something — whether links resolved, got
+  throttled, or are dead — instead of vanishing with the in-memory misses.
+- `enrichOne` now returns a **classified result** (`{ ok, reason, … }`); the
+  per-item "Fetch link metadata" shows the reason on failure, and **`weir_resolverLog`**
+  (WebMCP) reads the whole tally so it can be reviewed from a Claude session. The
+  log saves are throttled (~once/30s, forced on stop) so an all-night FSAA run
+  isn't a write every tick.
+
 ### Storage: catalog cards packed into shards (was one file per card) — 2026-06-02
 
 - Catalog cards were **one `/catalog/glass-*.json` file per item** (~3,500+). On

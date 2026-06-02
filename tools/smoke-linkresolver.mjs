@@ -33,7 +33,7 @@ const mockFetch = async (u) => ({
 });
 const lr = new LinkResolver(store, { fetch: mockFetch });
 const patch = await lr.enrichOne(store.getItem(id));
-assert.ok(patch, 'enrichOne returned a patch');
+assert.equal(patch.ok, true, 'enrichOne reports ok');
 const it = store.getItem(id);
 assert.equal(it.url, 'https://hackaday.com/real-article', 'wrapper resolved to real url');
 assert.equal(it.media.thumbnail, 'https://hackaday.com/thumb.png', 'relative og:image resolved against the FINAL url');
@@ -55,9 +55,27 @@ assert.ok(!lr._pending().some((r) => r.id === id3), 'enriched item drops out of 
 const id4 = `saved:h${hash32('https://share.google/stuck')}`;
 await store.upsertItems([{ id: id4, feed_id: 'saved', url: 'https://share.google/stuck', title: 'share.google', type: 'article' }]);
 const lrStuck = new LinkResolver(store, { fetch: async (u) => ({ ok: true, status: 200, url: u, async text() { return ''; } }) });
-assert.equal(await lrStuck.enrichOne(store.getItem(id4)), null, 'no redirect surfaced → null');
+const stuckRes = await lrStuck.enrichOne(store.getItem(id4));
+assert.equal(stuckRes.ok, false, 'no redirect surfaced → not ok');
+assert.equal(stuckRes.reason, 'no-redirect', 'failure reason classified');
 assert.ok(!store.getItem(id4).enriched, 'unresolvable wrapper NOT marked enriched');
 assert.ok(lrStuck._pending().some((r) => r.id === id4), 'stays pending for a later retry');
+
+// ── run log: tally reasons + park after maxMisses (throttle visibility) ──
+const ls = new Store(await VFS.create()); await ls._hydrate();
+await ls.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever' } });
+await ls.upsertItems([{ id: 'saved:tA', feed_id: 'saved', url: 'https://share.google/throttled', title: 'share.google', type: 'article' }]);
+const lr429 = new LinkResolver(ls, { fetch: async () => ({ ok: false, status: 429, async text() { return ''; } }), maxMisses: 2 });
+await lr429.tick(); await lr429.tick();   // two failed ticks → parked (maxMisses 2)
+assert.equal(lr429.log.reasons['http-429'], 2, 'each throttled try tallied as http-429 (share.google throttling shows up)');
+assert.equal(lr429.log.parked, 1, 'parked after maxMisses');
+assert.equal(lr429.log.recent[0].host, 'share.google', 'recent park records the host');
+assert.equal(lr429.log.resolved, 0, 'nothing resolved');
+// log persists + reloads
+await lr429._saveLog(true);
+const lr429b = new LinkResolver(ls, { fetch: async () => ({}) });
+await lr429b._loadLog();
+assert.equal(lr429b.log.parked, 1, 'run log survives reload');
 
 // a strong message title is NOT clobbered
 const id2 = `saved:h${hash32('https://share.google/def')}`;

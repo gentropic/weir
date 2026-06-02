@@ -281,10 +281,18 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (!app || !app.linkResolver) throw new Error('resolveLinks is only available in the running app');
     app.linkResolver.kick();
     const st = app.linkResolver.status();
-    return { kicked: true, pending: st.pending, running: st.running };
+    return { kicked: true, pending: st.pending, running: st.running, log: st.log };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
+  // Read the resolver run log: how many resolved / parked, failure reasons
+  // (http-429 = throttled, no-redirect, network…), and recent parked links.
+  async function resolverLog() {
+    if (!app || !app.linkResolver) throw new Error('resolverLog is only available in the running app');
+    const st = app.linkResolver.status();
+    return { pending: st.pending, running: st.running, ...st.log };
+  }
+
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -320,6 +328,12 @@ const TOOLS = [
     description: 'Kick the background resolver to process pending saved links now — resolve share.google/shortener URLs to their real destination and fetch thumbnail/title/excerpt metadata, gently over time (a couple every ~15s, so it never burst-hits the shortener). Returns { kicked, pending, running }. Imported links resolve on their own; use this to nudge it.',
     inputSchema: { type: 'object', properties: {} },
     annotations: { title: 'Resolve saved links' },
+  },
+  {
+    name: 'weir_resolverLog', fn: 'resolverLog',
+    description: 'Read the background link-resolver run log — { pending, running, resolved, parked, reasons, recent, startedAt, updatedAt }. `resolved` = links fully resolved+enriched; `parked` = gave up after retries; `reasons` tallies every failed try (http-429 = share.google throttling, no-redirect, network); `recent` = the last few parked links (host + reason). Use it to review an overnight run.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'Resolver run log' },
   },
   {
     name: 'weir_getItem', fn: 'getItem',

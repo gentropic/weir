@@ -7708,6 +7708,7 @@ function isWeakTitle(title, url) {
 }
 
 function absUrl(href, base) { try { return new URL(href, base).href; } catch { return null; } }
+function hostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return String(u).slice(0, 48); } }
 
 class LinkResolver {
   constructor(store, { fetch, extract, intervalMs = 15_000, batch = 2, maxMisses = 8 } = {}) {
@@ -7718,6 +7719,12 @@ class LinkResolver {
     this.batch = batch;
     this.maxMisses = maxMisses;     // park a link after this many failed ticks (until the next kick / reload)
     this._misses = new Map();       // id → consecutive miss count
+    // Persistent run log (/resolver-log.json) — so an overnight run is reviewable:
+    // how many resolved, how many parked (gave up), and WHY (throttled vs dead vs
+    // no-content). resolved/parked are counters; reasons tallies every failed try
+    // (so share.google throttling shows up); recent = the last few parked links.
+    this.log = { resolved: 0, parked: 0, reasons: {}, recent: [], startedAt: null, updatedAt: null };
+    this._lastLogSave = 0;
     this._timer = null; this._busy = false; this._listeners = new Set();
   }
 
@@ -7733,11 +7740,32 @@ class LinkResolver {
       .filter((r) => !r.archived && !r.enriched && (this._misses.get(r.id) || 0) < this.maxMisses)
       .sort((a, b) => (isWrappedUrl(b.url) ? 1 : 0) - (isWrappedUrl(a.url) ? 1 : 0));
   }
-  status() { return { pending: this._pending().length, running: !!this._timer }; }
+  status() { return { pending: this._pending().length, running: !!this._timer, log: this._logSummary() }; }
+  _logSummary() { return { resolved: this.log.resolved, parked: this.log.parked, reasons: { ...this.log.reasons }, recent: this.log.recent.slice(0, 8), startedAt: this.log.startedAt, updatedAt: this.log.updatedAt }; }
+
+  // Load/save the run log. Save is throttled (~once/30s) so an all-night run on
+  // FSAA isn't a write every tick; stop() forces a final save.
+  async _loadLog() {
+    try { const t = await this.store._readText('/resolver-log.json', ''); if (t) this.log = { resolved: 0, parked: 0, reasons: {}, recent: [], startedAt: null, updatedAt: null, ...JSON.parse(t) }; } catch { /* fresh */ }
+  }
+  _saveLog(force = false) {
+    const t = Date.now();
+    if (!force && this._lastLogSave && t - this._lastLogSave < 30_000) return;
+    this._lastLogSave = t; this.log.updatedAt = t;
+    try { this.store.vfs.writeFile('/resolver-log.json', JSON.stringify(this.log)).catch(() => {}); } catch { /* ignore */ }
+  }
+  _record(outcome, item, res) {
+    if (outcome === 'resolved') { this.log.resolved++; return; }
+    if (outcome === 'parked') {
+      this.log.parked++;
+      this.log.recent.unshift({ at: Date.now(), host: hostOf(item.url), reason: res.reason });
+      if (this.log.recent.length > 50) this.log.recent.length = 50;
+    }
+  }
 
   // (Re)start resolving — called at boot and after each import. Clears the
   // parked-misses so a fresh import retries everything (throttle may have lifted).
-  kick() { this._misses.clear(); if (!this._timer && this._pending().length) this.start(); }
+  kick() { this._misses.clear(); if (!this.log.startedAt) this.log.startedAt = Date.now(); if (!this._timer && this._pending().length) this.start(); }
 
   start() {
     if (this._timer) return;
@@ -7746,21 +7774,22 @@ class LinkResolver {
     this.emit();
     this.tick().catch(() => {});
   }
-  stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } this.emit(); }
+  stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } this._saveLog(true); this.emit(); }
 
   // Fetch a saved link's page once and do both jobs from the single response:
   // follow redirects to the real url (if it's a wrapper) AND parse OpenGraph
-  // metadata (thumbnail / better title / excerpt). Updates the item in place.
-  // Returns the applied patch, or null if it couldn't resolve (retry later).
+  // metadata (thumbnail / better title / excerpt) + the article body. Updates the
+  // item in place. Returns { ok, reason, … } — reason classifies failures
+  // (http-NNN throttle/block, no-redirect, network) for the run log.
   async enrichOne(item) {
     let html = '', finalUrl = item.url;
     try {
       const r = await this.fetch(item.url, { redirect: 'follow', headers: { 'cache-control': 'no-cache' } });
-      if (!r || !r.ok) return null;
+      if (!r || !r.ok) return { ok: false, reason: 'http-' + ((r && r.status) || 'err') };
       if (r.url && !isWrappedUrl(r.url)) finalUrl = r.url;
-      if (isWrappedUrl(finalUrl)) return null;   // no redirect surfaced — still a wrapper, try again later
+      if (isWrappedUrl(finalUrl)) return { ok: false, reason: 'no-redirect' };   // still a wrapper — try again later
       html = await (r.text ? r.text().catch(() => '') : Promise.resolve(''));
-    } catch { return null; }
+    } catch { return { ok: false, reason: 'network' }; }
 
     const meta = parseLinkMeta(html);
     const img = meta.image && absUrl(meta.image, finalUrl);
@@ -7776,7 +7805,7 @@ class LinkResolver {
     if (meta.description && !item.excerpt) patch.excerpt = meta.description.slice(0, 300);
     if (content) patch.content = content;   // → has_content; cataloger uses it (capped at maxBodyChars)
     await this.store.upsertItems([patch]);
-    return patch;
+    return { ok: true, reason: 'ok', resolved: finalUrl !== item.url, thumb: !!img, content: !!content };
   }
 
   async tick() {
@@ -7788,11 +7817,17 @@ class LinkResolver {
       if (!batch.length) { this.stop(); return; }
       let changed = 0;
       for (const it of batch) {
-        const patch = await this.enrichOne(it);
-        if (patch) { this._misses.delete(it.id); changed++; }
-        else this._misses.set(it.id, (this._misses.get(it.id) || 0) + 1);
+        const res = await this.enrichOne(it);
+        if (res.ok) { this._misses.delete(it.id); changed++; this._record('resolved', it, res); }
+        else {
+          const m = (this._misses.get(it.id) || 0) + 1;
+          this._misses.set(it.id, m);
+          this.log.reasons[res.reason] = (this.log.reasons[res.reason] || 0) + 1;   // counts every failed try (throttle visibility)
+          if (m >= this.maxMisses) this._record('parked', it, res);
+        }
       }
       if (changed) await this.store.flush();
+      this._saveLog();
       this.emit();
     } finally {
       this._busy = false;
@@ -10349,11 +10384,11 @@ class App {
     if (!it || !this.linkResolver) return;
     const sub = document.getElementById('view-sub');
     if (sub) sub.textContent = 'fetching link metadata…';
-    let patch = null;
-    try { patch = await this.linkResolver.enrichOne(it); await this.store.flush(); } catch { /* surfaced below */ }
+    let res = null;
+    try { res = await this.linkResolver.enrichOne(it); await this.store.flush(); } catch { /* surfaced below */ }
     this.reflectItem(id);
     this.renderStream();
-    if (sub) sub.textContent = patch ? 'link metadata updated' : 'couldn’t fetch (rate-limited or offline) — try again later';
+    if (sub) sub.textContent = (res && res.ok) ? 'link metadata updated' : `couldn’t fetch${res && res.reason ? ` (${res.reason})` : ''} — try again later`;
   }
 
   exportOpml() {
@@ -11131,10 +11166,18 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (!app || !app.linkResolver) throw new Error('resolveLinks is only available in the running app');
     app.linkResolver.kick();
     const st = app.linkResolver.status();
-    return { kicked: true, pending: st.pending, running: st.running };
+    return { kicked: true, pending: st.pending, running: st.running, log: st.log };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
+  // Read the resolver run log: how many resolved / parked, failure reasons
+  // (http-429 = throttled, no-redirect, network…), and recent parked links.
+  async function resolverLog() {
+    if (!app || !app.linkResolver) throw new Error('resolverLog is only available in the running app');
+    const st = app.linkResolver.status();
+    return { pending: st.pending, running: st.running, ...st.log };
+  }
+
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -11170,6 +11213,12 @@ const TOOLS = [
     description: 'Kick the background resolver to process pending saved links now — resolve share.google/shortener URLs to their real destination and fetch thumbnail/title/excerpt metadata, gently over time (a couple every ~15s, so it never burst-hits the shortener). Returns { kicked, pending, running }. Imported links resolve on their own; use this to nudge it.',
     inputSchema: { type: 'object', properties: {} },
     annotations: { title: 'Resolve saved links' },
+  },
+  {
+    name: 'weir_resolverLog', fn: 'resolverLog',
+    description: 'Read the background link-resolver run log — { pending, running, resolved, parked, reasons, recent, startedAt, updatedAt }. `resolved` = links fully resolved+enriched; `parked` = gave up after retries; `reasons` tallies every failed try (http-429 = share.google throttling, no-redirect, network); `recent` = the last few parked links (host + reason). Use it to review an overnight run.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'Resolver run log' },
   },
   {
     name: 'weir_getItem', fn: 'getItem',
@@ -11430,6 +11479,7 @@ async function boot() {
   // shortener. Resumes any unresolved links from prior imports.
   const linkResolver = new LinkResolver(store, { fetch: gcuFetch, extract: extractArticle });
   app.linkResolver = linkResolver;
+  await linkResolver._loadLog();   // resume the run log (so the overnight tally survives reloads)
   linkResolver.kick();
 
   window.__weir = { store, poller, router, drip, retainer, linkResolver, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
