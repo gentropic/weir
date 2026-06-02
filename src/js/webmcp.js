@@ -306,10 +306,11 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (input.baseUrl != null) patch.catalog_base_url = String(input.baseUrl);
     if (input.paceMs != null) patch.catalog_pace_ms = Math.max(0, Number(input.paceMs) || 0);
     if (input.maxBodyChars != null) patch.catalog_max_body_chars = Math.max(500, Math.min(Number(input.maxBodyChars) || 6000, 20000));
-    if (!Object.keys(patch).length) throw new Error('nothing to set — pass provider/model/baseUrl/paceMs/maxBodyChars');
+    if (input.mailto != null) patch.catalog_mailto = String(input.mailto).trim();
+    if (!Object.keys(patch).length) throw new Error('nothing to set — pass provider/model/baseUrl/paceMs/maxBodyChars/mailto');
     await store.setSettings(patch);
     const s = store.getSettings();
-    return { provider: s.catalog_provider, model: s.catalog_model, baseUrl: s.catalog_base_url || undefined, paceMs: s.catalog_pace_ms, maxBodyChars: s.catalog_max_body_chars, note: 'key unchanged (set it in the UI)' };
+    return { provider: s.catalog_provider, model: s.catalog_model, baseUrl: s.catalog_base_url || undefined, paceMs: s.catalog_pace_ms, maxBodyChars: s.catalog_max_body_chars, mailto: s.catalog_mailto || undefined, note: 'key unchanged (set it in the UI)' };
   }
 
   // The source tree — feeds grouped by folder, with inbox counts — so the model
@@ -492,6 +493,7 @@ const TOOLS = [
         baseUrl: { type: 'string', description: 'Override base URL (local/custom providers)' },
         paceMs: { type: 'integer', description: 'Delay between catalog calls in ms (0 = no pause)' },
         maxBodyChars: { type: 'integer', description: 'Max doc chars sent to the LLM (500–20000)' },
+        mailto: { type: 'string', description: "Contact email for the Crossref/OpenAlex polite pool (biblio enrich); sent only to those scholarly APIs" },
       },
     },
     annotations: { title: 'Set cataloger config' },

@@ -2139,6 +2139,7 @@ export class App {
     val('set-cat-baseurl', s.catalog_base_url || '');
     val('set-cat-pace', s.catalog_pace_ms ?? 400);
     val('set-cat-maxbody', s.catalog_max_body_chars ?? 6000);
+    val('set-cat-mailto', s.catalog_mailto || '');
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
@@ -2300,6 +2301,7 @@ export class App {
       catalog_base_url: document.getElementById('set-cat-baseurl')?.value.trim() || '',
       catalog_pace_ms: Math.max(0, parseInt(document.getElementById('set-cat-pace')?.value, 10) || 0),
       catalog_max_body_chars: Math.max(500, parseInt(document.getElementById('set-cat-maxbody')?.value, 10) || 6000),
+      catalog_mailto: document.getElementById('set-cat-mailto')?.value.trim() || '',
       retention_enabled: chk('set-retention'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),

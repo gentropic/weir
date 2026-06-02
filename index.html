@@ -761,6 +761,7 @@ body {
         <label class="set-row">API key<input type="password" id="set-cat-key" class="field" autocomplete="off" placeholder="(none)"></label>
         <label class="set-row">pace (ms)<input type="number" id="set-cat-pace" class="field" min="0" step="50" title="Delay between catalog calls. 400 keeps a local NPU responsive; drop toward 0 for a cloud provider."></label>
         <label class="set-row">max body chars<input type="number" id="set-cat-maxbody" class="field" min="500" step="500" title="How much of each document's text is sent to the cataloger (cost / context)."></label>
+        <label class="set-row">contact email<input type="email" id="set-cat-mailto" class="field" autocomplete="off" spellcheck="false" placeholder="(optional)" title="Optional: joins the Crossref/OpenAlex 'polite pool' when enriching papers/books from their DOI/ISBN. Sent ONLY to those scholarly APIs as a courtesy contact — never elsewhere. Good-citizen, not required."></label>
         <div class="set-row"><span id="cat-usage">no LLM usage yet</span><button class="btn-link" id="set-cat-gauge" type="button">check allowance</button></div>
         <div class="set-row"><span>Catalog maintenance</span><button class="btn-link" id="set-cat-clear" type="button" title="Delete all catalog cards and un-file every item (items &amp; reading state kept)">clear catalog</button></div>
         <div class="hint">The librarian that fills the language facets. Ollama runs locally (free, nothing leaves your machine). Keys are stored encrypted-out-of-band (OPFS), never in backups or the mounted folder. Cloud providers need their origin added to the bridge allowlist once.</div>
@@ -11610,6 +11611,7 @@ class App {
     val('set-cat-baseurl', s.catalog_base_url || '');
     val('set-cat-pace', s.catalog_pace_ms ?? 400);
     val('set-cat-maxbody', s.catalog_max_body_chars ?? 6000);
+    val('set-cat-mailto', s.catalog_mailto || '');
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
@@ -11771,6 +11773,7 @@ class App {
       catalog_base_url: document.getElementById('set-cat-baseurl')?.value.trim() || '',
       catalog_pace_ms: Math.max(0, parseInt(document.getElementById('set-cat-pace')?.value, 10) || 0),
       catalog_max_body_chars: Math.max(500, parseInt(document.getElementById('set-cat-maxbody')?.value, 10) || 6000),
+      catalog_mailto: document.getElementById('set-cat-mailto')?.value.trim() || '',
       retention_enabled: chk('set-retention'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
@@ -12232,10 +12235,11 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (input.baseUrl != null) patch.catalog_base_url = String(input.baseUrl);
     if (input.paceMs != null) patch.catalog_pace_ms = Math.max(0, Number(input.paceMs) || 0);
     if (input.maxBodyChars != null) patch.catalog_max_body_chars = Math.max(500, Math.min(Number(input.maxBodyChars) || 6000, 20000));
-    if (!Object.keys(patch).length) throw new Error('nothing to set — pass provider/model/baseUrl/paceMs/maxBodyChars');
+    if (input.mailto != null) patch.catalog_mailto = String(input.mailto).trim();
+    if (!Object.keys(patch).length) throw new Error('nothing to set — pass provider/model/baseUrl/paceMs/maxBodyChars/mailto');
     await store.setSettings(patch);
     const s = store.getSettings();
-    return { provider: s.catalog_provider, model: s.catalog_model, baseUrl: s.catalog_base_url || undefined, paceMs: s.catalog_pace_ms, maxBodyChars: s.catalog_max_body_chars, note: 'key unchanged (set it in the UI)' };
+    return { provider: s.catalog_provider, model: s.catalog_model, baseUrl: s.catalog_base_url || undefined, paceMs: s.catalog_pace_ms, maxBodyChars: s.catalog_max_body_chars, mailto: s.catalog_mailto || undefined, note: 'key unchanged (set it in the UI)' };
   }
 
   // The source tree — feeds grouped by folder, with inbox counts — so the model
@@ -12418,6 +12422,7 @@ const TOOLS = [
         baseUrl: { type: 'string', description: 'Override base URL (local/custom providers)' },
         paceMs: { type: 'integer', description: 'Delay between catalog calls in ms (0 = no pause)' },
         maxBodyChars: { type: 'integer', description: 'Max doc chars sent to the LLM (500–20000)' },
+        mailto: { type: 'string', description: "Contact email for the Crossref/OpenAlex polite pool (biblio enrich); sent only to those scholarly APIs" },
       },
     },
     annotations: { title: 'Set cataloger config' },
@@ -12535,7 +12540,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '0b2eaa7';          // short content hash of the bundle (build id)
+const COMMIT = '0ae40c7';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
