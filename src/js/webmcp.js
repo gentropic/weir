@@ -275,7 +275,16 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { folders: sources.length, feedCount: store.listFeeds().length, sources };
   }
 
-  return { queryItems, getItem, listFacets, listSources, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
+  // Kick the background link resolver — resolve wrapped saved links (share.google
+  // etc.) to their real url + fetch thumbnail/title metadata, gently over time.
+  async function resolveLinks() {
+    if (!app || !app.linkResolver) throw new Error('resolveLinks is only available in the running app');
+    app.linkResolver.kick();
+    const st = app.linkResolver.status();
+    return { kicked: true, pending: st.pending, running: st.running };
+  }
+
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, setState, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -305,6 +314,12 @@ const TOOLS = [
     description: 'List weir’s sources (feeds) grouped by folder, each with its inbox item count — the source tree, so you can see what exists and then drill in with weir_queryItems({ feed }). Optional `category` scopes to one folder. Returns { folders, feedCount, sources: [{ category, feeds: [{ id, name, adapter, inbox }] }] }.',
     inputSchema: { type: 'object', properties: { category: { type: 'string', description: 'Only this folder ("" = ungrouped)' } } },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'List weir sources' },
+  },
+  {
+    name: 'weir_resolveLinks', fn: 'resolveLinks',
+    description: 'Kick the background resolver to process pending saved links now — resolve share.google/shortener URLs to their real destination and fetch thumbnail/title/excerpt metadata, gently over time (a couple every ~15s, so it never burst-hits the shortener). Returns { kicked, pending, running }. Imported links resolve on their own; use this to nudge it.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { title: 'Resolve saved links' },
   },
   {
     name: 'weir_getItem', fn: 'getItem',

@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Saved links: resolve + enrich (thumbnails, titles, excerpts) + manual triggers — 2026-06-01
+
+- The background resolver now does **both jobs from the one page fetch** it already
+  makes: follows the redirect to the real URL **and** parses OpenGraph —
+  **`og:image` → thumbnail**, **`og:title` → upgrades a weak (hostname) title**,
+  **`og:description` → excerpt**. Saved links become real thumbnail cards instead
+  of bare URLs (a meaningful message title like "… | Hackaday" is preserved).
+- **Manual triggers — something to click** (for you and for Claude): **"⧉ Resolve
+  links now"** on the Saved Links source menu, **"⧉ Fetch link metadata"** on a
+  saved item's menu (works on any link — gives a direct link its thumbnail too),
+  and **`weir_resolveLinks`** over WebMCP.
+- The full-smoke runner now also includes `smoke-import` + `smoke-linkresolver`.
+
 ### Saved links: never auto-archive + background resolver drip + marker — 2026-06-01
 
 - **Fix (data wasn't lost — auto-archived):** imported saved links carry their

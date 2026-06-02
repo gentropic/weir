@@ -242,6 +242,20 @@ the trigger/query layer on top.
   settings), **public pages only**. Route via gcuFetch/bridge (allowlist
   `web.archive.org`). Volume is trivial (~1.4 links/day); the ~1,500 backlog gets a
   gentle rate-limited pass. Pairs with never-delete + the shipped Wayback recovery.
+- **Saved-links UX — a "Links" view + auto-save routing.** ✅ *Resolve+enrich
+  shipped 2026-06-01* (the background drip follows redirects AND parses OpenGraph →
+  thumbnail/title/excerpt; manual "Resolve links now" / "Fetch link metadata" +
+  `weir_resolveLinks`). **Remaining:** (a) a built-in **"Links" view** in the Views
+  list (below Videos/Articles) = the union of *capture* sources (Saved Links now;
+  Telegram + glean later) — type stays article/video (so captures still flow into
+  those views + catalog correctly); "link/bookmark" is a *provenance*, not a
+  content type. (Seeding caveat: DEFAULT_VIEWS only seed on first run, so adding a
+  built-in view needs a small "inject missing built-ins" migration for existing
+  installs.) (b) a routing **action: auto-save** — let a rule *capture* matching
+  feed items into the saved collection ("auto-bookmark anything from feed X / matching
+  `kicad`"), the natural way routing feeds the links collection. (c) optional:
+  drip-enrich *direct* saved links too (not just wrapped) — needs a persisted
+  "enrichment tried" marker so it doesn't re-fetch every page each session.
 - **Remote thin interface via a Telegram Mini App** *(back-pocket / speculative)*.
   A tiny phone-side UI for weir-on-desktop — notes input, maybe light control —
   with **no server and no webhook**. Two tiers:

@@ -995,6 +995,7 @@ export class App {
       { sep: true },
       { label: it.glass_id ? 'Re-catalog with AI' : 'Catalog with AI', onClick: () => this.catalogItem(id) },
       (it.glass_id && this._cardReview && this._cardReview.get(id)?.needs_review) && { label: '✓ Mark reviewed', onClick: () => this.markReviewed(id) },
+      it.feed_id === 'saved' && { label: '⧉ Fetch link metadata', onClick: () => this.enrichSavedItem(id) },
       it.url && { label: 'Copy link', onClick: () => navigator.clipboard?.writeText(it.url).catch(() => {}) },
     ].filter(Boolean));
   }
@@ -1003,6 +1004,7 @@ export class App {
     const feed = this.store.getFeed(feedId); if (!feed) return;
     showMenu(x, y, [
       { label: 'Show only this feed', onClick: () => { this.catFilter = null; this.route = null; this.smartView = null; this.feedFilter = feedId; this.renderAll(); } },
+      feedId === 'saved' && { label: '⧉ Resolve links now', onClick: () => this.resolveLinksNow() },
       (feed.site_url || feed.url) && { label: 'Open site ↗', onClick: () => window.open(feed.site_url || feed.url, '_blank', 'noopener') },
       { sep: true },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
@@ -1404,6 +1406,31 @@ export class App {
     const cur = this.store.getFeed('saved');
     if (cur && cur.retention && cur.retention.unread_days === 'forever') return;
     await this.store.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever', read_days: 'forever' } });
+  }
+
+  // Kick the background resolver to process pending wrapped/unenriched links now
+  // (the "Resolve links now" source-menu command — something to click on demand).
+  resolveLinksNow() {
+    if (!this.linkResolver) return;
+    this.linkResolver.kick();
+    const n = this.linkResolver.status().pending;
+    const sub = document.getElementById('view-sub');
+    if (sub) sub.textContent = n ? `resolving ${n} link${n === 1 ? '' : 's'} in the background…` : 'no links pending resolution';
+  }
+
+  // Resolve + fetch metadata (thumbnail/title/excerpt) for one saved link right
+  // now — the per-item "Fetch link metadata" command. Works on any saved link,
+  // wrapped or not (gives a direct link its thumbnail too).
+  async enrichSavedItem(id) {
+    const it = this.store.getItem(id);
+    if (!it || !this.linkResolver) return;
+    const sub = document.getElementById('view-sub');
+    if (sub) sub.textContent = 'fetching link metadata…';
+    let patch = null;
+    try { patch = await this.linkResolver.enrichOne(it); await this.store.flush(); } catch { /* surfaced below */ }
+    this.reflectItem(id);
+    this.renderStream();
+    if (sub) sub.textContent = patch ? 'link metadata updated' : 'couldn’t fetch (rate-limited or offline) — try again later';
   }
 
   exportOpml() {

@@ -12,6 +12,41 @@ import { isWrappedUrl } from './importers.js';
 
 const SAVED_FEED = 'saved';
 
+function decodeEntities(s) {
+  return String(s).replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#(\d+);/g, (_, n) => { try { return String.fromCodePoint(+n); } catch { return _; } });
+}
+
+// Pull OpenGraph/Twitter card metadata out of a page's <head> with a tolerant
+// regex (no DOM — runs in node tests too). Returns { title, image, description }.
+export function parseLinkMeta(html) {
+  const head = String(html || '').slice(0, 200_000);   // og tags live up top; cap the work
+  const meta = (prop) => {
+    const re = new RegExp('<meta\\b[^>]*\\b(?:property|name)\\s*=\\s*["\']' + prop + '["\'][^>]*>', 'i');
+    const tag = head.match(re);
+    if (!tag) return null;
+    const c = tag[0].match(/\bcontent\s*=\s*["']([^"']*)["']/i);
+    return c ? decodeEntities(c[1].trim()) || null : null;
+  };
+  const titleTag = head.match(/<title[^>]*>([^<]*)<\/title>/i);
+  return {
+    title: meta('og:title') || meta('twitter:title') || (titleTag ? decodeEntities(titleTag[1].trim()) : null) || null,
+    image: meta('og:image:secure_url') || meta('og:image') || meta('twitter:image') || meta('twitter:image:src') || null,
+    description: meta('og:description') || meta('twitter:description') || meta('description') || null,
+  };
+}
+
+// A title is "weak" (worth replacing with og:title) when it's missing, the
+// untitled placeholder, a bare wrapper, or just a hostname (our import fallback).
+function isWeakTitle(title, url) {
+  if (!title || title === '(untitled)') return true;
+  const t = String(title).trim();
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(t)) return true;   // looks like a bare domain
+  try { if (t === new URL(url).hostname.replace(/^www\./, '')) return true; } catch { /* ignore */ }
+  return false;
+}
+
+function absUrl(href, base) { try { return new URL(href, base).href; } catch { return null; } }
+
 export class LinkResolver {
   constructor(store, { fetch, intervalMs = 15_000, batch = 2, maxMisses = 8 } = {}) {
     this.store = store;
@@ -45,12 +80,28 @@ export class LinkResolver {
   }
   stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } this.emit(); }
 
-  async _resolve(url) {
+  // Fetch a saved link's page once and do both jobs from the single response:
+  // follow redirects to the real url (if it's a wrapper) AND parse OpenGraph
+  // metadata (thumbnail / better title / excerpt). Updates the item in place.
+  // Returns the applied patch, or null if it couldn't resolve (retry later).
+  async enrichOne(item) {
+    let html = '', finalUrl = item.url;
     try {
-      const r = await this.fetch(url, { redirect: 'follow', headers: { 'cache-control': 'no-cache' } });
-      if (r && r.ok && r.url && r.url !== url && !isWrappedUrl(r.url)) return r.url;
-    } catch { /* throttled/offline — retry next tick */ }
-    return null;
+      const r = await this.fetch(item.url, { redirect: 'follow', headers: { 'cache-control': 'no-cache' } });
+      if (!r || !r.ok) return null;
+      if (r.url && !isWrappedUrl(r.url)) finalUrl = r.url;
+      if (isWrappedUrl(finalUrl)) return null;   // no redirect surfaced — still a wrapper, try again later
+      html = await (r.text ? r.text().catch(() => '') : Promise.resolve(''));
+    } catch { return null; }
+
+    const meta = parseLinkMeta(html);
+    const img = meta.image && absUrl(meta.image, finalUrl);
+    const patch = { id: item.id, feed_id: SAVED_FEED, url: finalUrl };   // url write clears the "unresolved" state
+    if (img) patch.media = { ...(item.media || {}), thumbnail: img };
+    if (meta.title && isWeakTitle(item.title, finalUrl)) patch.title = meta.title;
+    if (meta.description && !item.excerpt) patch.excerpt = meta.description.slice(0, 300);
+    await this.store.upsertItems([patch]);
+    return patch;
   }
 
   async tick() {
@@ -62,14 +113,9 @@ export class LinkResolver {
       if (!batch.length) { this.stop(); return; }
       let changed = 0;
       for (const it of batch) {
-        const final = await this._resolve(it.url);
-        if (final) {
-          await this.store.upsertItems([{ id: it.id, feed_id: SAVED_FEED, url: final, title: it.title }]);
-          this._misses.delete(it.id);
-          changed++;
-        } else {
-          this._misses.set(it.id, (this._misses.get(it.id) || 0) + 1);
-        }
+        const patch = await this.enrichOne(it);
+        if (patch) { this._misses.delete(it.id); changed++; }
+        else this._misses.set(it.id, (this._misses.get(it.id) || 0) + 1);
       }
       if (changed) await this.store.flush();
       this.emit();
