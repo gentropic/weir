@@ -185,6 +185,22 @@ body {
 .ctxitem.danger:hover { background: var(--au-error-soft); }
 .ctxitem:disabled { color: var(--au-fg-soft); cursor: default; background: none; }
 .ctxsep { height: 1px; margin: 4px 6px; background: var(--au-border); }
+
+/* ── Command palette (Cmd-K) ── */
+.palette-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: flex-start; justify-content: center; z-index: 9500; padding-top: 12vh; }
+.palette { width: min(640px, 92vw); max-height: 64vh; display: flex; flex-direction: column; background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg); box-shadow: 0 18px 60px rgba(0,0,0,0.55); overflow: hidden; }
+.palette-input { width: 100%; box-sizing: border-box; padding: 13px 16px; background: none; border: none; border-bottom: 1px solid var(--au-border); color: var(--au-fg); font-family: var(--au-font-sans); font-size: 15px; }
+.palette-input:focus { outline: none; }
+.palette-input::placeholder { color: var(--au-fg-soft); }
+.palette-list { overflow-y: auto; padding: 6px; }
+.palette-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: var(--au-radius); cursor: pointer; }
+.palette-row.active { background: var(--sw-bg-bright); box-shadow: inset 2px 0 0 var(--au-action); }
+.palette-label { flex: 1; font-size: 13.5px; color: var(--au-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-row.active .palette-label { color: var(--au-fg); }
+.palette-label b { color: var(--au-action); font-weight: 700; }
+.palette-hint { font-family: var(--au-font-mono); font-size: 10.5px; color: var(--au-fg-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.palette-kind { font-family: var(--au-font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--au-fg-soft); border: 1px solid var(--au-border); border-radius: 3px; padding: 1px 5px; flex-shrink: 0; }
+.palette-empty { padding: 18px; text-align: center; font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg-soft); }
 .ititle { font-size: 14.5px; font-weight: 600; line-height: 1.35; color: var(--au-fg); }
 .ititle .flag { color: var(--au-action); margin-right: 5px; }
 .iexcerpt { font-size: 13px; color: var(--au-fg-muted); margin-top: 5px; line-height: 1.5; max-width: 70ch; }

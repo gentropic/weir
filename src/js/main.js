@@ -38,6 +38,7 @@ import './favicon.js';                    // → FaviconFetcher, monogram (befor
 import './health.js';                     // → assessFeed (feed hijack/drift/stale, before app)
 import './ui/format.js';                 // → relativeTime, sparkPoints, … (before app)
 import './ui/menu.js';                    // → showMenu (context menus)
+import './ui/palette.js';                 // → showPalette, filterActions (command palette, Cmd-K)
 import './poller.js';                    // → Poller
 import './ui/app.js';                    // → App (uses format)
 import './webmcp.js';                    // → buildWeirTools, initWebmcp (WebMCP adapter; after app)

@@ -10,6 +10,7 @@ import { hash32 } from '../store/schema.js';
 import { DEFAULT_ROUTING } from '../router.js';
 import { parseWatchDigest } from '../affinity.js';
 import { showMenu } from './menu.js';
+import { showPalette } from './palette.js';
 import { extractArticle } from '../extract.js';
 import { checkForUpdateNow, setAutoCheck } from '../pwa.js';
 import { recoverFeed } from '../wayback.js';
@@ -1021,7 +1022,7 @@ export class App {
   feedMenu(feedId, x, y) {
     const feed = this.store.getFeed(feedId); if (!feed) return;
     showMenu(x, y, [
-      { label: 'Show only this feed', onClick: () => { this.catFilter = null; this.route = null; this.smartView = null; this.feedFilter = feedId; this.renderAll(); } },
+      { label: 'Show only this feed', onClick: () => this.selectFeed(feedId) },
       feedId === 'saved' && { label: '⧉ Resolve links now', onClick: () => this.resolveLinksNow() },
       feedId === 'saved' && { label: '⌦ Remove non-content links', onClick: () => this.cleanSavedLinks() },
       feedId === 'saved' && { label: '⧉ Re-fetch weak-title links', onClick: () => this.reEnrichWeak() },
@@ -1300,8 +1301,57 @@ export class App {
 
   setView(view) { if (view === 'catalog') return this.setCatalog(); this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  selectFeed(id) { this.feedFilter = id; this.view = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+
+  // ── command palette (Cmd/Ctrl-K) ── A flat, fuzzy launcher over every
+  // navigation target (views, folders, sources, routes, smart views) and the
+  // actions otherwise buried in context menus. Built fresh on each open so it
+  // always reflects the current rail.
+  openPalette() {
+    const feeds = this.store.listFeeds();
+    const views = [
+      { label: 'Inbox', kind: 'View', run: () => this.setView('inbox') },
+      { label: 'Saved', kind: 'View', run: () => this.setView('saved') },
+      { label: 'Archived', kind: 'View', run: () => this.setView('archived') },
+      { label: 'Catalog', kind: 'View', run: () => this.setCatalog() },
+    ];
+    const readScope = this.feedFilter ? { feed_id: this.feedFilter }
+      : this.catFilter != null ? { category: this.catFilter }
+        : (!this.smartView && !this.route && !this.catalog) ? { view: this.view || 'inbox' } : null;
+    const cmds = [
+      { label: 'Add source / paste…', kind: 'Command', hint: 'feed URL, OPML, links', run: () => document.getElementById('addfeed-input')?.focus() },
+      { label: 'Search items', kind: 'Command', run: () => this.searchEl?.focus() },
+      this.searchText && this.searchText.trim() && { label: 'Save current search as view', kind: 'Command', run: () => this.saveSearchAsView() },
+      { label: 'Catalog visible items with AI', kind: 'Command', run: () => this.catalogVisible() },
+      { label: 'Catalog all items with AI', kind: 'Command', run: () => this.catalogAll() },
+      { label: 'Review queue', kind: 'Command', run: () => this.openReview() },
+      { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
+      { label: 'Re-fetch weak-title links', kind: 'Command', run: () => this.reEnrichWeak() },
+      { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },
+      { label: 'Retry flagged feeds', kind: 'Command', run: () => this.retryFlaggedFeeds() },
+      { label: `Switch to ${this.layout === 'gallery' ? 'list' : 'gallery'} view`, kind: 'Command', run: () => this.setLayout(this.layout === 'gallery' ? 'list' : 'gallery') },
+      readScope && { label: 'Mark all read here', kind: 'Command', run: () => this.store.markAllRead(readScope) },
+      { label: 'Collapse all folders', kind: 'Command', run: () => this.collapseAllCats() },
+      { label: 'Expand all folders', kind: 'Command', run: () => this.expandAllCats() },
+      { label: 'Flight deck', kind: 'Command', run: () => this.openFlightDeck() },
+      { label: 'Routing rules', kind: 'Command', run: () => this.openRules() },
+      { label: 'Feed health', kind: 'Command', run: () => this.openHealth() },
+      { label: 'Settings', kind: 'Command', run: () => this.openSettings() },
+      { label: 'Toggle WebMCP', kind: 'Command', run: () => this.toggleWebmcp() },
+      { label: 'Check for updates', kind: 'Command', run: () => this.checkUpdates() },
+      { label: 'Keyboard shortcuts', kind: 'Command', run: () => this.openHelp() },
+    ];
+    const smartViews = this.store.getViews().map((v) => ({ label: v.name, kind: 'View', hint: this.viewSummary(v), run: () => this.setSmartView(v.id) }));
+    const routes = Object.keys(this.store.counts().routes).sort().map((n) => ({ label: n, kind: 'Route', run: () => this.setRoute(n) }));
+    const folders = [...new Set(feeds.map((f) => f.category).filter(Boolean))].sort()
+      .map((c) => ({ label: c, kind: 'Folder', run: () => this.setCategory(c) }));
+    const sources = feeds.map((f) => ({ label: f.name, kind: 'Source', hint: f.category || undefined, run: () => this.selectFeed(f.id) }));
+    showPalette([...views, ...cmds, ...smartViews, ...routes, ...folders, ...sources].filter(Boolean));
+  }
 
   onKey(e) {
+    // Command palette (Cmd/Ctrl-K) — works everywhere, even from the search box.
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); this.openPalette(); return; }
     // Esc closes any open overlay first, from anywhere.
     if (e.key === 'Escape') {
       for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay']) {
