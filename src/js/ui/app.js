@@ -472,15 +472,25 @@ export class App {
     return this._runCatalog(todo);
   }
 
-  // Catalog ALL un-cataloged, non-archived items in the corpus (no view scope, no
+  // Catalog ALL un-cataloged, non-archived items in the corpus (no scope, no
   // confirm) — used by the WebMCP catalog-start tool. Fire-and-forget; paced.
-  // Un-enriched saved links are deferred (see _catReady).
-  catalogAll() {
+  catalogAll() { return this.catalogScope({}); }
+
+  // Scoped sibling of catalogAll: catalog the un-cataloged, non-archived items in a
+  // feed / folder / type. Same defer rule (_catReady), pacing, and resume. Backs the
+  // WebMCP catalog-start `scope` and the "Catalog this feed/folder" affordances, so
+  // a run can target one source instead of the whole corpus. {} = everything.
+  catalogScope({ feed_id, category, type } = {}) {
     if (this._cataloging) return { running: true, already: true };
-    const cand = [...this.store.items.values()].filter((i) => !i.glass_id && !i.archived);
+    const inCat = category != null ? new Set(this.store.listFeeds().filter((f) => (f.category || '') === category).map((f) => f.id)) : null;
+    const cand = [...this.store.items.values()].filter((i) =>
+      !i.glass_id && !i.archived
+      && (feed_id == null || i.feed_id === feed_id)
+      && (inCat == null || inCat.has(i.feed_id))
+      && (type == null || i.type === type));
     const todo = cand.filter((i) => this._catReady(i));
     const deferred = cand.length - todo.length;
-    if (!todo.length) { this._catStatus(deferred ? `${deferred} saved links still resolving — catalog after they finish` : 'nothing to catalog'); return { running: false, todo: 0, deferred }; }
+    if (!todo.length) { this._catStatus(deferred ? `${deferred} saved link${deferred === 1 ? '' : 's'} still resolving — catalog after they finish` : 'nothing to catalog here'); return { running: false, todo: 0, deferred }; }
     this._runCatalog(todo);   // not awaited — runs in the background, paced
     return { running: true, todo: todo.length, deferred };
   }
@@ -1029,6 +1039,7 @@ export class App {
       (feed.site_url || feed.url) && { label: 'Open site ↗', onClick: () => window.open(feed.site_url || feed.url, '_blank', 'noopener') },
       { sep: true },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
+      { label: '✦ Catalog this feed', onClick: () => this.catalogScope({ feed_id: feedId }) },
       { label: 'Edit feed…', onClick: () => this.openFeedEdit(feedId) },
       { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: () => this.store.updateFeed(feedId, { images_allowed: !feed.images_allowed }) },
       { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: () => this.store.updateFeed(feedId, { fetch_full_content: !feed.fetch_full_content }) },
@@ -1183,6 +1194,7 @@ export class App {
     showMenu(x, y, [
       { label: 'View this folder', onClick: () => this.setCategory(cat) },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ category: cat }) },
+      { label: '✦ Catalog this folder', onClick: () => this.catalogScope({ category: cat }) },
       { label: this.collapsedCats.has(cat) ? 'Expand' : 'Collapse', onClick: () => this.toggleCat(cat) },
       { sep: true },
       { label: 'Collapse all folders', onClick: () => this.collapseAllCats() },

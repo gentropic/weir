@@ -177,7 +177,15 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   async function catalogControl(input = {}) {
     if (!app) throw new Error('cataloging is only available in the running app');
     const action = (input.action || 'status');
-    if (action === 'start') return app.catalogAll();
+    if (action === 'start') {
+      // Optional scope narrows the run to one feed / folder / type; absent → whole corpus.
+      const scope = {};
+      if (input.feed) scope.feed_id = resolveFeedId(input.feed);
+      if (input.category !== undefined) scope.category = String(input.category);
+      if (input.type) scope.type = String(input.type);
+      const scoped = scope.feed_id || scope.category !== undefined || scope.type;
+      return scoped && app.catalogScope ? app.catalogScope(scope) : app.catalogAll();
+    }
     if (action === 'stop') return { stopped: app.stopCatalog() };
     if (action === 'clear') {
       // Discard all cards + un-file every item (items/content/reading state kept),
@@ -406,8 +414,13 @@ const TOOLS = [
   },
   {
     name: 'weir_catalogControl', fn: 'catalogControl',
-    description: 'Start / stop / clear / inspect the catalog batch. action:"start" catalogs all un-cataloged non-archived items (paced, runs in the page); "stop" cancels; "clear" discards ALL cards + un-files every item (items/content/reading state untouched; reversible by re-cataloging) for a clean restart; "status" (default) reports running state, progress {total,done,failed}, and cataloged/total counts.',
-    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['start', 'stop', 'clear', 'status'], description: 'Default: status' } } },
+    description: 'Start / stop / clear / inspect the catalog batch. action:"start" catalogs un-cataloged non-archived items (paced, runs in the page) — optionally SCOPED to one feed/folder/type via feed|category|type (omit all → whole corpus); "stop" cancels; "clear" discards ALL cards + un-files every item (items/content/reading state untouched; reversible by re-cataloging) for a clean restart; "status" (default) reports running state, progress {total,done,failed}, and cataloged/total counts. start returns {running, todo, deferred}.',
+    inputSchema: { type: 'object', properties: {
+      action: { type: 'string', enum: ['start', 'stop', 'clear', 'status'], description: 'Default: status' },
+      feed: { type: 'string', description: 'start scope: a source by id OR display name (e.g. "Saved Links")' },
+      category: { type: 'string', description: 'start scope: a folder name ("" = ungrouped)' },
+      type: { type: 'string', description: 'start scope: item type (article|video|paper|…)' },
+    } },
     annotations: { title: 'Control cataloging', destructiveHint: true },
   },
   {

@@ -91,12 +91,19 @@ await assert.rejects(tools.setState({ id: 'ghost', read: true }), /No item/);
 const calls = [];
 const mockApp = {
   catalogAll: () => { calls.push('start'); return { running: true, todo: 3 }; },
+  catalogScope: (scope) => { calls.push('scope:' + JSON.stringify(scope)); return { running: true, todo: 1, scope }; },
   stopCatalog: () => { calls.push('stop'); return true; },
   catalogStatus: () => ({ running: false, progress: { total: 3, done: 1, failed: 0 } }),
   catalogItem: async (id) => { calls.push('item:' + id); store.getItem(id).glass_id = 'glass-x'; return { ok: true, card: { facets: { domain: ['x'] } } }; },
 };
 const ctlTools = buildWeirTools({ store, app: mockApp });
-assert.deepEqual(await ctlTools.catalogControl({ action: 'start' }), { running: true, todo: 3 }, 'start');
+assert.deepEqual(await ctlTools.catalogControl({ action: 'start' }), { running: true, todo: 3 }, 'unscoped start → catalogAll');
+// scoped start → catalogScope (no scope keys → whole-corpus catalogAll)
+const scCat = await ctlTools.catalogControl({ action: 'start', category: 'News' });
+assert.deepEqual(scCat.scope, { category: 'News' }, 'category scope routed to catalogScope');
+const scType = await ctlTools.catalogControl({ action: 'start', type: 'video' });
+assert.deepEqual(scType.scope, { type: 'video' }, 'type scope routed to catalogScope');
+assert.ok(calls.includes('scope:{"category":"News"}'), 'catalogScope invoked, not catalogAll');
 const status = await ctlTools.catalogControl({});   // default status
 assert.equal(status.running, false); assert.equal(status.total, 2); assert.ok('cataloged' in status, 'status has counts');
 assert.deepEqual(await ctlTools.catalogControl({ action: 'stop' }), { stopped: true }, 'stop');
