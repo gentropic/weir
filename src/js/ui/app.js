@@ -208,6 +208,7 @@ export class App {
     this.unreadOnly = !!this.store.getSettings().stream_unread_only;
     document.getElementById('btn-unread')?.addEventListener('click', () => this.toggleUnread());
     document.getElementById('btn-mark-read')?.addEventListener('click', () => this.markAllHere());
+    document.getElementById('btn-tag-all')?.addEventListener('click', () => this.openBulkTagEditor());
     { const fd = document.getElementById('btn-flightdeck'); if (fd) { if ('documentPictureInPicture' in window) fd.addEventListener('click', () => this.openFlightDeck()); else fd.hidden = true; } }
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && this._cataloging) this._acquireWakeLock(); });   // wake lock auto-releases when hidden; re-take on return
     document.addEventListener('keydown', (e) => this.onKey(e));
@@ -869,6 +870,49 @@ export class App {
   markAllHere() {
     this.store.markAllRead(this._readScope());
     this.renderAll();
+  }
+
+  // Apply tags to every item currently shown (the whole query result — a search,
+  // folder, feed, unread filter, …), stamped 'human'. The bulk sibling of the
+  // per-item `t` editor. Returns the count changed.
+  tagAllShown(tags) {
+    const ids = (this.items || []).map((i) => i.id);
+    const n = this.store.addTagBulk(ids, tags, 'human');
+    this.store.flush();
+    this.renderStream();
+    return n;
+  }
+
+  // A one-input editor that tags the whole shown set at once ("tag all N…").
+  openBulkTagEditor() {
+    const items = this.items || [];
+    if (!items.length) { this._catStatus('nothing shown to tag'); return; }
+    document.getElementById('tag-editor')?.remove();
+    const datalist = Object.keys(this.store.getTags() || {}).sort().map((t) => `<option value="${escapeHtml(t)}">`).join('');
+    const scope = this.searchText ? `“${this.searchText}”` : (document.getElementById('view-title')?.textContent || 'this view');
+    const overlay = document.createElement('div');
+    overlay.id = 'tag-editor'; overlay.className = 'palette-overlay';
+    overlay.innerHTML = `<div class="tag-editor" role="dialog" aria-label="Tag all shown">`
+      + `<div class="te-title">Tag all ${items.length} item${items.length === 1 ? '' : 's'} in ${escapeHtml(scope)}</div>`
+      + `<input class="te-input" list="te-sugg" placeholder="tags, comma-separated, then Enter…" autocomplete="off" autocapitalize="off" spellcheck="false">`
+      + `<datalist id="te-sugg">${datalist}</datalist>`
+      + `<div class="te-hint">Enter tags all ${items.length} · Esc cancels</div></div>`;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector('.te-input');
+    const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+    document.addEventListener('keydown', onKey, true);
+    overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) close(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const tags = input.value.split(',').map((s) => s.trim()).filter(Boolean);
+      close();
+      if (!tags.length) return;
+      const n = this.tagAllShown(tags);
+      this._catStatus(`tagged ${n} item${n === 1 ? '' : 's'} with ${tags.map((t) => '#' + t).join(' ')}`);
+    });
+    input.focus();
   }
 
   // Gallery tile — kept as `.item` (plus `.tile`) so the click/select/reflect
@@ -1584,6 +1628,7 @@ export class App {
       { label: 'Catalog all items with AI', kind: 'Command', run: () => this.catalogAll() },
       { label: 'Review queue', kind: 'Command', run: () => this.openReview() },
       this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },
+      { label: 'Tag all shown items…', kind: 'Command', run: () => this.openBulkTagEditor() },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
       { label: 'Re-fetch weak-title links', kind: 'Command', run: () => this.reEnrichWeak() },
       { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },

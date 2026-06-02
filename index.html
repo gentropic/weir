@@ -599,6 +599,7 @@ body {
       <div class="actions">
         <button id="btn-unread" class="btn-link toggle" type="button" title="Show only unread (u)">● unread</button>
         <button id="btn-mark-read" class="btn-link" type="button" title="Mark everything in this view as read">✓ read all</button>
+        <button id="btn-tag-all" class="btn-link" type="button" title="Tag all shown items (a search, folder, view…)">⊕ tag all</button>
         <span class="topbar-sep"></span>
         <input id="search-input" class="field" type="search" placeholder="search… (/)" autocomplete="off" spellcheck="false">
         <button id="btn-saveview" class="btn-link" type="button" hidden title="Save this search as a view">＋ view</button>
@@ -6602,6 +6603,27 @@ class Store {
     return r;
   }
 
+  // Bulk-add tags to many items at once (e.g. "tag everything in this search").
+  // Registers the tag names + writes /tags.json ONCE (not per item — addTag would
+  // thrash it N×M times), marks each touched feed dirty, single emit. Returns the
+  // count of items actually changed. Pairs with a single flush() by the caller.
+  addTagBulk(ids, tags, source = 'human') {
+    const clean = [...new Set(tags.map((t) => String(t).trim()).filter(Boolean))];
+    if (!clean.length) return 0;
+    let n = 0; const feeds = new Set();
+    for (const id of ids) {
+      const r = this.items.get(String(id)); if (!r) continue;
+      let changed = false;
+      for (const t of clean) { if (r.tags.includes(t)) continue; r.tags = [...r.tags, t]; r.tag_src = { ...(r.tag_src || {}), [t]: source }; changed = true; }
+      if (changed) { r.search_text = deriveSearchText(r); feeds.add(r.feed_id); n++; }
+    }
+    for (const t of clean) this.tags[t] = { name: t, ...this.tags[t] };   // register names (in-memory)
+    this.vfs.writeFile('/tags.json', JSON.stringify(this.tags, null, 2)).catch(() => {});   // persist registry once
+    for (const fid of feeds) this._markFeedDirty(fid);
+    if (n) this.emit('items', { inserted: 0, updated: n, skipped: 0 });
+    return n;
+  }
+
   // Bulk mark-read over exactly the items a view/folder/feed shows — reuses the
   // query predicate so scope always matches what's visible.
   markAllRead(opts = {}) {
@@ -9442,6 +9464,7 @@ class App {
     this.unreadOnly = !!this.store.getSettings().stream_unread_only;
     document.getElementById('btn-unread')?.addEventListener('click', () => this.toggleUnread());
     document.getElementById('btn-mark-read')?.addEventListener('click', () => this.markAllHere());
+    document.getElementById('btn-tag-all')?.addEventListener('click', () => this.openBulkTagEditor());
     { const fd = document.getElementById('btn-flightdeck'); if (fd) { if ('documentPictureInPicture' in window) fd.addEventListener('click', () => this.openFlightDeck()); else fd.hidden = true; } }
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && this._cataloging) this._acquireWakeLock(); });   // wake lock auto-releases when hidden; re-take on return
     document.addEventListener('keydown', (e) => this.onKey(e));
@@ -10103,6 +10126,49 @@ class App {
   markAllHere() {
     this.store.markAllRead(this._readScope());
     this.renderAll();
+  }
+
+  // Apply tags to every item currently shown (the whole query result — a search,
+  // folder, feed, unread filter, …), stamped 'human'. The bulk sibling of the
+  // per-item `t` editor. Returns the count changed.
+  tagAllShown(tags) {
+    const ids = (this.items || []).map((i) => i.id);
+    const n = this.store.addTagBulk(ids, tags, 'human');
+    this.store.flush();
+    this.renderStream();
+    return n;
+  }
+
+  // A one-input editor that tags the whole shown set at once ("tag all N…").
+  openBulkTagEditor() {
+    const items = this.items || [];
+    if (!items.length) { this._catStatus('nothing shown to tag'); return; }
+    document.getElementById('tag-editor')?.remove();
+    const datalist = Object.keys(this.store.getTags() || {}).sort().map((t) => `<option value="${escapeHtml(t)}">`).join('');
+    const scope = this.searchText ? `“${this.searchText}”` : (document.getElementById('view-title')?.textContent || 'this view');
+    const overlay = document.createElement('div');
+    overlay.id = 'tag-editor'; overlay.className = 'palette-overlay';
+    overlay.innerHTML = `<div class="tag-editor" role="dialog" aria-label="Tag all shown">`
+      + `<div class="te-title">Tag all ${items.length} item${items.length === 1 ? '' : 's'} in ${escapeHtml(scope)}</div>`
+      + `<input class="te-input" list="te-sugg" placeholder="tags, comma-separated, then Enter…" autocomplete="off" autocapitalize="off" spellcheck="false">`
+      + `<datalist id="te-sugg">${datalist}</datalist>`
+      + `<div class="te-hint">Enter tags all ${items.length} · Esc cancels</div></div>`;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector('.te-input');
+    const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+    document.addEventListener('keydown', onKey, true);
+    overlay.addEventListener('pointerdown', (e) => { if (e.target === overlay) close(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const tags = input.value.split(',').map((s) => s.trim()).filter(Boolean);
+      close();
+      if (!tags.length) return;
+      const n = this.tagAllShown(tags);
+      this._catStatus(`tagged ${n} item${n === 1 ? '' : 's'} with ${tags.map((t) => '#' + t).join(' ')}`);
+    });
+    input.focus();
   }
 
   // Gallery tile — kept as `.item` (plus `.tile`) so the click/select/reflect
@@ -10818,6 +10884,7 @@ class App {
       { label: 'Catalog all items with AI', kind: 'Command', run: () => this.catalogAll() },
       { label: 'Review queue', kind: 'Command', run: () => this.openReview() },
       this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },
+      { label: 'Tag all shown items…', kind: 'Command', run: () => this.openBulkTagEditor() },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
       { label: 'Re-fetch weak-title links', kind: 'Command', run: () => this.reEnrichWeak() },
       { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },
@@ -11631,17 +11698,25 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return hit ? hit.id : s;   // fall back to the raw value (yields an empty set if unknown)
   }
 
-  async function queryItems(input = {}) {
-    const { q, type, view, unread, saved, cursor, category } = input;
-    const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
-    const opts = {};   // no limit → full matching set; we page it here with a keyset cursor
-    if (q) opts.text = String(q);
-    if (type) opts.type = String(type);
-    if (view) opts.view = String(view);
+  // Shared query builder — maps the tool args (q/feed/category/type/view/unread/
+  // saved) to store.query opts. Reused by queryItems + tagItems so a bulk tag
+  // scopes exactly like a list.
+  function buildQuery(input = {}) {
+    const opts = {};
+    if (input.q) opts.text = String(input.q);
+    if (input.type) opts.type = String(input.type);
+    if (input.view) opts.view = String(input.view);
     if (input.feed) opts.feed_id = resolveFeedId(input.feed);
-    if (category !== undefined) opts.category = String(category);   // '' = ungrouped
-    if (unread === true) opts.read = false;
-    if (saved !== undefined) opts.saved = !!saved;
+    if (input.category !== undefined) opts.category = String(input.category);   // '' = ungrouped
+    if (input.unread === true) opts.read = false;
+    if (input.saved !== undefined) opts.saved = !!input.saved;
+    return opts;
+  }
+
+  async function queryItems(input = {}) {
+    const { cursor } = input;
+    const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
+    const opts = buildQuery(input);   // no limit → full matching set; paged here with a keyset cursor
     // Stable total order: newest first, id as tie-breaker (so the cursor is exact
     // even when timestamps collide). Re-sort explicitly — don't rely on Map order.
     const pa = (r) => r.published_at || 0;
@@ -11734,6 +11809,22 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     for (const t of remove) store.removeTag(it.id, t);
     await store.flush();
     return projItem(store, store.getItem(it.id), true);
+  }
+
+  // Bulk-tag every item matching a query (the "tag all these search results" verb).
+  // Same scope args as weir_queryItems (q/feed/category/type/view/unread/saved).
+  // Tags are stamped source:'llm'. Returns how many items were matched/changed.
+  async function tagItems(input = {}) {
+    const add = [].concat(input.add || []).filter(Boolean);
+    const remove = [].concat(input.remove || []).filter(Boolean);
+    if (!add.length && !remove.length) throw new Error('Provide tags to add and/or remove.');
+    const ids = store.query(buildQuery(input)).map((r) => r.id);
+    if (!ids.length) return { matched: 0, changed: 0, add, remove };
+    const changed = add.length ? store.addTagBulk(ids, add, 'llm') : 0;
+    for (const id of ids) for (const t of remove) store.removeTag(id, t);
+    await store.flush();
+    if (app && app.renderStream) app.renderStream();
+    return { matched: ids.length, changed, add, remove };
   }
 
   // Catalog one item with the configured LLM now → returns its enriched facets.
@@ -11889,7 +11980,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { queued, pending: r.status().pending };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, tagItems, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -11973,6 +12064,24 @@ const TOOLS = [
       }, required: ['id'],
     },
     annotations: { title: 'Tag an item' },
+  },
+  {
+    name: 'weir_tagItems', fn: 'tagItems',
+    description: "Bulk-tag every item matching a query — the \"tag all these search results\" verb. Scope with the SAME args as weir_queryItems (q, feed, category, type, view, unread, saved); add/remove are tag-name arrays. Tags are stamped source:'llm'. Returns { matched, changed }. Use weir_queryItems first to see how many you'll hit.",
+    inputSchema: {
+      type: 'object', properties: {
+        q: { type: 'string', description: 'Substring over title/excerpt/text' },
+        feed: { type: 'string', description: 'A source by id or display name' },
+        category: { type: 'string', description: 'A folder name ("" = ungrouped)' },
+        type: { type: 'string', description: 'Item type (article|video|paper|…)' },
+        view: { type: 'string', enum: ['inbox', 'saved', 'archived'], description: 'Scope to a view' },
+        unread: { type: 'boolean', description: 'Only unread' },
+        saved: { type: 'boolean', description: 'Only saved' },
+        add: { type: 'array', items: { type: 'string' }, description: 'Tags to add to every match' },
+        remove: { type: 'array', items: { type: 'string' }, description: 'Tags to remove from every match' },
+      },
+    },
+    annotations: { title: 'Bulk-tag a query' },
   },
   {
     name: 'weir_catalogItem', fn: 'catalogItem',
@@ -12113,7 +12222,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'e0f780d';          // short content hash of the bundle (build id)
+const COMMIT = '0614831';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

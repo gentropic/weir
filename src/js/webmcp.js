@@ -70,17 +70,25 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return hit ? hit.id : s;   // fall back to the raw value (yields an empty set if unknown)
   }
 
-  async function queryItems(input = {}) {
-    const { q, type, view, unread, saved, cursor, category } = input;
-    const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
-    const opts = {};   // no limit → full matching set; we page it here with a keyset cursor
-    if (q) opts.text = String(q);
-    if (type) opts.type = String(type);
-    if (view) opts.view = String(view);
+  // Shared query builder — maps the tool args (q/feed/category/type/view/unread/
+  // saved) to store.query opts. Reused by queryItems + tagItems so a bulk tag
+  // scopes exactly like a list.
+  function buildQuery(input = {}) {
+    const opts = {};
+    if (input.q) opts.text = String(input.q);
+    if (input.type) opts.type = String(input.type);
+    if (input.view) opts.view = String(input.view);
     if (input.feed) opts.feed_id = resolveFeedId(input.feed);
-    if (category !== undefined) opts.category = String(category);   // '' = ungrouped
-    if (unread === true) opts.read = false;
-    if (saved !== undefined) opts.saved = !!saved;
+    if (input.category !== undefined) opts.category = String(input.category);   // '' = ungrouped
+    if (input.unread === true) opts.read = false;
+    if (input.saved !== undefined) opts.saved = !!input.saved;
+    return opts;
+  }
+
+  async function queryItems(input = {}) {
+    const { cursor } = input;
+    const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
+    const opts = buildQuery(input);   // no limit → full matching set; paged here with a keyset cursor
     // Stable total order: newest first, id as tie-breaker (so the cursor is exact
     // even when timestamps collide). Re-sort explicitly — don't rely on Map order.
     const pa = (r) => r.published_at || 0;
@@ -173,6 +181,22 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     for (const t of remove) store.removeTag(it.id, t);
     await store.flush();
     return projItem(store, store.getItem(it.id), true);
+  }
+
+  // Bulk-tag every item matching a query (the "tag all these search results" verb).
+  // Same scope args as weir_queryItems (q/feed/category/type/view/unread/saved).
+  // Tags are stamped source:'llm'. Returns how many items were matched/changed.
+  async function tagItems(input = {}) {
+    const add = [].concat(input.add || []).filter(Boolean);
+    const remove = [].concat(input.remove || []).filter(Boolean);
+    if (!add.length && !remove.length) throw new Error('Provide tags to add and/or remove.');
+    const ids = store.query(buildQuery(input)).map((r) => r.id);
+    if (!ids.length) return { matched: 0, changed: 0, add, remove };
+    const changed = add.length ? store.addTagBulk(ids, add, 'llm') : 0;
+    for (const id of ids) for (const t of remove) store.removeTag(id, t);
+    await store.flush();
+    if (app && app.renderStream) app.renderStream();
+    return { matched: ids.length, changed, add, remove };
   }
 
   // Catalog one item with the configured LLM now → returns its enriched facets.
@@ -328,7 +352,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { queued, pending: r.status().pending };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, tagItems, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -412,6 +436,24 @@ const TOOLS = [
       }, required: ['id'],
     },
     annotations: { title: 'Tag an item' },
+  },
+  {
+    name: 'weir_tagItems', fn: 'tagItems',
+    description: "Bulk-tag every item matching a query — the \"tag all these search results\" verb. Scope with the SAME args as weir_queryItems (q, feed, category, type, view, unread, saved); add/remove are tag-name arrays. Tags are stamped source:'llm'. Returns { matched, changed }. Use weir_queryItems first to see how many you'll hit.",
+    inputSchema: {
+      type: 'object', properties: {
+        q: { type: 'string', description: 'Substring over title/excerpt/text' },
+        feed: { type: 'string', description: 'A source by id or display name' },
+        category: { type: 'string', description: 'A folder name ("" = ungrouped)' },
+        type: { type: 'string', description: 'Item type (article|video|paper|…)' },
+        view: { type: 'string', enum: ['inbox', 'saved', 'archived'], description: 'Scope to a view' },
+        unread: { type: 'boolean', description: 'Only unread' },
+        saved: { type: 'boolean', description: 'Only saved' },
+        add: { type: 'array', items: { type: 'string' }, description: 'Tags to add to every match' },
+        remove: { type: 'array', items: { type: 'string' }, description: 'Tags to remove from every match' },
+      },
+    },
+    annotations: { title: 'Bulk-tag a query' },
   },
   {
     name: 'weir_catalogItem', fn: 'catalogItem',

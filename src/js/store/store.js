@@ -429,6 +429,27 @@ export class Store {
     return r;
   }
 
+  // Bulk-add tags to many items at once (e.g. "tag everything in this search").
+  // Registers the tag names + writes /tags.json ONCE (not per item — addTag would
+  // thrash it N×M times), marks each touched feed dirty, single emit. Returns the
+  // count of items actually changed. Pairs with a single flush() by the caller.
+  addTagBulk(ids, tags, source = 'human') {
+    const clean = [...new Set(tags.map((t) => String(t).trim()).filter(Boolean))];
+    if (!clean.length) return 0;
+    let n = 0; const feeds = new Set();
+    for (const id of ids) {
+      const r = this.items.get(String(id)); if (!r) continue;
+      let changed = false;
+      for (const t of clean) { if (r.tags.includes(t)) continue; r.tags = [...r.tags, t]; r.tag_src = { ...(r.tag_src || {}), [t]: source }; changed = true; }
+      if (changed) { r.search_text = deriveSearchText(r); feeds.add(r.feed_id); n++; }
+    }
+    for (const t of clean) this.tags[t] = { name: t, ...this.tags[t] };   // register names (in-memory)
+    this.vfs.writeFile('/tags.json', JSON.stringify(this.tags, null, 2)).catch(() => {});   // persist registry once
+    for (const fid of feeds) this._markFeedDirty(fid);
+    if (n) this.emit('items', { inserted: 0, updated: n, skipped: 0 });
+    return n;
+  }
+
   // Bulk mark-read over exactly the items a view/folder/feed shows — reuses the
   // query predicate so scope always matches what's visible.
   markAllRead(opts = {}) {

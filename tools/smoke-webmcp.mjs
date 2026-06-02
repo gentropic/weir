@@ -96,6 +96,14 @@ assert.ok(!store.getItem('a1').tags.includes('geo') && store.getItem('a1').tags.
 await assert.rejects(tools.tagItem({ id: 'a1' }), /add and\/or remove/, 'needs add or remove');
 await assert.rejects(tools.tagItem({ id: 'ghost', add: ['x'] }), /No item/);
 
+// ── bulk-tag a query (tagItems) — scopes like queryItems ──
+const bt = await tools.tagItems({ type: 'article', add: ['swept'] });
+assert.ok(bt.matched >= 1 && bt.changed >= 1, 'tagItems matched + changed the article');
+assert.ok(store.getItem('a1').tags.includes('swept'), 'bulk tag landed on the matching item');
+assert.equal(store.getItem('a1').tag_src.swept, 'llm', 'bulk WebMCP tag stamped source:llm');
+assert.equal((await tools.tagItems({ q: 'no-such-text', add: ['x'] })).matched, 0, 'empty match → 0, no throw');
+await assert.rejects(tools.tagItems({ type: 'article' }), /add and\/or remove/, 'tagItems needs add or remove');
+
 // ── catalog control (mock app) ──
 const calls = [];
 const mockApp = {

@@ -66,6 +66,20 @@ store.removeTag('arxiv:2026.002', 'geo');
 assert.deepEqual(store.getItem('arxiv:2026.002').tags, [], 'tag removed');
 assert.equal(store.getItem('arxiv:2026.002').tag_src, undefined, 'tag_src cleared when last tag removed');
 
+// bulk-tag (isolated store, so it can't perturb the carefully-sequenced asserts above)
+{
+  const bs = new Store(await VFS.create()); await bs._hydrate();
+  await bs.putFeed({ id: 'bf', name: 'bulk', adapter: 'feed', url: 'http://x/f' });
+  await bs.upsertItems([{ id: 'b1', feed_id: 'bf', title: 'one', type: 'article' }, { id: 'b2', feed_id: 'bf', title: 'two', type: 'article' }]);
+  const bn = bs.addTagBulk(['b1', 'b2'], ['batch', 'batch', ' batch '], 'human');   // repeats + whitespace dedup to one
+  assert.equal(bn, 2, 'addTagBulk changed both items');
+  assert.ok(bs.getItem('b1').tags.includes('batch') && bs.getItem('b2').tags.includes('batch'), 'bulk tag landed on both');
+  assert.deepEqual(bs.getItem('b1').tags, ['batch'], 'dedups repeats/whitespace to a single tag');
+  assert.equal(bs.getItem('b2').tag_src.batch, 'human', 'bulk provenance recorded');
+  assert.equal(bs.addTagBulk(['b1'], ['batch'], 'human'), 0, 'bulk is idempotent (no change → 0)');
+  assert.equal(bs.query({ tag: 'batch' }).length, 2, 'both queryable by the bulk tag');
+}
+
 // Prune one, then prove it cannot be resurrected by a later poll.
 assert.deepEqual(await store.prune(['arxiv:2026.003']), { pruned: 1 }, 'prune one');
 assert.equal(store.getItem('arxiv:2026.003'), null, 'pruned item gone');
