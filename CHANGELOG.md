@@ -6,6 +6,15 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Resolver: keeps dripping in the flight-deck (backgrounded runs) — 2026-06-02
+
+- The flight-deck already kept the **catalog + poller** alive while the tab is
+  backgrounded; the saved-link **resolver** now rides the same always-visible,
+  un-throttled PiP timer (`linkResolver.setKeepAlive`). So with the deck popped out,
+  resolving/enriching **keeps going while you use other apps** — not just while
+  weir is the focused tab. Without the deck it still pauses when hidden (the gentle
+  default), and the `_busy` guard keeps the two timers from double-ticking.
+
 ### Resolver: a persistent run log (so an overnight drip is reviewable) — 2026-06-02
 
 - The link resolver now keeps a **persistent, classified run log**

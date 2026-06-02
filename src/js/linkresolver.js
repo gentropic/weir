@@ -64,6 +64,21 @@ export class LinkResolver {
     this.log = { resolved: 0, parked: 0, reasons: {}, recent: [], startedAt: null, updatedAt: null };
     this._lastLogSave = 0;
     this._timer = null; this._busy = false; this._listeners = new Set();
+    this._keepAlive = false; this._keepAliveTimer = null; this._keepAliveWin = null;
+  }
+
+  // Drive ticks from the flight-deck PiP window's timer (always-visible →
+  // un-throttled) so resolving continues while the main tab is backgrounded —
+  // same trick the poller uses. `win` = the PiP window, or null to detach.
+  setKeepAlive(win) {
+    if (this._keepAliveTimer && this._keepAliveWin) { try { this._keepAliveWin.clearInterval(this._keepAliveTimer); } catch { /* window gone */ } }
+    this._keepAliveTimer = null; this._keepAliveWin = null; this._keepAlive = !!win;
+    if (win) {
+      this._keepAliveWin = win;
+      this._keepAliveTimer = win.setInterval(() => this.tick().catch(() => {}), this.intervalMs);
+      if (this._pending().length) this.start();
+      this.tick().catch(() => {});
+    }
   }
 
   on(fn) { this._listeners.add(fn); return () => this._listeners.delete(fn); }
@@ -148,7 +163,9 @@ export class LinkResolver {
 
   async tick() {
     if (this._busy) return;
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;   // idle in the background
+    // Pause when the main tab is hidden — UNLESS the flight-deck is keeping us
+    // alive through its always-visible PiP timer.
+    if (!this._keepAlive && typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     this._busy = true;
     try {
       const batch = this._pending().slice(0, this.batch);

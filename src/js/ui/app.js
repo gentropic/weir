@@ -572,7 +572,10 @@ export class App {
       // off the PiP-timer tick), unlike the main hidden-tab render.
       this._deckPollOff = this.poller.on('cycle', () => { if (this._pipWin) this._renderFlightDeck(); });
     }
-    pip.addEventListener('pagehide', () => { this._pipWin = null; this.poller.setKeepAlive(null); if (this._deckPollOff) { this._deckPollOff(); this._deckPollOff = null; } });
+    // Keep the saved-link resolver dripping through the deck's (un-throttled,
+    // always-visible) timer too, so a backgrounded tab keeps resolving/enriching.
+    this.linkResolver?.setKeepAlive(pip);
+    pip.addEventListener('pagehide', () => { this._pipWin = null; this.poller.setKeepAlive(null); this.linkResolver?.setKeepAlive(null); if (this._deckPollOff) { this._deckPollOff(); this._deckPollOff = null; } });
     pip.document.getElementById('flightdeck').addEventListener('click', (e) => {
       if (e.target.closest('[data-fd-pin]')) { this._pinDeck(); return; }
       if (e.target.closest('[data-fd-reset]')) { this.store.setSettings({ flightdeck_scope: null }); this._fdSig = null; this._renderFlightDeck(); return; }
