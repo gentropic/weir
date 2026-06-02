@@ -332,7 +332,12 @@ the trigger/query layer on top.
   every modern browser) at the VFS content layer (`_writeContent`/`getContent`), so
   it's backend-agnostic (IDB/OPFS/FSA) and invisible to the cataloger/reader. Pairs
   with the size report (measure first) and the cold-store tier. Keep a magic-byte/
-  flag so old uncompressed content still reads.
+  flag so old uncompressed content still reads. **Note (2026-06-02):** our vendored
+  `@gcu/vfs` ALREADY bundles `CompressionStream`/gzip + `OverlayBackend` +
+  `CacheBackend` — so check for a vfs compression overlay/option (mount it → free
+  transparent compression) BEFORE hand-rolling at the store layer. The same module
+  also exposes `vfs.export()/import()` (tar/zip snapshot) — a candidate for a
+  portable single-file backup vs. the current JSON `exportAll`.
 - ~~**Pack catalog cards into shards (cut the FSAA file count).**~~ ✅ Shipped
   2026-06-02. Cards were one `/catalog/glass-*.json` file per item (~3,500+); now
   they live in an **in-memory index persisted as ~256 bucketed shards**
