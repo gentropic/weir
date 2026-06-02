@@ -449,24 +449,37 @@ export class App {
   // Catalog the currently-shown items that aren't cataloged yet — one at a time,
   // paced (gentle on the NPU + the machine), cancelable, resumable (skips already-
   // cataloged), and self-stopping if the LLM/bridge goes down mid-run.
+  // A saved link isn't worth cataloging until the resolver has fetched it (resolved
+  // the share.google wrapper + pulled a real title/excerpt) — otherwise it catalogs
+  // a "share.google" placeholder into facets that then STICK (a glass_id is set, so
+  // it won't auto-recatalog when it later resolves). Defer un-enriched saved links;
+  // a later batch run sweeps them up as the drip marks them enriched. (The per-item
+  // "Catalog with AI" is unaffected — an explicit choice.)
+  _catReady(i) { return !(i.feed_id === 'saved' && !i.enriched); }
+
   async catalogVisible() {
     if (this._cataloging) { this._cataloging.cancel = true; return; }
-    const todo = this.items.filter((i) => !i.glass_id);
-    if (!todo.length) { this._catStatus('nothing to catalog here'); return; }
+    const cand = this.items.filter((i) => !i.glass_id);
+    const todo = cand.filter((i) => this._catReady(i));
+    const deferred = cand.length - todo.length;
+    if (!todo.length) { this._catStatus(deferred ? `${deferred} saved link${deferred === 1 ? '' : 's'} still resolving — catalog after they finish` : 'nothing to catalog here'); return; }
     // "Let it rip" can be the whole corpus (catalog mode, no filter) — one LLM
     // call per item. Confirm before a long unattended run.
-    if (todo.length > 30 && !confirm(`Catalog ${todo.length} items? That's one LLM call each — it can run for a while. It resumes where it left off if interrupted, and you can click the button again to stop.`)) return;
+    if (todo.length > 30 && !confirm(`Catalog ${todo.length} items?${deferred ? ` (${deferred} unresolved saved links deferred)` : ''} That's one LLM call each — it can run for a while. It resumes where it left off if interrupted, and you can click the button again to stop.`)) return;
     return this._runCatalog(todo);
   }
 
   // Catalog ALL un-cataloged, non-archived items in the corpus (no view scope, no
   // confirm) — used by the WebMCP catalog-start tool. Fire-and-forget; paced.
+  // Un-enriched saved links are deferred (see _catReady).
   catalogAll() {
     if (this._cataloging) return { running: true, already: true };
-    const todo = [...this.store.items.values()].filter((i) => !i.glass_id && !i.archived);
-    if (!todo.length) { this._catStatus('nothing to catalog'); return { running: false, todo: 0 }; }
+    const cand = [...this.store.items.values()].filter((i) => !i.glass_id && !i.archived);
+    const todo = cand.filter((i) => this._catReady(i));
+    const deferred = cand.length - todo.length;
+    if (!todo.length) { this._catStatus(deferred ? `${deferred} saved links still resolving — catalog after they finish` : 'nothing to catalog'); return { running: false, todo: 0, deferred }; }
     this._runCatalog(todo);   // not awaited — runs in the background, paced
-    return { running: true, todo: todo.length };
+    return { running: true, todo: todo.length, deferred };
   }
 
   stopCatalog() { if (this._cataloging) { this._cataloging.cancel = true; return true; } return false; }
