@@ -7726,7 +7726,9 @@ function isWeakTitle(title, url) {
   if (!title || title === '(untitled)') return true;
   const t = String(title).trim();
   if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(t)) return true;        // looks like a bare domain
-  if (/^source\s*[:\-–—|]/i.test(t)) return true;                 // Google Discover attribution: "Source: Hackaday"
+  if (/^source\s*[:\-–—|]/i.test(t)) return true;                 // Google Discover attribution prefix: "Source: Hackaday"
+  if (/shared via the google app/i.test(t)) return true;          // Google App share-sheet cruft (anywhere)
+  if (/\bsource\s*:\s*[\w.''’&\- ]{2,40}$/i.test(t)) return true; // trailing attribution: "…real title… Source: Hackaday"
   try { if (t === new URL(url).hostname.replace(/^www\./, '')) return true; } catch { /* ignore */ }
   return false;
 }

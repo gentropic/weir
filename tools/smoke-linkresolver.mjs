@@ -108,15 +108,19 @@ assert.match(await store.getContent(id5), /extracted body of https:\/\/hackaday\
 const wr = new Store(await VFS.create()); await wr._hydrate();
 await wr.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever' } });
 await wr.upsertItems([
-  { id: 'saved:weak', feed_id: 'saved', url: 'https://hackaday.com/a', title: 'Source: Hackaday', type: 'article' },
+  { id: 'saved:weak', feed_id: 'saved', url: 'https://hackaday.com/a', title: 'Source: Hackaday', type: 'article' },             // prefix attribution
+  { id: 'saved:sfx', feed_id: 'saved', url: 'https://hackaday.com/c', title: 'A Forth OS In 46 Bytes Source: Hackaday Shared via the Google App', type: 'article' }, // Google App suffix cruft
+  { id: 'saved:trail', feed_id: 'saved', url: 'https://hackaday.com/d', title: 'Custom Touchpad PCBs Without The Pain Source: Hackaday', type: 'article' },           // trailing attribution
   { id: 'saved:good', feed_id: 'saved', url: 'https://hackaday.com/b', title: 'A Real Article Title', type: 'article' },
 ]);
-await wr.upsertItems([{ id: 'saved:weak', feed_id: 'saved', enriched: true }, { id: 'saved:good', feed_id: 'saved', enriched: true }]);
+await wr.upsertItems(['saved:weak', 'saved:sfx', 'saved:trail', 'saved:good'].map((id) => ({ id, feed_id: 'saved', enriched: true })));
 const wlr = new LinkResolver(wr, { fetch: async () => ({ ok: false, status: 0 }) });
 const requeued = await wlr.reEnrichWeakTitles();
 wlr.stop();
-assert.equal(requeued, 1, 'only the "Source: X" weak-title link is re-queued');
-assert.equal(wr.getItem('saved:weak').enriched, false, 'weak-title link: enriched cleared (will re-fetch og:title)');
-assert.equal(wr.getItem('saved:good').enriched, true, 'real-title link: left enriched (untouched)');
+assert.equal(requeued, 3, 'prefix + suffix + trailing-attribution titles all re-queued; clean title left alone');
+assert.equal(wr.getItem('saved:weak').enriched, false, 'prefix "Source: X" re-queued');
+assert.equal(wr.getItem('saved:sfx').enriched, false, '"Shared via the Google App" suffix re-queued');
+assert.equal(wr.getItem('saved:trail').enriched, false, 'trailing "… Source: Hackaday" re-queued');
+assert.equal(wr.getItem('saved:good').enriched, true, 'clean title left enriched (untouched)');
 
 console.log('linkresolver smoke ok:', JSON.stringify({ title: it.title, thumb: !!it.media.thumbnail, pending: lr._pending().length, content: store.getItem(id5).has_content, reEnriched: requeued }));
