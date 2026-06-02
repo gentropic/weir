@@ -1404,13 +1404,19 @@ export class App {
     const sleep = (ms) => new Promise((res) => (this._pipWin || window).setTimeout(res, ms));
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const r = await this.poller.fetch(url, { redirect: 'follow' });
+        // The bridge caches every response (even a 429) and re-serves it as a
+        // synthetic 200 within its freshness window — so a link that got rate-
+        // limited on a prior burst would stay "resolved" to the wrapper forever.
+        // After the first try, force a real re-fetch past that stale cache entry.
+        const opts = { redirect: 'follow' };
+        if (attempt > 0) opts.headers = { 'cache-control': 'no-cache' };
+        const r = await this.poller.fetch(url, opts);
         if (r && r.ok && r.url && r.url !== url && !isWrappedUrl(r.url)) return r.url;   // resolved
-        // ok-but-no-redirect, or a non-ok status (rate-limited) → back off + retry
+        // ok-but-no-redirect (stale wrapper) or a non-ok status (rate-limited) → back off + retry
       } catch { /* network blip → retry */ }
-      await sleep(500 * (attempt + 1));
+      await sleep(600 * (attempt + 1));
     }
-    return url;   // give up — keep the wrapper; a later re-import will retry
+    return url;   // give up — keep the wrapper; a later re-import will retry (cache-busted)
   }
 
   // The 'saved' source holds imported links + (later) Telegram captures. It has
