@@ -398,6 +398,13 @@ the trigger/query layer on top.
   Tension to honor: the "no media caching" non-goal (SPEC §8) rules out audio/video
   *enclosures* (streamed); small cover images are a different, measured trade and
   stay opt-in. Pairs with the storage breakdown above (and the cold-store tier).
+- **Finish the BackgroundRunner migration.** ✅ Runner + telegram + resolver done
+  2026-06-03 (`runner.js`; one `setDriver` keep-alive switch, no per-loop path to
+  forget). **Remaining:** move the **poller** onto it (fiddlier — bespoke per-feed
+  `next_poll_at` scheduling + a concurrency cap, so it'd register as a single "poll
+  due feeds" tick that the runner drives) and optionally the **retainer / recovery
+  drip / favicon** loops, retiring `poller.setKeepAlive`. Then a single place knows
+  every background loop → feeds a "background activity" view in the status-bar tidy.
 - **Save-Page-Now.** Proactively archive live feeds to the Internet Archive (uses
   the IA keys already in Settings) so future [feed archaeology](CHANGELOG.md)
   always has snapshots. Plus link-rot recovery (dead item URL → archived page).
