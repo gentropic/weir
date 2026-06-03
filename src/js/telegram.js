@@ -66,9 +66,21 @@ export class TelegramInflux {
     this.fetch(`${TG_API}/bot${this._token}/setMessageReaction?chat_id=${msg.chat.id}&message_id=${msg.message_id}&reaction=${reaction}`).catch(() => {});
   }
 
+  // Drive polling from the flight-deck PiP window's always-visible (un-throttled)
+  // timer, so live capture keeps up at full speed even when the main tab is hidden —
+  // same trick the poller/resolver use. `win` = the PiP window, or null to detach.
+  setKeepAlive(win) {
+    if (this._kaTimer && this._kaWin) { try { this._kaWin.clearInterval(this._kaTimer); } catch { /* window gone */ } }
+    this._kaTimer = null; this._kaWin = null;
+    if (win) { this._kaWin = win; this._kaTimer = win.setInterval(() => this.tick().catch(() => {}), this.intervalMs); this.tick().catch(() => {}); }
+  }
+
   async tick() {
     if (this._busy) return;
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;   // poll only while visible
+    // No hidden-tab guard: this is a CAPTURE pipe — you send from your phone while
+    // NOT looking at weir, so it must poll backgrounded too. (Hidden tabs throttle
+    // the interval to ~1/min; the flight-deck keepalive restores full speed.)
+    if (!this.status.enabled) return;
     const token = this.getToken ? await this.getToken() : null;
     if (!token) return;
     this._token = token;

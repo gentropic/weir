@@ -8508,9 +8508,21 @@ class TelegramInflux {
     this.fetch(`${TG_API}/bot${this._token}/setMessageReaction?chat_id=${msg.chat.id}&message_id=${msg.message_id}&reaction=${reaction}`).catch(() => {});
   }
 
+  // Drive polling from the flight-deck PiP window's always-visible (un-throttled)
+  // timer, so live capture keeps up at full speed even when the main tab is hidden —
+  // same trick the poller/resolver use. `win` = the PiP window, or null to detach.
+  setKeepAlive(win) {
+    if (this._kaTimer && this._kaWin) { try { this._kaWin.clearInterval(this._kaTimer); } catch { /* window gone */ } }
+    this._kaTimer = null; this._kaWin = null;
+    if (win) { this._kaWin = win; this._kaTimer = win.setInterval(() => this.tick().catch(() => {}), this.intervalMs); this.tick().catch(() => {}); }
+  }
+
   async tick() {
     if (this._busy) return;
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;   // poll only while visible
+    // No hidden-tab guard: this is a CAPTURE pipe — you send from your phone while
+    // NOT looking at weir, so it must poll backgrounded too. (Hidden tabs throttle
+    // the interval to ~1/min; the flight-deck keepalive restores full speed.)
+    if (!this.status.enabled) return;
     const token = this.getToken ? await this.getToken() : null;
     if (!token) return;
     this._token = token;
@@ -10494,7 +10506,8 @@ class App {
     // Keep the saved-link resolver dripping through the deck's (un-throttled,
     // always-visible) timer too, so a backgrounded tab keeps resolving/enriching.
     this.linkResolver?.setKeepAlive(pip);
-    pip.addEventListener('pagehide', () => { this._pipWin = null; this.poller.setKeepAlive(null); this.linkResolver?.setKeepAlive(null); if (this._deckPollOff) { this._deckPollOff(); this._deckPollOff = null; } });
+    this.telegram?.setKeepAlive(pip);
+    pip.addEventListener('pagehide', () => { this._pipWin = null; this.poller.setKeepAlive(null); this.linkResolver?.setKeepAlive(null); this.telegram?.setKeepAlive(null); if (this._deckPollOff) { this._deckPollOff(); this._deckPollOff = null; } });
     pip.document.getElementById('flightdeck').addEventListener('click', (e) => {
       if (e.target.closest('[data-fd-pin]')) { this._pinDeck(); return; }
       if (e.target.closest('[data-fd-reset]')) { this.store.setSettings({ flightdeck_scope: null }); this._fdSig = null; this._renderFlightDeck(); return; }
@@ -13013,7 +13026,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'c088309';          // short content hash of the bundle (build id)
+const COMMIT = '3f677bb';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
