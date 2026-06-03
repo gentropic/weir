@@ -594,6 +594,7 @@ export class Store {
         uid: e.uid, path: e.path, content_path: `/stacks/${e.path}`, mime: e.mime,
       }, this.feeds.get('stacks') || { id: 'stacks' });
       rec.has_content = true;
+      if (Array.isArray(e.links)) rec.links = e.links;   // [[ref]] targets, for backlinks
       this.items.set(id, rec);
       this._feedSet('stacks').add(id);
     } else {
@@ -605,6 +606,7 @@ export class Store {
       if (e.excerpt != null) rec.excerpt = e.excerpt;
       rec.missing = false;
       rec.has_content = true;
+      if (Array.isArray(e.links)) rec.links = e.links;
       if (opts.replaceTags) {
         // authoritative save → the given tags are the exact set (keep prior source
         // for surviving tags, 'file' for new; drop the rest)

@@ -220,7 +220,12 @@ automatic (your notes aren't feed slop to auto-classify).
   a note is just `weir_catalogItem({id})`. Covered by `tools/smoke-webmcp.mjs`.
   *(Stage B — auto-filing by naming-scheme + routing rules — is the remaining stage.)*
 
+**Wiki-links ✅ SHIPPED** (after the staged work): `[[ref]]` (uid / glass-id / item-id)
+renders in the reader as a clickable link resolved to the target's title (broken links
+flagged), and every item's reader shows a **"← linked from"** backlinks panel. Outbound
+refs are extracted onto `item.links` at write/scan (so backlinks are O(items), no body
+re-reads). *Remaining bonus:* `[[` autocomplete in the editor (pick a holding by title)
+— manual insertion works today via the entry menu's "Copy [[link]]".
+
 Later: drag-to-move UI, external-edit rescan/sync, PDF text-extraction → catalog,
-**wiki-link rendering** (autocomplete + a "what links here" backlink panel — the `[[uid]]`
-syntax + by-uid resolver are reserved in Stage A per §9, only the UI is later),
-Mini-App remote browse.
+`[[`-autocomplete in the editor, Mini-App remote browse.

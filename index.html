@@ -614,6 +614,15 @@ body {
 .rail-section.collapsed > .rail-label { opacity: 0.7; }
 .rail-section.collapsed > :not(.rail-label) { display: none !important; }
 .rail-label { cursor: default; }
+
+/* ── wiki-links + backlinks (STACKS.md) ── */
+.icontent .wikilink { color: var(--au-action); border-bottom: 1px dotted var(--au-action); cursor: pointer; text-decoration: none; }
+.icontent .wikilink:hover { background: var(--sw-bg-bright); }
+.icontent .wikilink.broken { color: var(--au-fg-soft); border-bottom: none; text-decoration: line-through; cursor: default; }
+.backlinks { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--au-border); display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.bl-head { color: var(--au-fg-soft); font-family: var(--au-font-mono); font-size: 11px; }
+.backlink { color: var(--au-info); font-size: 12.5px; cursor: pointer; }
+.backlink:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -8741,6 +8750,7 @@ class Store {
         uid: e.uid, path: e.path, content_path: `/stacks/${e.path}`, mime: e.mime,
       }, this.feeds.get('stacks') || { id: 'stacks' });
       rec.has_content = true;
+      if (Array.isArray(e.links)) rec.links = e.links;   // [[ref]] targets, for backlinks
       this.items.set(id, rec);
       this._feedSet('stacks').add(id);
     } else {
@@ -8752,6 +8762,7 @@ class Store {
       if (e.excerpt != null) rec.excerpt = e.excerpt;
       rec.missing = false;
       rec.has_content = true;
+      if (Array.isArray(e.links)) rec.links = e.links;
       if (opts.replaceTags) {
         // authoritative save → the given tags are the exact set (keep prior source
         // for surviving tags, 'file' for new; drop the rest)
@@ -9195,6 +9206,13 @@ class StacksStore {
     catch { data = {}; }   // unparseable (e.g. external unquoted YAML) → re-stamp on next write
     return { data: data || {}, body: text.slice(m[0].length) };
   }
+  // Extract the [[ref]] wiki-link targets from a note body (deduped, in order).
+  // Stored on the item as `links` so backlinks are O(items), no body re-reads.
+  _wikiRefs(md) {
+    const out = []; const re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g; let m;
+    while ((m = re.exec(String(md == null ? '' : md)))) { const r = m[1].trim(); if (r && !out.includes(r)) out.push(r); }
+    return out;
+  }
   _titleFromBody(body, rel) {
     const h = String(body || '').match(/^\s*#\s+(.+?)\s*$/m);
     if (h) return h[1].trim();
@@ -9270,6 +9288,7 @@ class StacksStore {
       tags: Array.isArray(data.tags) ? data.tags : [],
       created, source: data.source,
       excerpt: deriveExcerpt(body, 300),
+      links: this._wikiRefs(body),
     };
   }
 
@@ -9327,7 +9346,7 @@ class StacksStore {
     const rel = await this._uniqueRel(this._join(resolved.folder, base));
     const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source });
     await this._writeText(this._abs(rel), `---\n${fm}---\n\n${String(markdown).trim()}\n`);
-    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, excerpt: deriveExcerpt(markdown, 300) });
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) });
     this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
     return rec;
   }
@@ -9346,7 +9365,7 @@ class StacksStore {
     await this._writeText(abs, `---\n${fm}---\n\n${String(markdown).trim()}\n`);
     // replaceTags: a save is authoritative over the entry's tag set (so it can remove,
     // not just add) — unlike a scan, which unions to protect human/llm tags.
-    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300) }, { replaceTags: true });
+    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) }, { replaceTags: true });
     this.store.emit('item', { id: rec.id });
     return rec;
   }
@@ -13427,6 +13446,7 @@ class App {
     inner += '<button data-act="archive">archive</button>';
     if (suppressed) inner += '<button data-act="images">load images</button>';
     inner += '</div>';
+    inner += this._backlinksHtml(it);   // notes that reference this item
     return inner;
   }
 
@@ -13455,6 +13475,8 @@ class App {
     const onb = e.target.closest('[data-onboard]');
     if (onb) { if (onb.dataset.onboard === 'import') document.getElementById('opml-file')?.click(); return; }
     if (e.target.closest('[data-stack-new]')) { this.openNoteEditor(); return; }
+    const link = e.target.closest('.wikilink, .backlink');
+    if (link) { e.preventDefault(); e.stopPropagation(); if (link.dataset.target) this._openRef(link.dataset.target); return; }
     const imp = e.target.closest('[data-import]');
     if (imp) { this.runImport(imp.dataset.import); return; }
     const sample = e.target.closest('[data-sample]');
@@ -14707,6 +14729,49 @@ class App {
     setTimeout(() => URL.revokeObjectURL(url), 4000);
   }
 
+  // ── wiki-links ([[uid]]) + backlinks ──
+  // Resolve a [[ref]] to an item: a full item id, or any item whose uid/glass_id matches.
+  _resolveRef(ref) {
+    const r = String(ref || '').trim(); if (!r) return null;
+    const direct = this.store.getItem(r); if (direct) return direct;
+    for (const it of this.store.items.values()) if (it.uid === r || it.glass_id === r) return it;
+    return null;
+  }
+  // Items whose body links to `item` (via its uid / glass_id / id) — O(items), no body reads.
+  backlinksFor(item) {
+    if (!item) return [];
+    const refs = new Set([item.uid, item.glass_id, item.id].filter(Boolean));
+    const out = [];
+    for (const it of this.store.items.values()) {
+      if (it.id === item.id || !it.links || !it.links.length) continue;
+      if (it.links.some((l) => refs.has(String(l).trim()))) out.push(it);
+    }
+    return out.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  }
+  // Rewrite renderMarkdown's placeholder wikilink anchors with the resolved target
+  // (title + click target), or mark them broken. Done at display (titles can change).
+  _resolveWikilinks(html) {
+    return String(html).replace(/<a class="wikilink" data-uid="([^"]*)">([\s\S]*?)<\/a>/g, (m, ref, label) => {
+      const it = this._resolveRef(ref);
+      if (!it) return `<a class="wikilink broken" title="unresolved link: ${escapeHtml(ref)}">${label}</a>`;
+      const explicit = label && label !== escapeHtml(ref) && label !== ref;   // [[ref|label]] keeps its label
+      const text = explicit ? label : escapeHtml(it.title || ref);
+      return `<a class="wikilink" data-target="${escapeHtml(it.id)}" title="${escapeHtml(it.title || '')}">${text}</a>`;
+    });
+  }
+  _backlinksHtml(item) {
+    const sources = this.backlinksFor(item);
+    if (!sources.length) return '';
+    const rows = sources.slice(0, 50).map((s) => `<a class="backlink" data-target="${escapeHtml(s.id)}" title="${escapeHtml(s.path || s.feed_id || '')}">${escapeHtml(s.title || s.path || s.id)}</a>`).join('');
+    return `<div class="backlinks"><span class="bl-head">← linked from (${sources.length})</span>${rows}</div>`;
+  }
+  // Open a linked item: a stacks entry opens in the tree; a feed item jumps to its feed.
+  _openRef(id) {
+    const it = this.store.getItem(id); if (!it) return;
+    if (it.feed_id === 'stacks') { this.selectStackEntry(it.id); return; }
+    this.selectFeed(it.feed_id); this.select(it.id); this.expandedId = it.id; this.renderStream();
+  }
+
   _stacksExpandedHtml(it) {
     let inner = '';
     if (it.type === 'note') {
@@ -14717,7 +14782,7 @@ class App {
           this._content.set(it.id, renderMarkdown(bodyMd)); if (this.expandedId === it.id) this.renderStream();
         });
         inner += '<div class="icontent loading">loading…</div>';
-      } else inner += `<div class="icontent">${cached || '<p>(empty note)</p>'}</div>`;
+      } else inner += `<div class="icontent">${this._resolveWikilinks(cached) || '<p>(empty note)</p>'}</div>`;
       inner += '<div class="ifooter"><button data-act="editnote">✎ edit</button>';
       inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button></div>`;
     } else {
@@ -14737,6 +14802,7 @@ class App {
       inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button></div>`;
     }
     if (it.missing) inner += '<div class="ifooter"><span class="hint" style="color:var(--au-warn)">file missing on disk — “forget” in the rail to clear</span></div>';
+    inner += this._backlinksHtml(it);
     return inner;
   }
 
@@ -16020,7 +16086,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'f521b98';          // short content hash of the bundle (build id)
+const COMMIT = 'cef0850';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

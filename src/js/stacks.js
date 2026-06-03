@@ -110,6 +110,13 @@ export class StacksStore {
     catch { data = {}; }   // unparseable (e.g. external unquoted YAML) → re-stamp on next write
     return { data: data || {}, body: text.slice(m[0].length) };
   }
+  // Extract the [[ref]] wiki-link targets from a note body (deduped, in order).
+  // Stored on the item as `links` so backlinks are O(items), no body re-reads.
+  _wikiRefs(md) {
+    const out = []; const re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g; let m;
+    while ((m = re.exec(String(md == null ? '' : md)))) { const r = m[1].trim(); if (r && !out.includes(r)) out.push(r); }
+    return out;
+  }
   _titleFromBody(body, rel) {
     const h = String(body || '').match(/^\s*#\s+(.+?)\s*$/m);
     if (h) return h[1].trim();
@@ -185,6 +192,7 @@ export class StacksStore {
       tags: Array.isArray(data.tags) ? data.tags : [],
       created, source: data.source,
       excerpt: deriveExcerpt(body, 300),
+      links: this._wikiRefs(body),
     };
   }
 
@@ -242,7 +250,7 @@ export class StacksStore {
     const rel = await this._uniqueRel(this._join(resolved.folder, base));
     const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source });
     await this._writeText(this._abs(rel), `---\n${fm}---\n\n${String(markdown).trim()}\n`);
-    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, excerpt: deriveExcerpt(markdown, 300) });
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) });
     this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
     return rec;
   }
@@ -261,7 +269,7 @@ export class StacksStore {
     await this._writeText(abs, `---\n${fm}---\n\n${String(markdown).trim()}\n`);
     // replaceTags: a save is authoritative over the entry's tag set (so it can remove,
     // not just add) — unlike a scan, which unions to protect human/llm tags.
-    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300) }, { replaceTags: true });
+    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) }, { replaceTags: true });
     this.store.emit('item', { id: rec.id });
     return rec;
   }

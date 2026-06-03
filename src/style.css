@@ -470,3 +470,12 @@ body {
 .rail-section.collapsed > .rail-label { opacity: 0.7; }
 .rail-section.collapsed > :not(.rail-label) { display: none !important; }
 .rail-label { cursor: default; }
+
+/* ── wiki-links + backlinks (STACKS.md) ── */
+.icontent .wikilink { color: var(--au-action); border-bottom: 1px dotted var(--au-action); cursor: pointer; text-decoration: none; }
+.icontent .wikilink:hover { background: var(--sw-bg-bright); }
+.icontent .wikilink.broken { color: var(--au-fg-soft); border-bottom: none; text-decoration: line-through; cursor: default; }
+.backlinks { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--au-border); display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.bl-head { color: var(--au-fg-soft); font-family: var(--au-font-mono); font-size: 11px; }
+.backlink { color: var(--au-info); font-size: 12.5px; cursor: pointer; }
+.backlink:hover { text-decoration: underline; }

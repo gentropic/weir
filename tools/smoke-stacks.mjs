@@ -115,6 +115,17 @@ assert.ok(tgNotes.every((e) => e.path.startsWith('inbox/')), 'telegram notes lan
   store.router = null;   // don't affect the reload section below
 }
 
+// ── wiki-links: [[ref]] targets extracted onto item.links (the backlinks source) ──
+{
+  const a = await stacks.writeNote({ title: 'Linker', markdown: 'see [[zzz]] and [[notes/about.md|the doc]] and [[zzz]] again' });
+  assert.deepEqual(store.getItem(a.id).links, ['zzz', 'notes/about.md'], 'links extracted, deduped, label-stripped');
+  const b = await stacks.writeNote({ title: 'No links', markdown: 'plain text' });
+  assert.deepEqual(store.getItem(b.id).links, [], 'no [[refs]] → empty links');
+  // editing the body updates links
+  await stacks.saveNote(store.getItem(b.id), 'now links [[xyz]]');
+  assert.deepEqual(store.getItem(b.id).links, ['xyz'], 'saveNote re-extracts links');
+}
+
 // ── reload stability: uids + state survive a re-hydrate ──
 await store.flush();
 const re = new Store(store.vfs); await re._hydrate();

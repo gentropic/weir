@@ -1213,6 +1213,7 @@ export class App {
     inner += '<button data-act="archive">archive</button>';
     if (suppressed) inner += '<button data-act="images">load images</button>';
     inner += '</div>';
+    inner += this._backlinksHtml(it);   // notes that reference this item
     return inner;
   }
 
@@ -1241,6 +1242,8 @@ export class App {
     const onb = e.target.closest('[data-onboard]');
     if (onb) { if (onb.dataset.onboard === 'import') document.getElementById('opml-file')?.click(); return; }
     if (e.target.closest('[data-stack-new]')) { this.openNoteEditor(); return; }
+    const link = e.target.closest('.wikilink, .backlink');
+    if (link) { e.preventDefault(); e.stopPropagation(); if (link.dataset.target) this._openRef(link.dataset.target); return; }
     const imp = e.target.closest('[data-import]');
     if (imp) { this.runImport(imp.dataset.import); return; }
     const sample = e.target.closest('[data-sample]');
@@ -2493,6 +2496,49 @@ export class App {
     setTimeout(() => URL.revokeObjectURL(url), 4000);
   }
 
+  // ── wiki-links ([[uid]]) + backlinks ──
+  // Resolve a [[ref]] to an item: a full item id, or any item whose uid/glass_id matches.
+  _resolveRef(ref) {
+    const r = String(ref || '').trim(); if (!r) return null;
+    const direct = this.store.getItem(r); if (direct) return direct;
+    for (const it of this.store.items.values()) if (it.uid === r || it.glass_id === r) return it;
+    return null;
+  }
+  // Items whose body links to `item` (via its uid / glass_id / id) — O(items), no body reads.
+  backlinksFor(item) {
+    if (!item) return [];
+    const refs = new Set([item.uid, item.glass_id, item.id].filter(Boolean));
+    const out = [];
+    for (const it of this.store.items.values()) {
+      if (it.id === item.id || !it.links || !it.links.length) continue;
+      if (it.links.some((l) => refs.has(String(l).trim()))) out.push(it);
+    }
+    return out.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  }
+  // Rewrite renderMarkdown's placeholder wikilink anchors with the resolved target
+  // (title + click target), or mark them broken. Done at display (titles can change).
+  _resolveWikilinks(html) {
+    return String(html).replace(/<a class="wikilink" data-uid="([^"]*)">([\s\S]*?)<\/a>/g, (m, ref, label) => {
+      const it = this._resolveRef(ref);
+      if (!it) return `<a class="wikilink broken" title="unresolved link: ${escapeHtml(ref)}">${label}</a>`;
+      const explicit = label && label !== escapeHtml(ref) && label !== ref;   // [[ref|label]] keeps its label
+      const text = explicit ? label : escapeHtml(it.title || ref);
+      return `<a class="wikilink" data-target="${escapeHtml(it.id)}" title="${escapeHtml(it.title || '')}">${text}</a>`;
+    });
+  }
+  _backlinksHtml(item) {
+    const sources = this.backlinksFor(item);
+    if (!sources.length) return '';
+    const rows = sources.slice(0, 50).map((s) => `<a class="backlink" data-target="${escapeHtml(s.id)}" title="${escapeHtml(s.path || s.feed_id || '')}">${escapeHtml(s.title || s.path || s.id)}</a>`).join('');
+    return `<div class="backlinks"><span class="bl-head">← linked from (${sources.length})</span>${rows}</div>`;
+  }
+  // Open a linked item: a stacks entry opens in the tree; a feed item jumps to its feed.
+  _openRef(id) {
+    const it = this.store.getItem(id); if (!it) return;
+    if (it.feed_id === 'stacks') { this.selectStackEntry(it.id); return; }
+    this.selectFeed(it.feed_id); this.select(it.id); this.expandedId = it.id; this.renderStream();
+  }
+
   _stacksExpandedHtml(it) {
     let inner = '';
     if (it.type === 'note') {
@@ -2503,7 +2549,7 @@ export class App {
           this._content.set(it.id, renderMarkdown(bodyMd)); if (this.expandedId === it.id) this.renderStream();
         });
         inner += '<div class="icontent loading">loading…</div>';
-      } else inner += `<div class="icontent">${cached || '<p>(empty note)</p>'}</div>`;
+      } else inner += `<div class="icontent">${this._resolveWikilinks(cached) || '<p>(empty note)</p>'}</div>`;
       inner += '<div class="ifooter"><button data-act="editnote">✎ edit</button>';
       inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button></div>`;
     } else {
@@ -2523,6 +2569,7 @@ export class App {
       inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button></div>`;
     }
     if (it.missing) inner += '<div class="ifooter"><span class="hint" style="color:var(--au-warn)">file missing on disk — “forget” in the rail to clear</span></div>';
+    inner += this._backlinksHtml(it);
     return inner;
   }
 
