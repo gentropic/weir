@@ -61,28 +61,30 @@ async function serializeRequestBody(body) {
   throw new TypeError('gcuFetch: unsupported body type: ' + (body?.constructor?.name ?? typeof body));
 }
 
-let bridgeDetection = null;
+let bridgeDetection = null;   // cached POSITIVE detection (a marker/version promise)
+let lastNegativeAt = 0;       // when the last ping resolved false (for the re-detect cooldown)
+const NEGATIVE_COOLDOWN = 4000;
 
 function detectBridge() {
   // Fast path FIRST, on EVERY call: the content script sets this marker on
   // documentElement at document_start, so it's authoritative + synchronous. Checking
-  // it ahead of the cached promise means a stale NEGATIVE can't strand the page for the
-  // whole session — e.g. when the very first gcuFetch races ahead of the content-script
-  // injection on a fast (cache-served PWA) load, or the extension's MV3 service worker
-  // is cold, the 200ms ping times out and resolves false; without this re-check that
-  // false stays cached and every later fetch silently skips the bridge → direct fetch →
-  // CORS failures on non-CORS feeds. The marker appears once the CS runs, so re-reading
-  // it each call recovers within one fetch. (A true negative — no bridge at all — still
-  // caches below, so bridgeless pages don't re-ping on every fetch.)
+  // it ahead of the cache means a stale negative can't strand the page once the CS has
+  // injected (e.g. a gcuFetch that raced ahead of injection on a fast cache-served PWA).
   try {
     const marker = document.documentElement?.dataset?.gcuBridge;
     if (marker) { bridgeDetection = Promise.resolve(marker); return bridgeDetection; }
   } catch { /* no document (e.g. worker scope) — fall through to the ping path */ }
 
-  if (bridgeDetection) return bridgeDetection;
+  if (bridgeDetection) return bridgeDetection;   // a prior POSITIVE — never a cached negative
 
-  bridgeDetection = (async () => {
-    // Slow path: ping via postMessage (no marker yet — CS not injected, or absent).
+  // A NEGATIVE is NOT cached as the detection promise: a flaky 200ms ping against a
+  // cold MV3 service worker can resolve false, and caching that would silently strand
+  // polling on direct fetch (CORS failures) for the whole session — exactly what bit
+  // weir's feeds. Instead re-ping on the next call, but no more often than the cooldown
+  // so a genuinely bridgeless page doesn't ping on every single fetch.
+  if (Date.now() - lastNegativeAt < NEGATIVE_COOLDOWN) return Promise.resolve(false);
+
+  const pending = (async () => {
     return new Promise((resolve) => {
       const id = crypto.randomUUID();
       const timer = setTimeout(() => {
@@ -100,8 +102,13 @@ function detectBridge() {
       window.postMessage({ type: 'gcu-bridge-ping', id }, '*');
     });
   })();
-
-  return bridgeDetection;
+  bridgeDetection = pending;
+  pending.then((res) => {
+    // Only keep the cache if it confirmed the bridge; a negative clears it (and starts
+    // the cooldown) so the next call re-detects once the SW is warm / CS has injected.
+    if (bridgeDetection === pending && !res) { bridgeDetection = null; lastNegativeAt = Date.now(); }
+  });
+  return pending;
 }
 
 async function viaBridge(url, opts = {}) {
