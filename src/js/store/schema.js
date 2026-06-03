@@ -44,6 +44,7 @@ export const DEFAULT_SETTINGS = {
   catalog_mailto: '',                    // optional contact for the Crossref/OpenAlex "polite pool" (good-citizen biblio enrich)
   telegram_enabled: false,               // poll your weir bot's getUpdates for live captures (token in the OPFS vault)
   telegram_offset: 0,                    // last consumed Telegram update_id + 1 (so nothing re-ingests across reloads)
+  telegram_allowed_id: 0,                // owner's Telegram user id — only ingest from you (0 = auto-bind on first message)
   catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never

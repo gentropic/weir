@@ -774,8 +774,9 @@ body {
         <h4>Telegram capture</h4>
         <label class="set-row check"><input type="checkbox" id="set-tg-enabled"> poll my weir bot for live captures (links → Saved Links, notes stashed)</label>
         <label class="set-row">bot token<span><input type="password" id="set-tg-token" class="field" autocomplete="off" placeholder="(none)"> <button class="btn-link" id="set-tg-verify" type="button" title="Check the token + show the bot's @username">connect</button></span></label>
+        <label class="set-row">your id<input type="text" id="set-tg-allowed" class="field" autocomplete="off" spellcheck="false" placeholder="(auto-binds on your first message)" title="Only ingest messages from this Telegram user id. Leave blank to auto-bind to the first sender (you); clear it to re-bind."></label>
         <div class="set-row"><span id="tg-status" class="hint">not connected</span></div>
-        <div class="hint">Make a <b>fresh</b> bot with <code>@BotFather</code> → <code>/newbot</code>, paste its token, and DM it links/notes from your phone — URL messages (incl. Google Discover shares) flow into Saved Links and get resolved; pure-text notes are stashed for the coming notes view. No server/webhook needed (api.telegram.org is CORS-friendly); the token is stored encrypted (OPFS vault), never in backups. One consumer per bot — don't reuse a bot that has a webhook or another poller. If weir's been closed past ~24h, fall back to a conversation export + Import.</div>
+        <div class="hint">Make a <b>fresh</b> bot with <code>@BotFather</code> → <code>/newbot</code>, paste its token, and DM it links/notes from your phone — URL messages (incl. Google Discover shares) flow into Saved Links and get resolved; pure-text notes are stashed for the coming notes view. No server/webhook needed (api.telegram.org is CORS-friendly); the token is stored encrypted (OPFS vault), never in backups. <b>Only messages from you are ingested</b> — it auto-locks to your Telegram id on your first message (strangers who find the bot are ignored). One consumer per bot — don't reuse a bot that has a webhook or another poller. If weir's been closed past ~24h, fall back to a conversation export + Import.</div>
       </section>
       <section class="set-group">
         <h4>Claude (WebMCP)</h4>
@@ -5747,6 +5748,7 @@ const DEFAULT_SETTINGS = {
   catalog_mailto: '',                    // optional contact for the Crossref/OpenAlex "polite pool" (good-citizen biblio enrich)
   telegram_enabled: false,               // poll your weir bot's getUpdates for live captures (token in the OPFS vault)
   telegram_offset: 0,                    // last consumed Telegram update_id + 1 (so nothing re-ingests across reloads)
+  telegram_allowed_id: 0,                // owner's Telegram user id — only ingest from you (0 = auto-bind on first message)
   catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
@@ -8461,7 +8463,7 @@ class TelegramInflux {
     this.onLinks = onLinks;        // (links[]) => Promise, usually app.importLinks
     this.intervalMs = intervalMs;
     this._timer = null; this._busy = false;
-    this.status = { enabled: false, bot: null, lastPoll: null, captured: 0, notes: 0, error: null };
+    this.status = { enabled: false, bot: null, bound: null, lastPoll: null, captured: 0, notes: 0, ignored: 0, error: null };
     this._listeners = new Set();
   }
 
@@ -8514,9 +8516,18 @@ class TelegramInflux {
       if (!updates.length) { this._emit(); return; }
       let maxId = offset - 1;
       const links = [];
+      // Owner filter: a bot accepts messages from ANYONE who finds it, so only ingest
+      // from your own Telegram id. Unset → AUTO-BIND to the first sender (you, since
+      // it's a fresh private bot); after that, strangers are ignored. Clear the id in
+      // Settings to re-bind. Manual paste also works.
+      let allowed = this.store.getSettings().telegram_allowed_id || 0;
+      this.status.bound = allowed || null;
       for (const u of updates) {
         if (u.update_id > maxId) maxId = u.update_id;
         const msg = u.message; if (!msg) continue;
+        const fromId = msg.from && msg.from.id;
+        if (!allowed && fromId) { allowed = fromId; this.status.bound = fromId; await this.store.setSettings({ telegram_allowed_id: fromId }); }
+        if (allowed && fromId !== allowed) { this.status.ignored++; continue; }   // not you → ignore (don't capture or stash)
         const ls = messageLinks(msg.text, msg.entities);
         if (ls.length) for (const l of ls) links.push({ ...l, date: msg.date ? msg.date * 1000 : undefined });
         else if ((msg.text || '').trim()) { await this._stashNote(msg); this.status.notes++; }   // a note → stash for the notes system
@@ -11718,8 +11729,10 @@ class App {
     const parts = [];
     if (st.bot) parts.push(`@${st.bot}`);
     parts.push(st.enabled ? 'polling' : 'idle');
+    if (st.bound) parts.push(`bound to ${st.bound}`);
     if (st.captured) parts.push(`${st.captured} captured`);
     if (st.notes) parts.push(`${st.notes} note${st.notes === 1 ? '' : 's'} stashed`);
+    if (st.ignored) parts.push(`${st.ignored} ignored`);
     el.textContent = parts.join(' · ') || 'not connected';
   }
   async _verifyTelegram() {
@@ -12040,6 +12053,7 @@ class App {
     this.renderWebmcpStatus();
     chk('set-retention', s.retention_enabled);
     chk('set-tg-enabled', s.telegram_enabled);
+    val('set-tg-allowed', s.telegram_allowed_id || '');
     { const k = document.getElementById('set-tg-token'); if (k) { k.value = ''; hasKey('telegram').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     if (this.telegram) this.renderTelegramStatus(this.telegram.status);
     chk('set-autocheck', s.auto_check_updates);
@@ -12201,6 +12215,7 @@ class App {
       catalog_mailto: document.getElementById('set-cat-mailto')?.value.trim() || '',
       retention_enabled: chk('set-retention'),
       telegram_enabled: chk('set-tg-enabled'),
+      telegram_allowed_id: parseInt(document.getElementById('set-tg-allowed')?.value, 10) || 0,
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
       wayback_min_interval_ms: Math.max(1000, num('set-wb-interval', 5) * 1000),
@@ -12971,7 +12986,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '9444d6f';          // short content hash of the bundle (build id)
+const COMMIT = 'cd224d2';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

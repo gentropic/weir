@@ -22,7 +22,7 @@ export class TelegramInflux {
     this.onLinks = onLinks;        // (links[]) => Promise, usually app.importLinks
     this.intervalMs = intervalMs;
     this._timer = null; this._busy = false;
-    this.status = { enabled: false, bot: null, lastPoll: null, captured: 0, notes: 0, error: null };
+    this.status = { enabled: false, bot: null, bound: null, lastPoll: null, captured: 0, notes: 0, ignored: 0, error: null };
     this._listeners = new Set();
   }
 
@@ -75,9 +75,18 @@ export class TelegramInflux {
       if (!updates.length) { this._emit(); return; }
       let maxId = offset - 1;
       const links = [];
+      // Owner filter: a bot accepts messages from ANYONE who finds it, so only ingest
+      // from your own Telegram id. Unset → AUTO-BIND to the first sender (you, since
+      // it's a fresh private bot); after that, strangers are ignored. Clear the id in
+      // Settings to re-bind. Manual paste also works.
+      let allowed = this.store.getSettings().telegram_allowed_id || 0;
+      this.status.bound = allowed || null;
       for (const u of updates) {
         if (u.update_id > maxId) maxId = u.update_id;
         const msg = u.message; if (!msg) continue;
+        const fromId = msg.from && msg.from.id;
+        if (!allowed && fromId) { allowed = fromId; this.status.bound = fromId; await this.store.setSettings({ telegram_allowed_id: fromId }); }
+        if (allowed && fromId !== allowed) { this.status.ignored++; continue; }   // not you → ignore (don't capture or stash)
         const ls = messageLinks(msg.text, msg.entities);
         if (ls.length) for (const l of ls) links.push({ ...l, date: msg.date ? msg.date * 1000 : undefined });
         else if ((msg.text || '').trim()) { await this._stashNote(msg); this.status.notes++; }   // a note → stash for the notes system
