@@ -134,6 +134,7 @@ export class App {
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
     document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
+    document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
     const sv = document.getElementById('smart-views');
@@ -789,8 +790,31 @@ export class App {
     const needle = this.searchText ? this.searchText.toLowerCase() : null;
     const out = [];
     for (const id of ids) { const it = this.store.items.get(id); if (it && (!needle || it.search_text.includes(needle))) out.push(it); }
-    out.sort((a, b) => (b.published_at || 0) - (a.published_at || 0));
+    if (this.catalogShelf) {
+      // Shelf order — wander the corpus by glass call number (subject → form → author).
+      // Uncataloged items have no address, so they sink to the end (after '~').
+      const key = (it) => { const cn = this._callNumber(it); return cn ? sortKey(cn) : '~~~'; };
+      out.sort((a, b) => { const ka = key(a), kb = key(b); return ka < kb ? -1 : ka > kb ? 1 : (b.published_at || 0) - (a.published_at || 0); });
+    } else {
+      out.sort((a, b) => (b.published_at || 0) - (a.published_at || 0));
+    }
     return out;
+  }
+
+  // The glass call number for an item, from its (in-memory) catalog card. Null if
+  // not yet cataloged — only holdings have a shelf address.
+  _callNumber(it) {
+    const card = it.glass_id && this.store.cards.get(it.glass_id);
+    return card ? callNumber(card) : null;
+  }
+
+  // Wander the shelf — toggle the catalog stream between recency and glass call-
+  // number order. The linear browse that gives the by-subject serendipity.
+  toggleShelfOrder() {
+    this.catalogShelf = !this.catalogShelf;
+    const b = document.getElementById('cat-shelf'); if (b) b.classList.toggle('active', this.catalogShelf);
+    this._catStatus(this.catalogShelf ? 'shelf order — wandering by call number' : 'newest-first');
+    this.renderStream();
   }
 
   toggleFacet(facet, term) {
@@ -803,6 +827,7 @@ export class App {
 
   renderCatalogFacets() {
     const el = document.getElementById('facets'); if (!el) return;
+    { const b = document.getElementById('cat-shelf'); if (b) b.classList.toggle('active', !!this.catalogShelf); }
     this.buildCatalogIndex();
     const order = ['form', 'provenance', 'temporal', 'entity', 'domain', 'method', 'process', 'scale', 'spatial'];
     const ICONS = { form: '⬡', provenance: '✦', temporal: '◷', entity: '◆', domain: '▤', method: '⚙', process: '↻', scale: '⤢', spatial: '⌖', stance: '⚖' };
@@ -1033,6 +1058,8 @@ export class App {
     }).join('')
       + (isWrappedUrl(it.url) ? '<span class="tag unresolved" title="Shortened/share link — resolving to its real URL in the background">⧉ unresolved</span>' : '');
     const saved = it.saved ? '<span class="flag">★</span>' : '';
+    const cn = this.catalog ? this._callNumber(it) : null;
+    const callno = cn ? `<span class="callno" data-callno="${escapeHtml(renderCoded(cn))}" title="${escapeHtml(renderReadable(cn))} — click to copy the call number">${escapeHtml(renderCoded(cn))}</span>` : '';
 
     let body;
     const isVideo = it.type === 'video';
@@ -1047,9 +1074,9 @@ export class App {
       const play = isVideo ? '<span class="playover">▶</span>' : '';
       const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
       const excerpt = (!isVideo && it.excerpt) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
-      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${meta}${views} ${tags}</div></div></div>`;
+      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${meta}${views} ${tags}</div></div></div>`;
     } else {
-      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${meta} ${tags}</div>`;
+      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${meta} ${tags}</div>`;
     }
     const actions = `<div class="iactions">`
       + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
@@ -1119,6 +1146,8 @@ export class App {
     const id = row.dataset.id;
     const tagEl = e.target.closest('.tag[data-tag]');
     if (tagEl) { e.stopPropagation(); this.filterByTag(tagEl.dataset.tag); return; }
+    const cnEl = e.target.closest('.callno');
+    if (cnEl) { e.stopPropagation(); navigator.clipboard?.writeText(cnEl.dataset.callno).catch(() => {}); this._catStatus(`copied call number ${cnEl.dataset.callno}`); return; }
     if (btn) { e.stopPropagation(); this.doAct(btn.dataset.act, id); return; }
     if (e.metaKey || e.ctrlKey) { const it = this.store.getItem(id); if (it?.url) window.open(it.url, '_blank', 'noopener'); return; }
     if (e.target.closest('.iexpand')) return;   // clicks inside the open article (links, text) — leave alone
@@ -1707,6 +1736,7 @@ export class App {
       { label: 'Search items', kind: 'Command', run: () => this.searchEl?.focus() },
       this.searchText && this.searchText.trim() && { label: 'Save current search as view', kind: 'Command', run: () => this.saveSearchAsView() },
       { label: 'Catalog visible items with AI', kind: 'Command', run: () => this.catalogVisible() },
+      this.catalog && { label: this.catalogShelf ? 'Shelf order: off (newest-first)' : 'Shelf order — wander by call number', kind: 'Command', run: () => this.toggleShelfOrder() },
       { label: 'Catalog all items with AI', kind: 'Command', run: () => this.catalogAll() },
       { label: 'Review queue', kind: 'Command', run: () => this.openReview() },
       this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },

@@ -216,6 +216,8 @@ body {
 .tag-src.l { color: var(--au-success); }
 .tag-src.r { color: var(--au-fg-soft); }
 .tagrow .tagdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; vertical-align: middle; margin-right: 3px; flex-shrink: 0; }
+.callno { font-family: var(--au-font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.03em; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; margin-right: 7px; cursor: pointer; white-space: nowrap; }
+.callno:hover { border-color: var(--au-action); }
 
 /* ── Tag editor (keyboard `t`) ── */
 .tag-editor { width: min(460px, 92vw); background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg); box-shadow: 0 18px 60px rgba(0,0,0,0.55); padding: 14px; }

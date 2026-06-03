@@ -360,6 +360,8 @@ body {
 .tag-src.l { color: var(--au-success); }
 .tag-src.r { color: var(--au-fg-soft); }
 .tagrow .tagdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; vertical-align: middle; margin-right: 3px; flex-shrink: 0; }
+.callno { font-family: var(--au-font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.03em; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; margin-right: 7px; cursor: pointer; white-space: nowrap; }
+.callno:hover { border-color: var(--au-action); }
 
 /* ── Tag editor (keyboard `t`) ── */
 .tag-editor { width: min(460px, 92vw); background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg); box-shadow: 0 18px 60px rgba(0,0,0,0.55); padding: 14px; }
@@ -585,7 +587,7 @@ body {
     </nav>
 
     <div class="rail-section" id="facets-section" style="display:none">
-      <div class="rail-label">Facets <button id="cat-run" class="btn-link" type="button" title="Catalog the shown items with AI (click again to stop)">catalog ▸</button></div>
+      <div class="rail-label">Facets <button id="cat-shelf" class="btn-link" type="button" title="Shelf order — wander the catalog by glass call number (subject → form → author)">⊞ shelf</button> <button id="cat-run" class="btn-link" type="button" title="Catalog the shown items with AI (click again to stop)">catalog ▸</button></div>
       <div id="facets"></div>
     </div>
 
@@ -6010,6 +6012,99 @@ function buildCard(item, feed, opts = {}) {
   };
 }
 
+// ── src/js/callnumber.js ──
+
+// Glass call number — a faceted, sortable SHELF ADDRESS. CC0, our own scheme
+// (Ranganathan citation order), NOT Dewey: DDC rides along as display metadata,
+// but the organizing system is ours. Citation order is subject-first so a shelf
+// wanders by topic, with `form` in the MIDDLE so a subject's book / paper / web
+// page shelve together (the "Extended-Dewey" feel, achieved through glass facets):
+//
+//     domain · subdomain · form · author-cutter · year
+//     GEO·GES·B·SIL·23   →  Geology : Geostatistics · book · Silva 2023
+//
+// Derived live from a card's facets (deterministic; no storage to migrate). One
+// structured value, two renderings: coded (spine labels / export) and readable
+// (the weir UI). Sort by sortKey() to get the linear browse.
+
+// Curated domain → 3-letter code (stable + legible; extensible). Anything unmapped
+// derives a code from the term, so the scheme always produces something.
+const DOMAIN_CODES = {
+  geology: 'GEO', geoscience: 'GEO', geophysics: 'GPH', geostatistics: 'GST',
+  mining: 'MIN', statistics: 'STA', mathematics: 'MAT', 'data science': 'DSC',
+  'computer science': 'CSC', programming: 'PRG', software: 'SFT', technology: 'TEC',
+  hardware: 'HRD', electronics: 'ELE', 'machine learning': 'MLN', 'artificial intelligence': 'AIN',
+  science: 'SCI', physics: 'PHY', chemistry: 'CHM', biology: 'BIO', astronomy: 'AST',
+  engineering: 'ENG', gaming: 'GAM', music: 'MUS', film: 'FLM', art: 'ART', design: 'DSN',
+  photography: 'PHO', cooking: 'COO', food: 'FOO', politics: 'POL', history: 'HIS',
+  philosophy: 'PHI', psychology: 'PSY', finance: 'FIN', business: 'BUS', economics: 'ECO',
+  health: 'HEA', medicine: 'MED', language: 'LAN', literature: 'LIT', education: 'EDU',
+};
+
+// Item type / form facet → one-letter form code (the middle of the address).
+const FORM_CODE = {
+  book: 'B', paper: 'P', article: 'A', release: 'R', video: 'V',
+  track: 'K', podcast: 'D', status: 'S', commit: 'C', issue: 'I', note: 'N',
+};
+
+function deriveCode(term) {
+  const s = String(term || '').toUpperCase().replace(/[^A-Z]/g, '');
+  return s ? s.slice(0, 3).padEnd(3, 'X') : 'GEN';
+}
+function codeFor(term, map) {
+  if (!term) return null;
+  const k = String(term).toLowerCase().trim();
+  return map[k] || deriveCode(k);
+}
+function surnameOf(creator) {
+  const c = String(creator || '');
+  return (c.includes(',') ? c.split(',')[0] : c.split(/\s+/).pop() || '').trim();
+}
+function cutter(creator) {
+  const s = surnameOf(creator).toUpperCase().replace(/[^A-Z]/g, '');
+  return s ? s.slice(0, 3).padEnd(3, 'X') : null;
+}
+function titleCase(s) { return String(s || '').replace(/\b\w/g, (c) => c.toUpperCase()); }
+
+// Build the structured call number from a glass card. Picks the PRIMARY (first,
+// salience-ordered) domain + subdomain — the Ranganathan "class where most useful"
+// decision, made once. Keeps the readable terms alongside the codes for the UI.
+function callNumber(card, { codes = DOMAIN_CODES } = {}) {
+  const f = (card && card.facets) || {};
+  const dc = (card && card.dublin_core) || {};
+  const domain = (f.domain || [])[0] || null;
+  const sub = (f.entity || [])[0] || (f.process || [])[0] || null;
+  const form = (f.form || [])[0] || null;
+  const creator = (dc.creator || [])[0] || null;
+  const year = (String(dc.date || '').match(/\d{4}/) || [null])[0];
+  return {
+    domain: domain ? codeFor(domain, codes) : 'GEN',
+    sub: sub ? codeFor(sub, codes) : null,
+    form: FORM_CODE[form] || (form ? String(form)[0].toUpperCase() : null),
+    cutter: cutter(creator),
+    year,
+    terms: { domain, sub, form, creator },   // for the readable rendering
+  };
+}
+
+const SEP = '·';
+// Coded — spine-writable, Dewey-recognition feel. Year as 2 digits.
+function renderCoded(cn) {
+  return [cn.domain, cn.sub, cn.form, cn.cutter, cn.year && cn.year.slice(2)].filter(Boolean).join(SEP);
+}
+// Readable — full words for the weir UI.
+function renderReadable(cn) {
+  const t = cn.terms || {};
+  const subject = [t.domain, t.sub].filter(Boolean).map(titleCase).join(' : ');
+  const tail = [t.form, surnameOf(t.creator) || null, cn.year].filter(Boolean).join(' ');
+  return [subject || 'Unclassified', tail].filter(Boolean).join(' · ');
+}
+// Sort key — coded, uppercase, padded so a plain string sort wanders subject →
+// subdomain → form → author → year (missing fields sink to the end).
+function sortKey(cn) {
+  return [cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', cn.year || '9999'].join(SEP);
+}
+
 // ── src/js/biblio.js ──
 
 // Bibliographic enricher — for items that ARE a paper or a book (an arXiv ID, a
@@ -9606,6 +9701,7 @@ class App {
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
     document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
+    document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
     const sv = document.getElementById('smart-views');
@@ -10261,8 +10357,31 @@ class App {
     const needle = this.searchText ? this.searchText.toLowerCase() : null;
     const out = [];
     for (const id of ids) { const it = this.store.items.get(id); if (it && (!needle || it.search_text.includes(needle))) out.push(it); }
-    out.sort((a, b) => (b.published_at || 0) - (a.published_at || 0));
+    if (this.catalogShelf) {
+      // Shelf order — wander the corpus by glass call number (subject → form → author).
+      // Uncataloged items have no address, so they sink to the end (after '~').
+      const key = (it) => { const cn = this._callNumber(it); return cn ? sortKey(cn) : '~~~'; };
+      out.sort((a, b) => { const ka = key(a), kb = key(b); return ka < kb ? -1 : ka > kb ? 1 : (b.published_at || 0) - (a.published_at || 0); });
+    } else {
+      out.sort((a, b) => (b.published_at || 0) - (a.published_at || 0));
+    }
     return out;
+  }
+
+  // The glass call number for an item, from its (in-memory) catalog card. Null if
+  // not yet cataloged — only holdings have a shelf address.
+  _callNumber(it) {
+    const card = it.glass_id && this.store.cards.get(it.glass_id);
+    return card ? callNumber(card) : null;
+  }
+
+  // Wander the shelf — toggle the catalog stream between recency and glass call-
+  // number order. The linear browse that gives the by-subject serendipity.
+  toggleShelfOrder() {
+    this.catalogShelf = !this.catalogShelf;
+    const b = document.getElementById('cat-shelf'); if (b) b.classList.toggle('active', this.catalogShelf);
+    this._catStatus(this.catalogShelf ? 'shelf order — wandering by call number' : 'newest-first');
+    this.renderStream();
   }
 
   toggleFacet(facet, term) {
@@ -10275,6 +10394,7 @@ class App {
 
   renderCatalogFacets() {
     const el = document.getElementById('facets'); if (!el) return;
+    { const b = document.getElementById('cat-shelf'); if (b) b.classList.toggle('active', !!this.catalogShelf); }
     this.buildCatalogIndex();
     const order = ['form', 'provenance', 'temporal', 'entity', 'domain', 'method', 'process', 'scale', 'spatial'];
     const ICONS = { form: '⬡', provenance: '✦', temporal: '◷', entity: '◆', domain: '▤', method: '⚙', process: '↻', scale: '⤢', spatial: '⌖', stance: '⚖' };
@@ -10505,6 +10625,8 @@ class App {
     }).join('')
       + (isWrappedUrl(it.url) ? '<span class="tag unresolved" title="Shortened/share link — resolving to its real URL in the background">⧉ unresolved</span>' : '');
     const saved = it.saved ? '<span class="flag">★</span>' : '';
+    const cn = this.catalog ? this._callNumber(it) : null;
+    const callno = cn ? `<span class="callno" data-callno="${escapeHtml(renderCoded(cn))}" title="${escapeHtml(renderReadable(cn))} — click to copy the call number">${escapeHtml(renderCoded(cn))}</span>` : '';
 
     let body;
     const isVideo = it.type === 'video';
@@ -10519,9 +10641,9 @@ class App {
       const play = isVideo ? '<span class="playover">▶</span>' : '';
       const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
       const excerpt = (!isVideo && it.excerpt) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
-      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${meta}${views} ${tags}</div></div></div>`;
+      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${meta}${views} ${tags}</div></div></div>`;
     } else {
-      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${meta} ${tags}</div>`;
+      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${meta} ${tags}</div>`;
     }
     const actions = `<div class="iactions">`
       + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
@@ -10591,6 +10713,8 @@ class App {
     const id = row.dataset.id;
     const tagEl = e.target.closest('.tag[data-tag]');
     if (tagEl) { e.stopPropagation(); this.filterByTag(tagEl.dataset.tag); return; }
+    const cnEl = e.target.closest('.callno');
+    if (cnEl) { e.stopPropagation(); navigator.clipboard?.writeText(cnEl.dataset.callno).catch(() => {}); this._catStatus(`copied call number ${cnEl.dataset.callno}`); return; }
     if (btn) { e.stopPropagation(); this.doAct(btn.dataset.act, id); return; }
     if (e.metaKey || e.ctrlKey) { const it = this.store.getItem(id); if (it?.url) window.open(it.url, '_blank', 'noopener'); return; }
     if (e.target.closest('.iexpand')) return;   // clicks inside the open article (links, text) — leave alone
@@ -11179,6 +11303,7 @@ class App {
       { label: 'Search items', kind: 'Command', run: () => this.searchEl?.focus() },
       this.searchText && this.searchText.trim() && { label: 'Save current search as view', kind: 'Command', run: () => this.saveSearchAsView() },
       { label: 'Catalog visible items with AI', kind: 'Command', run: () => this.catalogVisible() },
+      this.catalog && { label: this.catalogShelf ? 'Shelf order: off (newest-first)' : 'Shelf order — wander by call number', kind: 'Command', run: () => this.toggleShelfOrder() },
       { label: 'Catalog all items with AI', kind: 'Command', run: () => this.catalogAll() },
       { label: 'Review queue', kind: 'Command', run: () => this.openReview() },
       this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },
@@ -12540,7 +12665,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '0ae40c7';          // short content hash of the bundle (build id)
+const COMMIT = '7c28569';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
