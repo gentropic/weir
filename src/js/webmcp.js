@@ -138,12 +138,14 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (input.content && it.has_content) {
       try { const html = await store.getContent(it.id); if (html) o.content_text = stripToText(html).slice(0, 8000); } catch { /* content unreadable */ }
     }
-    // Knowledge graph: what this item links to ([[ref]] → resolved target) + what links to it.
+    // Knowledge graph: what this item links to ([[ref]] → resolved target) + what links
+    // to it. Both capped so a hub item can't blow the result budget.
     if (Array.isArray(it.links) && it.links.length) {
-      o.links = it.links.map((ref) => { const t = resolveRef(ref); return t ? { ref, id: t.id, title: t.title || t.id } : { ref, unresolved: true }; });
+      o.links = it.links.slice(0, 50).map((ref) => { const t = resolveRef(ref); return t ? { ref, id: t.id, title: t.title || t.id } : { ref, unresolved: true }; });
+      if (it.links.length > 50) o.linksOmitted = it.links.length - 50;
     }
     const back = backlinksOf(it);
-    if (back.length) o.backlinks = back;
+    if (back.length) { o.backlinks = back.slice(0, 50); if (back.length > 50) o.backlinksOmitted = back.length - 50; }
     return o;
   }
 
@@ -351,39 +353,48 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // The source tree — feeds grouped by folder, with inbox counts — so the model
   // can see what sources exist before drilling in with queryItems({ feed }).
   // Optional `category` scopes to one folder ('' = ungrouped).
+  // Health per feed: prefer the app's computed status (hijack/drift/stale/failing),
+  // else the stored feed.state. Only non-healthy state is surfaced.
+  function feedHealth(f) {
+    const h = app && app._health && app._health.get(f.id);   // only non-ok feeds are cached
+    const o = {};
+    const state = h ? h.status : (f.state || 'healthy');
+    if (state && state !== 'healthy') o.state = state;
+    if (h && h.reasons && h.reasons.length) o.reasons = h.reasons;
+    if (f.last_polled_at) o.lastPolled = new Date(f.last_polled_at).toISOString();
+    const fh = f.feed_health || {};
+    if (fh.consecutive_failures) o.fails = fh.consecutive_failures;
+    if (fh.last_error) o.lastError = fh.last_error;
+    if (fh.avg_items_per_week != null) o.perWeek = fh.avg_items_per_week;
+    return o;
+  }
+  // Default → a COMPACT overview (folder summaries + health tally + just the troubled
+  // feeds), so a 400+ feed corpus doesn't blow the result budget. Pass a `category` to
+  // get the full per-feed list for one folder (bounded by folder size).
   async function listSources(input = {}) {
-    const stats = store.counts();   // { byFeed: { feed_id: inboxCount }, … }
-    const onlyCat = input.category !== undefined ? String(input.category) : null;
-    // Health: prefer the app's computed status (hijack/drift/stale/failing); fall back
-    // to the stored feed.state. Surfaces prune candidates ("which feeds are dead?").
-    const fhealth = (f) => {
-      const h = app && app._health && app._health.get(f.id);   // only non-ok feeds are cached
-      const o = {};
-      const state = h ? h.status : (f.state || 'healthy');
-      if (state && state !== 'healthy') o.state = state;
-      if (h && h.reasons && h.reasons.length) o.reasons = h.reasons;
-      if (f.last_polled_at) o.lastPolled = new Date(f.last_polled_at).toISOString();
-      const fh = f.feed_health || {};
-      if (fh.consecutive_failures) o.fails = fh.consecutive_failures;
-      if (fh.last_error) o.lastError = fh.last_error;
-      if (fh.avg_items_per_week != null) o.perWeek = fh.avg_items_per_week;
-      return o;
-    };
-    const folders = new Map();
-    const tally = { failing: 0, stale: 0, suspect: 0, slow: 0 };
-    for (const f of store.listFeeds()) {
-      const cat = f.category || '';
-      if (onlyCat != null && cat !== onlyCat) continue;
-      if (!folders.has(cat)) folders.set(cat, []);
-      const h = fhealth(f);
-      if (h.state && tally[h.state] !== undefined) tally[h.state]++;
-      folders.get(cat).push({ id: f.id, name: f.name, adapter: f.adapter, inbox: stats.byFeed[f.id] || 0, ...h });
+    const stats = store.counts();
+    const feeds = store.listFeeds();
+    if (input.category !== undefined) {   // detail mode: one folder
+      const cat = String(input.category);
+      const rows = feeds.filter((f) => (f.category || '') === cat)
+        .map((f) => ({ id: f.id, name: f.name, adapter: f.adapter, inbox: stats.byFeed[f.id] || 0, ...feedHealth(f) }))
+        .sort((a, b) => b.inbox - a.inbox || a.name.localeCompare(b.name));
+      return { category: cat || '(ungrouped)', count: rows.length, feeds: rows };
     }
-    const sources = [...folders.entries()]
-      .map(([category, feeds]) => ({ category: category || '(ungrouped)', feeds: feeds.sort((a, b) => b.inbox - a.inbox || a.name.localeCompare(b.name)) }))
-      .sort((a, b) => a.category.localeCompare(b.category));
+    const folders = new Map(); const tally = { failing: 0, stale: 0, suspect: 0, slow: 0 }; const troubled = [];
+    for (const f of feeds) {
+      const cat = f.category || '';
+      const g = folders.get(cat) || folders.set(cat, { category: cat || '(ungrouped)', feeds: 0, inbox: 0 }).get(cat);
+      g.feeds++; g.inbox += stats.byFeed[f.id] || 0;
+      const h = feedHealth(f);
+      if (h.state) { if (tally[h.state] !== undefined) tally[h.state]++; troubled.push({ id: f.id, name: f.name, category: cat || '(ungrouped)', ...h }); }
+    }
     const health = {}; for (const k in tally) if (tally[k]) health[k] = tally[k];
-    return { folders: sources.length, feedCount: store.listFeeds().length, ...(Object.keys(health).length ? { health } : {}), sources };
+    troubled.sort((a, b) => (b.fails || 0) - (a.fails || 0) || a.name.localeCompare(b.name));
+    const out = { feedCount: feeds.length, folders: [...folders.values()].sort((a, b) => a.category.localeCompare(b.category)) };
+    if (Object.keys(health).length) out.health = health;
+    if (troubled.length) { out.troubled = troubled.slice(0, 100); if (troubled.length > 100) out.troubledOmitted = troubled.length - 100; }
+    return out;
   }
 
   // Ranked full-text search via the librarian index when ready (vs queryItems's
@@ -589,8 +600,8 @@ const TOOLS = [
   },
   {
     name: 'weir_listSources', fn: 'listSources',
-    description: 'List weir’s sources (feeds) grouped by folder, each with its inbox count AND health — `state` (stale/failing/suspect/slow; absent = healthy), `lastPolled`, `fails`, `lastError`, `perWeek` (avg items/week) — so you can spot prune candidates (dead/stale feeds) and help curate. A top-level `health` tallies the troubled ones. Optional `category` scopes to one folder. Pair with weir_updateFeed to recategorize/adjust, weir_queryItems({feed}) to drill in.',
-    inputSchema: { type: 'object', properties: { category: { type: 'string', description: 'Only this folder ("" = ungrouped)' } } },
+    description: 'Source overview (compact — safe on a 400+ feed corpus). DEFAULT returns { feedCount, folders:[{category,feeds,inbox}], health:{failing,stale,…}, troubled:[…] } — folder summaries + a health tally + ONLY the non-healthy feeds (state/lastPolled/fails/lastError), so you can spot prune candidates without dumping everything. Pass `category` to get the FULL per-feed list for one folder → { category, count, feeds:[{id,name,adapter,inbox,…health}] }. Pair with weir_updateFeed to curate, weir_queryItems({feed}) to drill in.',
+    inputSchema: { type: 'object', properties: { category: { type: 'string', description: 'Full per-feed detail for one folder ("" = ungrouped); omit for the overview' } } },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'List weir sources' },
   },
   {

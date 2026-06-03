@@ -45,9 +45,12 @@ assert.equal((await tools.queryItems({ feed: 'f' })).count, 2, 'feed filter by i
 assert.equal((await tools.queryItems({ feed: 'Boing Boing' })).count, 2, 'feed filter by display name');
 assert.equal((await tools.queryItems({ feed: 'boing boing' })).count, 2, 'feed name is case-insensitive');
 assert.equal((await tools.queryItems({ feed: 'Nope' })).count, 0, 'unknown feed → empty set');
-const srcs = await tools.listSources();
+const srcs = await tools.listSources();   // overview (no per-feed dump)
 assert.equal(srcs.feedCount, 1, 'listSources: one feed');
-assert.ok(srcs.sources.some((c) => c.feeds.some((f) => f.name === 'Boing Boing' && f.inbox === 2)), 'listSources: feed + inbox count');
+assert.ok(srcs.folders.some((c) => c.feeds === 1 && c.inbox === 2), 'overview: folder summary with count + inbox');
+assert.ok(!srcs.sources, 'overview does not inline every feed');
+const det = await tools.listSources({ category: '' });   // detail for the ungrouped folder
+assert.ok(det.feeds.some((f) => f.name === 'Boing Boing' && f.inbox === 2), 'category detail lists the feed');
 
 // ── getItem ──
 const it = await tools.getItem({ id: 'a1', content: true });
@@ -124,11 +127,12 @@ await assert.rejects(tools.addFeed({ url: 'http://x/f' }), /only available/, 'ad
 const uf = await tools.updateFeed({ id: 'f', category: 'news', name: 'BB' });
 assert.equal(uf.category, 'news'); assert.equal(store.getFeed('f').name, 'BB', 'feed renamed');
 await assert.rejects(tools.updateFeed({ id: 'nope', name: 'x' }), /No feed/, 'unknown feed errors');
+store.getFeed('f').state = 'failing';
 store.getFeed('f').feed_health = { consecutive_failures: 3, last_error: 'HTTP 500' };
 const ls2 = await tools.listSources();
-const ff = ls2.sources.flatMap((c) => c.feeds).find((x) => x.id === 'f');
-assert.equal(ff.fails, 3, 'listSources surfaces consecutive failures');
-assert.equal(ff.lastError, 'HTTP 500', 'and the last error');
+assert.equal(ls2.health.failing, 1, 'health tally counts the failing feed');
+const ff = (ls2.troubled || []).find((x) => x.id === 'f');
+assert.ok(ff && ff.fails === 3 && ff.lastError === 'HTTP 500', 'troubled list surfaces fails + last error');
 
 // ── catalog control (mock app) ──
 const calls = [];
