@@ -5,6 +5,7 @@ export const SCHEMA_VERSION = 1;
 
 export const ITEM_TYPES = [
   'article', 'video', 'release', 'paper', 'status', 'track', 'podcast', 'commit', 'issue', 'book',
+  'note', 'file',   // stacks entries (STACKS.md): authored notes + dropped files
 ];
 
 // Retention TTLs in days, or 'forever'. Per-feed `retention` overrides these
@@ -152,6 +153,15 @@ export function makeItem(raw, feed) {
     has_content: !!(raw.content && String(raw.content).length),
     glass_id: raw.glass_id || undefined,   // catalog card id once cataloged (GLASS.md §3.1)
   };
+  // Stacks entries (STACKS.md §9): identity is a stable `uid`, the `path` is just the
+  // entry's current address, and the body lives at the real tree path (content_path)
+  // rather than /content/<feed>/…. These ride along when present so a stacks item is
+  // a normal Item (tags/search/catalog/views for free).
+  if (raw.uid) rec.uid = String(raw.uid);
+  if (raw.path != null) rec.path = String(raw.path);
+  if (raw.content_path) rec.content_path = String(raw.content_path);
+  if (raw.mime) rec.mime = String(raw.mime);
+  if (raw.missing) rec.missing = true;
   rec.search_text = deriveSearchText(rec);
   rec.expires_at = computeExpiry(rec, feed);
   return rec;

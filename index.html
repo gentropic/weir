@@ -564,6 +564,41 @@ body {
 .rv-edit-actions { display: flex; gap: 8px; }
 .rv-edit-actions button { font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg-muted); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 4px 10px; cursor: pointer; }
 .rv-edit-actions button:hover { color: var(--au-action); border-color: var(--au-action); }
+
+/* ── Stacks (STACKS.md): rail tree + note editor ── */
+#stacks-tree { font-size: 13px; }
+.stack-folder { display: flex; align-items: center; gap: 4px; padding: 3px 6px; cursor: pointer; color: var(--au-fg-muted); border-radius: var(--au-radius); user-select: none; }
+.stack-folder:hover { background: var(--sw-bg-bright); }
+.stack-folder.active { color: var(--au-fg); background: var(--sw-bg-bright); }
+.stack-folder .sf-tog { width: 12px; text-align: center; color: var(--au-fg-soft); font-size: 10px; }
+.stack-folder .sf-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stack-folder .sf-count { color: var(--au-fg-soft); font-family: var(--au-font-mono); font-size: 10px; }
+.stack-entry { display: flex; align-items: center; gap: 6px; padding: 3px 6px; cursor: pointer; color: var(--au-fg-soft); border-radius: var(--au-radius); }
+.stack-entry:hover { background: var(--sw-bg-bright); color: var(--au-fg); }
+.stack-entry.active { background: var(--sw-bg-bright); color: var(--au-fg); }
+.stack-entry .se-ico { color: var(--au-fg-soft); font-size: 11px; }
+.stack-entry .se-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stack-entry.missing .se-name { text-decoration: line-through; color: var(--au-warn); opacity: 0.75; }
+.stack-missing { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding: 4px 6px; font-size: 11px; color: var(--au-warn); font-family: var(--au-font-mono); }
+.stack-missing button { color: var(--au-warn); background: none; border: 1px solid var(--au-warn); border-radius: var(--au-radius); padding: 1px 6px; cursor: pointer; font-size: 10px; }
+
+/* note editor overlay */
+.panel-wide { width: min(1040px, 95vw); height: min(680px, 90vh); }
+.se-head { gap: 10px; text-transform: none; letter-spacing: 0; }
+.se-title { flex: 1; font-family: var(--au-font); font-size: 14px; padding: 4px 8px; }
+.se-path { font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); }
+.se-modes { display: flex; gap: 2px; }
+.se-mode.active { color: var(--au-action); }
+.se-body { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+.se-body.mode-edit { grid-template-columns: 1fr; }
+.se-body.mode-edit .se-preview { display: none; }
+.se-body.mode-preview { grid-template-columns: 1fr; }
+.se-body.mode-preview .se-edit { display: none; }
+.se-edit { resize: none; border: none; outline: none; background: var(--sw-bg-deep); color: var(--au-fg); font-family: var(--au-font-mono); font-size: 13px; line-height: 1.6; padding: 14px 16px; tab-size: 2; border-right: 1px solid var(--au-border); }
+.se-preview { overflow-y: auto; padding: 14px 18px; margin: 0; border-top: none; max-width: none; }
+.se-foot { align-items: center; }
+.se-tags { flex: 1; font-family: var(--au-font-mono); font-size: 12px; padding: 4px 8px; }
+.se-foot .hint { color: var(--au-fg-soft); }
 </style>
 </head>
 <body>
@@ -607,6 +642,11 @@ body {
     <div class="rail-section" id="tags-section" style="display:none">
       <div class="rail-label" id="tags-head">Tags<span class="rail-acts"><button id="tags-manage" class="btn-link" type="button" title="Manage tags — rename, merge, color, delete">⚙</button></span></div>
       <div id="tags-list"></div>
+    </div>
+
+    <div class="rail-section" id="stacks-section" style="display:none">
+      <div class="rail-label" id="stacks-head">Stacks<span class="rail-acts"><button id="stacks-newnote" class="btn-link" type="button" title="New note (n)">＋ note</button></span></div>
+      <div id="stacks-tree"></div>
     </div>
 
   </aside>
@@ -841,6 +881,31 @@ body {
     <div class="panel-foot">
       <span class="hint">click a swatch to recolor · rename into an existing tag to merge</span>
       <button class="btn" id="tags-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Stacks note editor — edit / split / preview toggle (cm6 swaps in for the textarea later) -->
+<div class="overlay" id="stacks-editor-overlay" hidden>
+  <div class="panel panel-wide">
+    <div class="panel-head se-head">
+      <input id="se-title" class="field se-title" type="text" placeholder="note title…" autocomplete="off" spellcheck="false">
+      <span class="se-path" id="se-path"></span>
+      <span class="se-modes">
+        <button class="btn-link se-mode" data-semode="edit" type="button" title="Edit only">✎ edit</button>
+        <button class="btn-link se-mode active" data-semode="split" type="button" title="Edit + preview">▥ split</button>
+        <button class="btn-link se-mode" data-semode="preview" type="button" title="Preview only">▦ preview</button>
+      </span>
+    </div>
+    <div class="se-body" id="se-body">
+      <textarea id="se-edit" class="se-edit" spellcheck="false" placeholder="# Write markdown…&#10;&#10;Link other holdings with [[uid]]."></textarea>
+      <div id="se-preview" class="se-preview icontent"></div>
+    </div>
+    <div class="panel-foot se-foot">
+      <input id="se-tags" class="field se-tags" type="text" placeholder="tags, comma-separated…" autocomplete="off" spellcheck="false">
+      <span class="hint" id="se-status"></span>
+      <button class="btn btn-primary" id="se-save">Save</button>
+      <button class="btn" id="se-close">Close</button>
     </div>
   </div>
 </div>
@@ -5701,6 +5766,1618 @@ const Librarian = {
 return Librarian;
 })();
 
+// ── vendor/yaml.js ──
+
+// @gcu/yaml — Strict, auditable subset of YAML 1.2
+// Auto-generated from ext/yaml/src/ — do not edit directly
+
+// -- types.js --
+
+// AST node shape and error class for @gcu/yaml.
+//
+// Every node is one of:
+//   { kind: 'scalar', type: 'null'|'bool'|'int'|'float'|'string', value, ... }
+//   { kind: 'map',  entries: [{ key, value }] }
+//   { kind: 'seq',  items: [Node] }
+//
+// All nodes carry:
+//   tag                    — string | null
+//   leadingComments        — string[]  (comments on lines above the node)
+//   trailingComment        — string | null  (same-line trailing)
+//   blockTrailingComments  — string[]  (comments attached after the node's region)
+//   loc                    — { line, column } 1-based, byte-counted
+//
+// Scalar nodes may carry hints (not data) for the emitter:
+//   radix       — 'hex' | 'oct' | 'bin'                (int only)
+//   separators  — true                                  (int only: emit underscores)
+//   style       — 'double' | 'single' | 'block-clip'
+//                | 'block-strip'                         (string only)
+
+class YamlParseError extends Error {
+  constructor(rule, line, column, message, byteRange) {
+    super(`[rule ${rule}] line ${line}, col ${column}: ${message}`);
+    this.name = 'YamlParseError';
+    this.rule = rule;
+    this.line = line;
+    this.column = column;
+    this.byteRange = byteRange || null;
+  }
+}
+
+function scalar(type, value, opts = {}) {
+  return {
+    kind: 'scalar',
+    type,
+    value,
+    radix: opts.radix || null,
+    separators: opts.separators || false,
+    style: opts.style || null,
+    tag: opts.tag || null,
+    leadingComments: opts.leadingComments || [],
+    trailingComment: opts.trailingComment || null,
+    blockTrailingComments: opts.blockTrailingComments || [],
+    loc: opts.loc || { line: 0, column: 0 },
+  };
+}
+
+function mapNode(entries, opts = {}) {
+  return {
+    kind: 'map',
+    entries: entries || [],
+    tag: opts.tag || null,
+    leadingComments: opts.leadingComments || [],
+    trailingComment: opts.trailingComment || null,
+    blockTrailingComments: opts.blockTrailingComments || [],
+    loc: opts.loc || { line: 0, column: 0 },
+  };
+}
+
+function seqNode(items, opts = {}) {
+  return {
+    kind: 'seq',
+    items: items || [],
+    tag: opts.tag || null,
+    leadingComments: opts.leadingComments || [],
+    trailingComment: opts.trailingComment || null,
+    blockTrailingComments: opts.blockTrailingComments || [],
+    loc: opts.loc || { line: 0, column: 0 },
+  };
+}
+
+function mapEntry(key, value) {
+  return { key, value };
+}
+
+const MAX_DEPTH = 64;
+
+// -- lex.js --
+
+// Lexer for @gcu/yaml.
+//
+// Two layers:
+//   1. preprocess(text) — splits into line records, normalizes CRLF→LF,
+//      rejects BOM and bare CR, strips trailing SP, computes indent.
+//   2. Scalar / key / tag / comment parsers — pure functions the parser
+//      uses to interpret line content.
+//
+// Block scalar bodies are NOT processed here. The parser captures the body
+// lines verbatim from the raw line records.
+
+
+// ---- 1. Line preprocessing ------------------------------------------------
+
+function preprocess(text) {
+  // §4.1 — UTF-8 BOM at start is an error.
+  if (text.length > 0 && text.charCodeAt(0) === 0xFEFF) {
+    throw new YamlParseError('4.1', 1, 1, 'UTF-8 BOM not permitted');
+  }
+
+  // §4.2 — accept LF and CRLF; bare CR is an error. We walk the input
+  // character by character to give precise diagnostics for bare CR.
+  const out = [];
+  let line = 1, col = 1;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 0x0D) {
+      if (text.charCodeAt(i + 1) !== 0x0A) {
+        throw new YamlParseError('4.2', line, col, 'bare CR not followed by LF');
+      }
+      // Skip the CR; the LF on the next iteration ends the line.
+      continue;
+    }
+    out.push(text[i]);
+    if (c === 0x0A) { line++; col = 1; }
+    else { col++; }
+  }
+  const norm = out.join('');
+
+  // Split into line records.
+  const lines = [];
+  let cur = '';
+  let curLine = 1;
+  for (let i = 0; i < norm.length; i++) {
+    const ch = norm[i];
+    if (ch === '\n') {
+      lines.push(makeLineRecord(cur, curLine));
+      cur = '';
+      curLine++;
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur.length > 0) lines.push(makeLineRecord(cur, curLine));
+  return lines;
+}
+
+function makeLineRecord(raw, lineNumber) {
+  // §4.4 — strip trailing SP silently.
+  let end = raw.length;
+  while (end > 0 && raw.charCodeAt(end - 1) === 0x20) end--;
+  const trimmed = raw.slice(0, end);
+
+  // §4.4 — tabs anywhere before the first non-whitespace character are
+  // forbidden (and tabs as a separator are forbidden, but the parser checks
+  // that against content).
+  let indent = 0;
+  for (let i = 0; i < trimmed.length; i++) {
+    const c = trimmed.charCodeAt(i);
+    if (c === 0x20) { indent++; continue; }
+    if (c === 0x09) {
+      throw new YamlParseError('4.4', lineNumber, i + 1,
+        'tab not permitted in indentation');
+    }
+    break;
+  }
+
+  return {
+    raw,
+    indent,
+    content: trimmed.slice(indent),
+    lineNumber,
+    isBlank: trimmed.length === 0,
+  };
+}
+
+// ---- 2. Comment splitting -------------------------------------------------
+
+// Splits a line's content into { body, comment }.
+//   body:    content with the trailing-comment portion removed and any
+//            trailing SP between body and # stripped.
+//   comment: the comment text without the # (or null if no comment).
+// Respects "..." and '...' boundaries so a # inside a string is not a comment.
+// A trailing # must have at least one SP before it (or be at start of content).
+function splitComment(content) {
+  let inDQ = false, inSQ = false;
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i];
+    if (inDQ) {
+      if (c === '\\') { i++; continue; }  // skip escaped next char
+      if (c === '"') inDQ = false;
+      continue;
+    }
+    if (inSQ) {
+      if (c === "'" && content[i + 1] === "'") { i++; continue; }
+      if (c === "'") inSQ = false;
+      continue;
+    }
+    if (c === '"') { inDQ = true; continue; }
+    if (c === "'") { inSQ = true; continue; }
+    if (c === '#') {
+      if (i === 0 || content[i - 1] === ' ') {
+        let bodyEnd = i;
+        while (bodyEnd > 0 && content[bodyEnd - 1] === ' ') bodyEnd--;
+        return { body: content.slice(0, bodyEnd), comment: content.slice(i + 1) };
+      }
+      // # not preceded by SP — part of value. Let the value parser fail on it.
+    }
+  }
+  return { body: content, comment: null };
+}
+
+// Returns true if content is a comment-only line (after indent).
+function isCommentOnly(content) {
+  return content.length > 0 && content[0] === '#';
+}
+
+// Extracts the text of a comment-only line (without the leading #).
+function commentBody(content) {
+  return content.slice(1);
+}
+
+// ---- 3. Character classes ------------------------------------------------
+
+function isLetterOrUnderscore(c) {
+  return (c >= 0x41 && c <= 0x5A)   // A-Z
+      || (c >= 0x61 && c <= 0x7A)   // a-z
+      || c === 0x5F;                 // _
+}
+
+function isDigit(c) {
+  return c >= 0x30 && c <= 0x39;
+}
+
+function isBareKeyTail(c) {
+  return isLetterOrUnderscore(c) || isDigit(c) || c === 0x2D || c === 0x2E;  // - .
+}
+
+function isTagNameTail(c) {
+  // §9.2 — tag names exclude the dot.
+  return isLetterOrUnderscore(c) || isDigit(c) || c === 0x2D;
+}
+
+// ---- 4. Tag parsing ------------------------------------------------------
+
+// If `content` starts with a tag, returns { tag, restAfterTag, tagWidth }.
+// `restAfterTag` is `content` with the tag and the SP after it (if any) consumed.
+// Returns null if there is no tag. Throws on malformed tag.
+function tryParseTag(content, lineNumber, columnBase) {
+  if (content[0] !== '!') return null;
+
+  if (content[1] === '!') {
+    throw new YamlParseError('9.2', lineNumber, columnBase + 1,
+      '!!-prefixed tags not permitted');
+  }
+  if (content[1] === '<') {
+    throw new YamlParseError('9.2', lineNumber, columnBase + 1,
+      'verbatim !<...> tags not permitted');
+  }
+  if (content.length < 2 || !isLetterOrUnderscore(content.charCodeAt(1))) {
+    throw new YamlParseError('9.2', lineNumber, columnBase + 1,
+      'tag name must begin with letter or underscore');
+  }
+
+  let i = 2;
+  while (i < content.length && isTagNameTail(content.charCodeAt(i))) i++;
+  const tag = content.slice(1, i);
+
+  // After the tag, expect either end-of-content, or exactly one SP then more.
+  let rest = content.slice(i);
+  if (rest.length > 0 && rest[0] !== ' ') {
+    throw new YamlParseError('9.3', lineNumber, columnBase + i + 1,
+      'tag must be followed by space or end of line');
+  }
+  if (rest.length > 0) rest = rest.slice(1);
+
+  return { tag, restAfterTag: rest, tagWidth: i + (content.slice(i).length > 0 ? 1 : 0) };
+}
+
+// ---- 5. Bare key detection -----------------------------------------------
+
+function tryParseBareKey(content) {
+  if (content.length === 0) return null;
+  if (!isLetterOrUnderscore(content.charCodeAt(0))) return null;
+  let i = 1;
+  while (i < content.length && isBareKeyTail(content.charCodeAt(i))) i++;
+  return { key: content.slice(0, i), len: i };
+}
+
+// ---- 6. Scalar value parsing ---------------------------------------------
+
+// Parses the "value" text (after `key: ` or `- `).
+//   { node }            — scalar AST node
+//   { emptySeq: true }  — text was `[]`
+//   { emptyMap: true }  — text was `{}`
+// Throws on malformed values or unquoted plain scalars.
+function parseValueText(text, lineNumber, columnBase) {
+  if (text === '[]') return { emptySeq: true };
+  if (text === '{}') return { emptyMap: true };
+
+  // Detect any flow-collection use beyond empty (must come before scalar parse
+  // so we point at the right column).
+  rejectFlowChars(text, lineNumber, columnBase);
+
+  if (text === 'null') {
+    return { node: scalar('null', null, { loc: { line: lineNumber, column: columnBase } }) };
+  }
+  if (text === 'true') {
+    return { node: scalar('bool', true, { loc: { line: lineNumber, column: columnBase } }) };
+  }
+  if (text === 'false') {
+    return { node: scalar('bool', false, { loc: { line: lineNumber, column: columnBase } }) };
+  }
+
+  if (/^(Null|NULL|~)$/.test(text)) {
+    throw new YamlParseError('6.1', lineNumber, columnBase,
+      `null must be written as 'null' (got '${text}')`);
+  }
+  if (/^(True|TRUE|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|y|Y|n|N)$/.test(text)) {
+    throw new YamlParseError('6.2', lineNumber, columnBase,
+      `booleans must be 'true' or 'false' (got '${text}')`);
+  }
+
+  if (text[0] === '"') {
+    return { node: parseDoubleQuoted(text, lineNumber, columnBase) };
+  }
+  if (text[0] === "'") {
+    return { node: parseSingleQuoted(text, lineNumber, columnBase) };
+  }
+
+  // Try integer first (since "1" parses as int, not float). Then float.
+  const intResult = tryParseInt(text);
+  if (intResult !== null) {
+    if (intResult.error) {
+      throw new YamlParseError(intResult.rule, lineNumber, columnBase, intResult.error);
+    }
+    return {
+      node: scalar('int', intResult.value, {
+        radix: intResult.radix,
+        separators: intResult.separators,
+        loc: { line: lineNumber, column: columnBase },
+      }),
+    };
+  }
+
+  const floatResult = tryParseFloat(text);
+  if (floatResult !== null) {
+    if (floatResult.error) {
+      throw new YamlParseError(floatResult.rule, lineNumber, columnBase, floatResult.error);
+    }
+    return {
+      node: scalar('float', floatResult.value, {
+        loc: { line: lineNumber, column: columnBase },
+      }),
+    };
+  }
+
+  // No quote, doesn't match null/bool/int/float → plain scalar, rejected.
+  throw new YamlParseError('6.5', lineNumber, columnBase,
+    `plain (unquoted) scalars not permitted; quote the value`);
+}
+
+function rejectFlowChars(text, lineNumber, columnBase) {
+  let inDQ = false, inSQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inDQ) {
+      if (c === '\\') { i++; continue; }
+      if (c === '"') inDQ = false;
+      continue;
+    }
+    if (inSQ) {
+      if (c === "'" && text[i + 1] === "'") { i++; continue; }
+      if (c === "'") inSQ = false;
+      continue;
+    }
+    if (c === '"') { inDQ = true; continue; }
+    if (c === "'") { inSQ = true; continue; }
+    if (c === '[' || c === ']' || c === '{' || c === '}') {
+      throw new YamlParseError('8.3', lineNumber, columnBase + i,
+        'flow collections not permitted except empty [] and {}');
+    }
+  }
+}
+
+// ---- 7. Integer parsing --------------------------------------------------
+
+function tryParseInt(text) {
+  if (text.length === 0) return null;
+
+  let sign = 1;
+  let s = text;
+  // §6.3 — hex/oct/bin allow only leading '-' (not '+').
+  if (s[0] === '+') { sign = 1; s = s.slice(1); }
+  else if (s[0] === '-') { sign = -1; s = s.slice(1); }
+
+  if (s.length === 0) return null;
+
+  // Hex / Oct / Bin
+  if (s[0] === '0' && s.length > 1) {
+    const p = s[1];
+    if (p === 'x' || p === 'X') return parseRadix(s.slice(2), 16, sign, 'hex', text[0] === '+');
+    if (p === 'o' || p === 'O') return parseRadix(s.slice(2), 8, sign, 'oct', text[0] === '+');
+    if (p === 'b' || p === 'B') return parseRadix(s.slice(2), 2, sign, 'bin', text[0] === '+');
+  }
+
+  // Decimal: 0 alone, or [1-9] then digit/_digit
+  if (!/^[0-9]/.test(s)) return null;
+  if (s === '0') return { value: 0, radix: null, separators: false };
+  if (s[0] === '0') {
+    // Could be a float (0.5) or invalid (01). Only reject if it's a pure-digit
+    // run that doesn't continue into a float.
+    if (/^0[0-9_]/.test(s) && !s.includes('.') && !/[eE]/.test(s)) {
+      return { error: 'decimal integers may not have a leading zero', rule: '6.3' };
+    }
+    return null;  // let the float parser try
+  }
+
+  if (!validateUnderscored(s, c => c >= '0' && c <= '9')) {
+    // Not a pure integer literal — could still be a float (has '.', 'e', etc.).
+    return null;
+  }
+
+  const separators = s.includes('_');
+  const plain = s.replace(/_/g, '');
+  const value = sign * Number(plain);
+  if (!Number.isSafeInteger(value)) {
+    return { error: 'integer outside safe range (above 2^53)', rule: '6.3' };
+  }
+  return { value, radix: null, separators };
+}
+
+function parseRadix(body, radix, sign, name, hadPlus) {
+  if (hadPlus) return { error: `${name} integer cannot have leading '+'`, rule: '6.3' };
+  if (body.length === 0) {
+    return { error: `${name} integer requires at least one digit`, rule: '6.3' };
+  }
+  if (body[0] === '_') return { error: 'leading underscore not permitted in number', rule: '6.3' };
+  if (body[body.length - 1] === '_') return { error: 'trailing underscore not permitted in number', rule: '6.3' };
+  if (body.includes('__')) return { error: 'doubled underscore not permitted in number', rule: '6.3' };
+
+  let valid;
+  if (radix === 16) valid = c => /[0-9a-fA-F]/.test(c) || c === '_';
+  else if (radix === 8) valid = c => (c >= '0' && c <= '7') || c === '_';
+  else valid = c => c === '0' || c === '1' || c === '_';
+
+  for (const c of body) {
+    if (!valid(c)) return null;
+  }
+
+  const stripped = body.replace(/_/g, '');
+  const value = sign * parseInt(stripped, radix);
+  if (!Number.isSafeInteger(value)) {
+    return { error: `${name} integer outside safe range`, rule: '6.3' };
+  }
+  return { value, radix: name, separators: body.includes('_') };
+}
+
+function validateUnderscored(s, isAllowedDigit) {
+  if (s.length === 0) return false;
+  if (s[0] === '_' || s[s.length - 1] === '_') return false;
+  let prev = null;
+  for (const c of s) {
+    if (c === '_') {
+      if (prev === '_' || prev === null) return false;
+    } else if (!isAllowedDigit(c)) {
+      return false;
+    }
+    prev = c;
+  }
+  return true;
+}
+
+// ---- 8. Float parsing ----------------------------------------------------
+
+function tryParseFloat(text) {
+  // To be a float, the token must contain '.' or 'e'/'E'.
+  let s = text;
+  let sign = 1;
+  if (s[0] === '+') s = s.slice(1);
+  else if (s[0] === '-') { sign = -1; s = s.slice(1); }
+
+  const hasDot = s.includes('.');
+  const hasExp = /[eE]/.test(s);
+  if (!hasDot && !hasExp) return null;
+
+  // Non-finite forbidden.
+  if (/^[+-]?(NaN|nan|Inf|inf|Infinity|infinity|\.inf|\.nan|\.NaN|\.Inf)$/.test(text)) {
+    return { error: 'non-finite floats not permitted', rule: '6.4' };
+  }
+
+  let i = 0;
+  let intPart = '';
+  while (i < s.length && /[0-9_]/.test(s[i])) { intPart += s[i]; i++; }
+
+  let dotPresent = false;
+  if (s[i] === '.') { dotPresent = true; i++; }
+
+  let fracPart = '';
+  while (i < s.length && /[0-9_]/.test(s[i])) { fracPart += s[i]; i++; }
+
+  let expSign = '', expPart = '';
+  if (i < s.length && (s[i] === 'e' || s[i] === 'E')) {
+    i++;
+    if (s[i] === '+' || s[i] === '-') { expSign = s[i]; i++; }
+    while (i < s.length && /[0-9_]/.test(s[i])) { expPart += s[i]; i++; }
+  }
+
+  if (i !== s.length) return null;
+
+  // Per grammar:
+  //   significand = digits "." [digits]   (intPart present, dot present)
+  //               | "." digits             (intPart empty, dot present, fracPart non-empty)
+  //               | digits                  (with exponent only)
+  if (dotPresent) {
+    if (intPart === '' && fracPart === '') return null;
+  } else {
+    if (intPart === '' || expPart === '') return null;
+  }
+
+  const digitsRe = c => c >= '0' && c <= '9';
+  if (intPart && !validateUnderscored(intPart, digitsRe)) {
+    return { error: 'malformed float significand', rule: '6.4' };
+  }
+  if (fracPart && !validateUnderscored(fracPart, digitsRe)) {
+    return { error: 'malformed float fraction', rule: '6.4' };
+  }
+  if (expPart && !validateUnderscored(expPart, digitsRe)) {
+    return { error: 'malformed float exponent', rule: '6.4' };
+  }
+  if ((s.startsWith('e') || s.startsWith('E')) && intPart === '') {
+    return null;
+  }
+
+  let assembled = (intPart.replace(/_/g, '') || '0');
+  if (dotPresent) assembled += '.' + (fracPart.replace(/_/g, '') || '0');
+  if (expPart) assembled += 'e' + expSign + expPart.replace(/_/g, '');
+
+  const value = sign * Number(assembled);
+  if (!Number.isFinite(value)) {
+    return { error: 'float not finite', rule: '6.4' };
+  }
+  return { value };
+}
+
+// ---- 9. Double-quoted string ---------------------------------------------
+
+function parseDoubleQuoted(text, lineNumber, columnBase) {
+  let i = 1;
+  const out = [];
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"') {
+      if (i !== text.length - 1) {
+        throw new YamlParseError('6.5', lineNumber, columnBase + i + 1,
+          'unexpected content after closing double quote');
+      }
+      return scalar('string', out.join(''), {
+        style: 'double',
+        loc: { line: lineNumber, column: columnBase },
+      });
+    }
+    if (c === '\\') {
+      const e = text[i + 1];
+      if (e === undefined) {
+        throw new YamlParseError('6.5', lineNumber, columnBase + i,
+          'incomplete escape sequence');
+      }
+      if (e === '"') { out.push('"'); i += 2; continue; }
+      if (e === '\\') { out.push('\\'); i += 2; continue; }
+      if (e === '/') { out.push('/'); i += 2; continue; }
+      if (e === 'b') { out.push('\b'); i += 2; continue; }
+      if (e === 'f') { out.push('\f'); i += 2; continue; }
+      if (e === 'n') { out.push('\n'); i += 2; continue; }
+      if (e === 'r') { out.push('\r'); i += 2; continue; }
+      if (e === 't') { out.push('\t'); i += 2; continue; }
+      if (e === 'u') {
+        const hex = text.slice(i + 2, i + 6);
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+          throw new YamlParseError('6.5', lineNumber, columnBase + i,
+            'malformed \\uXXXX escape (needs 4 hex digits)');
+        }
+        out.push(String.fromCharCode(parseInt(hex, 16)));
+        i += 6;
+        continue;
+      }
+      throw new YamlParseError('6.5', lineNumber, columnBase + i,
+        `invalid escape sequence \\${e}`);
+    }
+    const cc = c.charCodeAt(0);
+    if (cc < 0x20 || cc === 0x7F) {
+      throw new YamlParseError('6.5', lineNumber, columnBase + i,
+        'raw control character in double-quoted string; use \\ escape');
+    }
+    out.push(c);
+    i++;
+  }
+  throw new YamlParseError('6.5', lineNumber, columnBase,
+    'unterminated double-quoted string (raw line break inside?)');
+}
+
+// ---- 10. Single-quoted string --------------------------------------------
+
+function parseSingleQuoted(text, lineNumber, columnBase) {
+  let i = 1;
+  const out = [];
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "'") {
+      if (text[i + 1] === "'") {
+        out.push("'");
+        i += 2;
+        continue;
+      }
+      if (i !== text.length - 1) {
+        throw new YamlParseError('6.5', lineNumber, columnBase + i + 1,
+          'unexpected content after closing single quote');
+      }
+      return scalar('string', out.join(''), {
+        style: 'single',
+        loc: { line: lineNumber, column: columnBase },
+      });
+    }
+    const cc = c.charCodeAt(0);
+    if (cc < 0x20 || cc === 0x7F) {
+      throw new YamlParseError('6.5', lineNumber, columnBase + i,
+        'raw control character in single-quoted string; use double quotes with \\ escape');
+    }
+    out.push(c);
+    i++;
+  }
+  throw new YamlParseError('6.5', lineNumber, columnBase,
+    'unterminated single-quoted string (raw line break inside?)');
+}
+
+// ---- 11. Parse a quoted key inline ---------------------------------------
+
+// Used by the parser when a line starts with " or '. Returns
+// { key, consumed } where `consumed` is the number of chars read (including
+// the closing quote). Throws on malformed quote.
+function parseQuotedKey(content, lineNumber, columnBase) {
+  const ch = content[0];
+  if (ch !== '"' && ch !== "'") return null;
+
+  let i = 1;
+  if (ch === '"') {
+    while (i < content.length) {
+      if (content[i] === '\\') { i += 2; continue; }
+      if (content[i] === '"') break;
+      const cc = content.charCodeAt(i);
+      if (cc < 0x20 || cc === 0x7F) {
+        throw new YamlParseError('6.5', lineNumber, columnBase + i,
+          'raw control character in double-quoted key');
+      }
+      i++;
+    }
+    if (content[i] !== '"') {
+      throw new YamlParseError('6.5', lineNumber, columnBase,
+        'unterminated double-quoted key');
+    }
+    const raw = content.slice(0, i + 1);
+    const node = parseDoubleQuoted(raw, lineNumber, columnBase);
+    return { keyNode: node, consumed: i + 1 };
+  } else {
+    while (i < content.length) {
+      if (content[i] === "'" && content[i + 1] === "'") { i += 2; continue; }
+      if (content[i] === "'") break;
+      const cc = content.charCodeAt(i);
+      if (cc < 0x20 || cc === 0x7F) {
+        throw new YamlParseError('6.5', lineNumber, columnBase + i,
+          'raw control character in single-quoted key');
+      }
+      i++;
+    }
+    if (content[i] !== "'") {
+      throw new YamlParseError('6.5', lineNumber, columnBase,
+        'unterminated single-quoted key');
+    }
+    const raw = content.slice(0, i + 1);
+    const node = parseSingleQuoted(raw, lineNumber, columnBase);
+    return { keyNode: node, consumed: i + 1 };
+  }
+}
+
+// -- parse.js --
+
+// Parser for @gcu/yaml.
+//
+// Recursive descent over the line records produced by preprocess().
+// Each block (map or sequence) lives at one indent level; entries within a
+// block all share that indent. Nested blocks sit at indent + 2.
+
+
+
+function parse(text) {
+  const lines = preprocess(text);
+  if (lines.length === 0) {
+    throw new YamlParseError('5.2', 1, 1, 'empty file');
+  }
+
+  const ctx = { lines, pos: 0, depth: 0 };
+
+  const fileLeading = [];
+  while (ctx.pos < ctx.lines.length) {
+    const ln = ctx.lines[ctx.pos];
+    if (ln.isBlank) { ctx.pos++; continue; }
+    if (isCommentOnly(ln.content)) {
+      fileLeading.push(commentBody(ln.content));
+      ctx.pos++;
+      continue;
+    }
+    break;
+  }
+
+  if (ctx.pos >= ctx.lines.length) {
+    throw new YamlParseError('5.2', 1, 1,
+      'file contains only comments/blanks; need a block map or sequence');
+  }
+
+  const firstLine = ctx.lines[ctx.pos];
+  if (firstLine.indent !== 0) {
+    throw new YamlParseError('5.3', firstLine.lineNumber, firstLine.indent + 1,
+      'top-level content must start at column 0');
+  }
+  if (firstLine.content === '---' || firstLine.content === '...'
+      || firstLine.content.startsWith('--- ') || firstLine.content.startsWith('... ')) {
+    throw new YamlParseError('5.1', firstLine.lineNumber, 1,
+      'document-start/end markers (--- / ...) not permitted; single document only');
+  }
+  // §5.2 — bare top-level scalars are not permitted. Detect by: not a seq
+  // dash, and no ':' outside quotes on the first content line.
+  if (!startsWithDash(firstLine.content) && !hasMapColonOutsideQuotes(firstLine.content)) {
+    throw new YamlParseError('5.2', firstLine.lineNumber, 1,
+      'top-level must be a block map or block sequence; bare scalars not permitted');
+  }
+
+  const root = parseBlockBody(ctx, 0, fileLeading, null);
+
+  const tail = [];
+  while (ctx.pos < ctx.lines.length) {
+    const ln = ctx.lines[ctx.pos];
+    if (ln.isBlank) { ctx.pos++; continue; }
+    if (isCommentOnly(ln.content)) {
+      tail.push(commentBody(ln.content));
+      ctx.pos++;
+      continue;
+    }
+    throw new YamlParseError('5.3', ln.lineNumber, ln.indent + 1,
+      'unexpected content after root document');
+  }
+  if (tail.length > 0) {
+    root.blockTrailingComments = root.blockTrailingComments.concat(tail);
+  }
+
+  return root;
+}
+
+// ---- Block body (map or seq) at the given indent --------------------------
+
+function parseBlockBody(ctx, indent, leadingComments, topLevelTag) {
+  if (++ctx.depth > MAX_DEPTH) {
+    const ln = ctx.lines[ctx.pos] || { lineNumber: 1 };
+    throw new YamlParseError('5.4', ln.lineNumber, indent + 1,
+      'maximum nesting depth (64) exceeded');
+  }
+
+  let pendingComments = leadingComments.slice();
+  while (ctx.pos < ctx.lines.length) {
+    const ln = ctx.lines[ctx.pos];
+    if (ln.isBlank) { ctx.pos++; continue; }
+    if (isCommentOnly(ln.content)) {
+      pendingComments.push(commentBody(ln.content));
+      ctx.pos++;
+      continue;
+    }
+    if (ln.indent < indent) {
+      throw new YamlParseError('5.3', ln.lineNumber, ln.indent + 1,
+        `unexpected dedent (expected indent ${indent}, got ${ln.indent})`);
+    }
+    if (ln.indent > indent) {
+      throw new YamlParseError('5.3', ln.lineNumber, ln.indent + 1,
+        `unexpected over-indent (expected ${indent}, got ${ln.indent})`);
+    }
+    break;
+  }
+
+  if (ctx.pos >= ctx.lines.length) {
+    throw new YamlParseError('5.2', 1, 1,
+      'expected map or sequence content but found EOF');
+  }
+
+  const firstLine = ctx.lines[ctx.pos];
+  const isSeq = startsWithDash(firstLine.content);
+
+  let node;
+  if (isSeq) node = parseSeqBlock(ctx, indent, pendingComments, topLevelTag);
+  else node = parseMapBlock(ctx, indent, pendingComments, topLevelTag);
+
+  ctx.depth--;
+  return node;
+}
+
+function startsWithDash(content) {
+  return content[0] === '-'
+    && (content.length === 1 || content[1] === ' ');
+}
+
+// True if a `:` appears outside any `"..."` or `'...'` quoted region.
+function hasMapColonOutsideQuotes(content) {
+  let inDQ = false, inSQ = false;
+  for (let i = 0; i < content.length; i++) {
+    const c = content[i];
+    if (inDQ) {
+      if (c === '\\') { i++; continue; }
+      if (c === '"') inDQ = false;
+      continue;
+    }
+    if (inSQ) {
+      if (c === "'" && content[i + 1] === "'") { i++; continue; }
+      if (c === "'") inSQ = false;
+      continue;
+    }
+    if (c === '"') { inDQ = true; continue; }
+    if (c === "'") { inSQ = true; continue; }
+    if (c === ':') return true;
+  }
+  return false;
+}
+
+// ---- Map block -----------------------------------------------------------
+
+function parseMapBlock(ctx, indent, firstEntryLeading, topLevelTag) {
+  const entries = [];
+  const seenKeys = new Set();
+  let pendingComments = firstEntryLeading.slice();
+  let firstLineNumber = ctx.lines[ctx.pos].lineNumber;
+
+  while (ctx.pos < ctx.lines.length) {
+    const ln = ctx.lines[ctx.pos];
+    if (ln.isBlank) { ctx.pos++; continue; }
+    if (isCommentOnly(ln.content)) {
+      pendingComments.push(commentBody(ln.content));
+      ctx.pos++;
+      continue;
+    }
+    if (ln.indent < indent) break;
+    if (ln.indent > indent) {
+      throw new YamlParseError('5.3', ln.lineNumber, ln.indent + 1,
+        `unexpected over-indent (expected ${indent})`);
+    }
+    if (startsWithDash(ln.content)) {
+      throw new YamlParseError('8.4', ln.lineNumber, ln.indent + 1,
+        'sequence entry not permitted inside a map block');
+    }
+
+    const entry = parseMapEntry(ctx, indent, pendingComments);
+    pendingComments = [];
+    if (seenKeys.has(entry.key.value)) {
+      throw new YamlParseError('7.2', entry.key.loc.line, entry.key.loc.column,
+        `duplicate map key '${entry.key.value}'`);
+    }
+    seenKeys.add(entry.key.value);
+    entries.push(entry);
+  }
+
+  if (entries.length === 0) {
+    throw new YamlParseError('5.2', firstLineNumber, indent + 1,
+      'block map with no entries');
+  }
+
+  if (pendingComments.length > 0) {
+    const last = entries[entries.length - 1].value;
+    last.blockTrailingComments = last.blockTrailingComments.concat(pendingComments);
+  }
+
+  return mapNode(entries, {
+    tag: topLevelTag,
+    loc: { line: entries[0].key.loc.line, column: indent + 1 },
+  });
+}
+
+// Parses a single map entry at ctx.lines[ctx.pos] (must be at `indent`).
+// Advances ctx.pos past all consumed lines (including nested blocks and
+// block scalar bodies).
+function parseMapEntry(ctx, indent, leadingComments) {
+  const ln = ctx.lines[ctx.pos];
+  return parseMapEntryFromContent(ctx, ln.content, ln.lineNumber, indent + 1, indent + 2, leadingComments, /*advanceFirstLine=*/true);
+}
+
+// Core map-entry parser. Accepts a content string (already at column `keyCol`)
+// and processes it. The "nested indent" for any block value is `nestedIndent`.
+// If `advanceFirstLine` is true, ctx.pos is advanced past the current line
+// after the inline portion is consumed.
+function parseMapEntryFromContent(ctx, content, lineNum, keyCol, nestedIndent, leadingComments, advanceFirstLine) {
+  // Key
+  let keyNode, keyLen;
+  if (content[0] === '"' || content[0] === "'") {
+    const r = parseQuotedKey(content, lineNum, keyCol);
+    keyNode = r.keyNode;
+    keyLen = r.consumed;
+  } else {
+    const b = tryParseBareKey(content);
+    if (!b) {
+      throw new YamlParseError('7.1', lineNum, keyCol,
+        'expected key (bare identifier or quoted string)');
+    }
+    keyNode = scalar('string', b.key, { loc: { line: lineNum, column: keyCol } });
+    keyLen = b.len;
+  }
+
+  if (content[keyLen] !== ':') {
+    throw new YamlParseError('7.1', lineNum, keyCol + keyLen,
+      `expected ':' after key (got '${content[keyLen] || 'EOL'}')`);
+  }
+
+  // After the colon
+  let afterColon = content.slice(keyLen + 1);
+  const afterColonCol = keyCol + keyLen + 1;
+
+  // Empty: `key:` end of line — nested block follows.
+  if (afterColon.length === 0) {
+    if (advanceFirstLine) ctx.pos++;
+    const value = parseNestedValue(ctx, nestedIndent, lineNum, afterColonCol, null, null);
+    value.leadingComments = leadingComments;
+    return mapEntry(keyNode, value);
+  }
+
+  if (afterColon[0] !== ' ') {
+    if (afterColon[0] === '\t') {
+      throw new YamlParseError('4.4', lineNum, afterColonCol + 1,
+        'tab not permitted as separator after colon');
+    }
+    throw new YamlParseError('8.2', lineNum, afterColonCol + 1,
+      'colon must be followed by a space and a value (or end of line)');
+  }
+
+  // Consume one or more SPs as the colon/value separator. The canonical
+  // emitter writes exactly one; the parser accepts column-aligned forms.
+  let sepLen = 0;
+  while (afterColon[sepLen] === ' ') sepLen++;
+  const valuePart = afterColon.slice(sepLen);
+  const valueCol = afterColonCol + sepLen;
+
+  return finishInlineMapEntry(ctx, keyNode, valuePart, lineNum, valueCol, nestedIndent, leadingComments, advanceFirstLine);
+}
+
+function finishInlineMapEntry(ctx, keyNode, valuePart, lineNum, valueCol, nestedIndent, leadingComments, advanceFirstLine) {
+  const { body, comment } = splitComment(valuePart);
+
+  if (body.length === 0) {
+    if (advanceFirstLine) ctx.pos++;
+    const value = parseNestedValue(ctx, nestedIndent, lineNum, valueCol, comment, null);
+    value.leadingComments = leadingComments;
+    return mapEntry(keyNode, value);
+  }
+
+  let tag = null;
+  let rest = body;
+  if (rest[0] === '!') {
+    const t = tryParseTag(rest, lineNum, valueCol);
+    tag = t.tag;
+    rest = t.restAfterTag;
+  }
+
+  if (rest.length === 0) {
+    if (advanceFirstLine) ctx.pos++;
+    const value = parseNestedValue(ctx, nestedIndent, lineNum, valueCol, comment, tag);
+    value.leadingComments = leadingComments;
+    return mapEntry(keyNode, value);
+  }
+
+  if (rest === '|' || rest === '|-') {
+    if (advanceFirstLine) ctx.pos++;
+    const chomp = rest === '|-' ? 'strip' : 'clip';
+    const value = parseBlockScalar(ctx, nestedIndent, lineNum, chomp);
+    if (tag) value.tag = tag;
+    value.leadingComments = leadingComments;
+    if (comment) value.trailingComment = comment;
+    return mapEntry(keyNode, value);
+  }
+  rejectBadBlockScalar(rest, lineNum, valueCol);
+
+  // Inline value.
+  if (advanceFirstLine) ctx.pos++;
+  const valueNode = buildValueNode(rest, lineNum, valueCol, tag, leadingComments, comment);
+  rejectMixedContent(ctx, nestedIndent - 2);
+  return mapEntry(keyNode, valueNode);
+}
+
+function buildValueNode(text, lineNum, col, tag, leadingComments, trailingComment) {
+  const r = parseValueText(text, lineNum, col);
+  let node;
+  if (r.emptySeq) node = seqNode([], { loc: { line: lineNum, column: col } });
+  else if (r.emptyMap) node = mapNode([], { loc: { line: lineNum, column: col } });
+  else node = r.node;
+
+  if (tag) node.tag = tag;
+  node.leadingComments = leadingComments;
+  if (trailingComment) node.trailingComment = trailingComment;
+  return node;
+}
+
+function rejectBadBlockScalar(rest, lineNum, col) {
+  if (rest === '|+' || /^\|[0-9]/.test(rest)) {
+    throw new YamlParseError('6.6', lineNum, col,
+      `block scalar form '${rest}' not permitted (only | and |-)`);
+  }
+  if (rest[0] === '>') {
+    throw new YamlParseError('6.6', lineNum, col,
+      'folded block scalar (>) not permitted');
+  }
+}
+
+// Look ahead: if there's an over-indented non-blank/comment line right after,
+// that's "value on this line + nested children" = mixed content (§8.4).
+function rejectMixedContent(ctx, indent) {
+  for (let p = ctx.pos; p < ctx.lines.length; p++) {
+    const ln = ctx.lines[p];
+    if (ln.isBlank) continue;
+    if (isCommentOnly(ln.content)) continue;
+    if (ln.indent > indent) {
+      throw new YamlParseError('8.4', ln.lineNumber, ln.indent + 1,
+        'value given on previous line; indented child not permitted');
+    }
+    return;
+  }
+}
+
+// ---- Sequence block ------------------------------------------------------
+
+function parseSeqBlock(ctx, indent, firstEntryLeading, topLevelTag) {
+  const items = [];
+  let pendingComments = firstEntryLeading.slice();
+  let firstLineNumber = ctx.lines[ctx.pos].lineNumber;
+
+  while (ctx.pos < ctx.lines.length) {
+    const ln = ctx.lines[ctx.pos];
+    if (ln.isBlank) { ctx.pos++; continue; }
+    if (isCommentOnly(ln.content)) {
+      pendingComments.push(commentBody(ln.content));
+      ctx.pos++;
+      continue;
+    }
+    if (ln.indent < indent) break;
+    if (ln.indent > indent) {
+      throw new YamlParseError('5.3', ln.lineNumber, ln.indent + 1,
+        `unexpected over-indent (expected ${indent})`);
+    }
+    if (!startsWithDash(ln.content)) {
+      throw new YamlParseError('8.4', ln.lineNumber, ln.indent + 1,
+        'map entry not permitted inside a sequence block');
+    }
+
+    const itemValue = parseSeqEntry(ctx, indent, pendingComments);
+    pendingComments = [];
+    items.push(itemValue);
+  }
+
+  if (items.length === 0) {
+    throw new YamlParseError('5.2', firstLineNumber, indent + 1,
+      'block sequence with no entries');
+  }
+
+  if (pendingComments.length > 0) {
+    const last = items[items.length - 1];
+    last.blockTrailingComments = last.blockTrailingComments.concat(pendingComments);
+  }
+
+  return seqNode(items, {
+    tag: topLevelTag,
+    loc: { line: firstLineNumber, column: indent + 1 },
+  });
+}
+
+function parseSeqEntry(ctx, indent, leadingComments) {
+  const ln = ctx.lines[ctx.pos];
+  const content = ln.content;
+  const colBase = indent + 1;
+
+  // Bare `-` alone — nested block follows on indented lines.
+  if (content.length === 1) {
+    ctx.pos++;
+    const value = parseNestedValue(ctx, indent + 2, ln.lineNumber, colBase + 1, null, null);
+    value.leadingComments = leadingComments;
+    return value;
+  }
+
+  // `- value` shapes. Consume one or more SPs after the dash; the canonical
+  // emitter writes exactly one, but the parser accepts column-aligned forms.
+  let dashSep = 1;
+  while (content[dashSep] === ' ') dashSep++;
+  const valuePart = content.slice(dashSep);
+  const valueCol = colBase + dashSep;
+
+  const { body, comment } = splitComment(valuePart);
+
+  if (body.length === 0) {
+    ctx.pos++;
+    const value = parseNestedValue(ctx, indent + 2, ln.lineNumber, valueCol, comment, null);
+    value.leadingComments = leadingComments;
+    return value;
+  }
+
+  let tag = null;
+  let rest = body;
+  let restCol = valueCol;
+  if (rest[0] === '!') {
+    const t = tryParseTag(rest, ln.lineNumber, valueCol);
+    tag = t.tag;
+    const consumed = rest.length - t.restAfterTag.length;
+    restCol += consumed;
+    rest = t.restAfterTag;
+  }
+
+  if (rest.length === 0) {
+    ctx.pos++;
+    const value = parseNestedValue(ctx, indent + 2, ln.lineNumber, valueCol, comment, tag);
+    value.leadingComments = leadingComments;
+    return value;
+  }
+
+  if (rest === '|' || rest === '|-') {
+    ctx.pos++;
+    const chomp = rest === '|-' ? 'strip' : 'clip';
+    const value = parseBlockScalar(ctx, indent + 2, ln.lineNumber, chomp);
+    if (tag) value.tag = tag;
+    value.leadingComments = leadingComments;
+    if (comment) value.trailingComment = comment;
+    return value;
+  }
+  rejectBadBlockScalar(rest, ln.lineNumber, restCol);
+
+  // "- key: value" embedded-map shorthand?
+  if (looksLikeMapKey(rest)) {
+    // Parse this line as a map entry at indent + 2, and continue collecting
+    // further map entries at the same indent.
+    const firstEntry = parseMapEntryFromContent(
+      ctx, rest, ln.lineNumber, restCol, indent + 4, [], /*advanceFirstLine=*/false
+    );
+    ctx.pos++;  // consume the current line (parseMapEntryFromContent didn't)
+    const trailingFirst = comment;
+    if (trailingFirst) firstEntry.value.trailingComment = trailingFirst;
+
+    const entries = [firstEntry];
+    const seenKeys = new Set([firstEntry.key.value]);
+    let pendingComments = [];
+
+    while (ctx.pos < ctx.lines.length) {
+      const nx = ctx.lines[ctx.pos];
+      if (nx.isBlank) { ctx.pos++; continue; }
+      if (isCommentOnly(nx.content)) {
+        pendingComments.push(commentBody(nx.content));
+        ctx.pos++;
+        continue;
+      }
+      if (nx.indent < indent + 2) break;
+      if (nx.indent > indent + 2) {
+        throw new YamlParseError('5.3', nx.lineNumber, nx.indent + 1,
+          `unexpected over-indent (expected ${indent + 2})`);
+      }
+      if (startsWithDash(nx.content)) {
+        throw new YamlParseError('8.4', nx.lineNumber, nx.indent + 1,
+          'sequence dash not permitted inside an embedded map');
+      }
+      const entry = parseMapEntry(ctx, indent + 2, pendingComments);
+      pendingComments = [];
+      if (seenKeys.has(entry.key.value)) {
+        throw new YamlParseError('7.2', entry.key.loc.line, entry.key.loc.column,
+          `duplicate map key '${entry.key.value}'`);
+      }
+      seenKeys.add(entry.key.value);
+      entries.push(entry);
+    }
+
+    if (pendingComments.length > 0) {
+      const last = entries[entries.length - 1].value;
+      last.blockTrailingComments = last.blockTrailingComments.concat(pendingComments);
+    }
+
+    const mn = mapNode(entries, {
+      tag,
+      loc: { line: ln.lineNumber, column: restCol },
+    });
+    mn.leadingComments = leadingComments;
+    return mn;
+  }
+
+  // Plain inline scalar / empty collection.
+  ctx.pos++;
+  const valueNode = buildValueNode(rest, ln.lineNumber, restCol, tag, leadingComments, comment);
+  rejectMixedContent(ctx, indent);
+  return valueNode;
+}
+
+// True if `text` begins with a bare or quoted key followed by `:`.
+function looksLikeMapKey(text) {
+  if (text[0] === '"' || text[0] === "'") {
+    const qch = text[0];
+    let i = 1;
+    while (i < text.length) {
+      if (qch === '"' && text[i] === '\\') { i += 2; continue; }
+      if (qch === "'" && text[i] === "'" && text[i + 1] === "'") { i += 2; continue; }
+      if (text[i] === qch) { i++; break; }
+      i++;
+    }
+    return text[i] === ':';
+  }
+  const b = tryParseBareKey(text);
+  if (!b) return false;
+  return text[b.len] === ':';
+}
+
+// ---- Nested value (block following a `key:` or `- ` opener) --------------
+
+function parseNestedValue(ctx, indent, parentLine, parentColumn, parentTrailingComment, topTag) {
+  let p = ctx.pos;
+  while (p < ctx.lines.length) {
+    const ln = ctx.lines[p];
+    if (ln.isBlank) { p++; continue; }
+    if (isCommentOnly(ln.content)) { p++; continue; }
+    break;
+  }
+  if (p >= ctx.lines.length) {
+    throw new YamlParseError('7.3', parentLine, parentColumn,
+      'expected nested block but found EOF (use explicit `null` or `""`)');
+  }
+  const next = ctx.lines[p];
+  if (next.indent < indent) {
+    throw new YamlParseError('7.3', parentLine, parentColumn,
+      'expected nested block but next content is at parent indent or less');
+  }
+  if (next.indent !== indent) {
+    throw new YamlParseError('5.3', next.lineNumber, next.indent + 1,
+      `expected indent ${indent} for nested block, got ${next.indent}`);
+  }
+  const block = parseBlockBody(ctx, indent, [], topTag || null);
+  if (parentTrailingComment) {
+    block.trailingComment = parentTrailingComment;
+  }
+  return block;
+}
+
+// ---- Block scalar (| or |-) ----------------------------------------------
+
+function parseBlockScalar(ctx, indent, openerLine, chomp) {
+  const bodyLines = [];
+  const blankIndices = [];
+
+  while (ctx.pos < ctx.lines.length) {
+    const ln = ctx.lines[ctx.pos];
+    if (ln.isBlank) {
+      bodyLines.push('');
+      blankIndices.push(bodyLines.length - 1);
+      ctx.pos++;
+      continue;
+    }
+    if (ln.indent < indent) break;
+
+    // Slice off `indent` SPs from the raw line, preserving any further chars
+    // as content (including extra leading spaces).
+    const raw = ln.raw;
+    const stripped = raw.length >= indent ? raw.slice(indent) : '';
+    // Per §4.4 the raw-line trailing-SP strip applies to non-block contexts;
+    // inside a block-scalar body, trailing SP is part of content. Actually
+    // §4.4: "Trailing SP on any line outside a "..." or '...' string is
+    // stripped silently by the parser". This wording is ambiguous about
+    // block scalars; spec example treats them as preserved content lines.
+    // We'll preserve everything we slice — this matches the example output.
+    bodyLines.push(stripped);
+    ctx.pos++;
+  }
+
+  if (bodyLines.length === 0) {
+    throw new YamlParseError('6.6', openerLine, indent + 1,
+      'block scalar body is empty; use `""` for an empty string');
+  }
+
+  // Drop trailing blank body lines (they belong to the surrounding context,
+  // not the scalar body).
+  while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1] === '') {
+    bodyLines.pop();
+  }
+  if (bodyLines.length === 0) {
+    throw new YamlParseError('6.6', openerLine, indent + 1,
+      'block scalar body is empty after trimming blanks');
+  }
+
+  let value = bodyLines.join('\n');
+  if (chomp === 'clip') value += '\n';
+
+  return scalar('string', value, {
+    style: 'block-' + chomp,
+    loc: { line: openerLine + 1, column: indent + 1 },
+  });
+}
+
+// -- emit.js --
+
+// Canonical emitter for @gcu/yaml.
+//
+// Pure function from AST to bytes. No configuration; the canonical form is
+// fixed by §12.5:
+//   - 2 SP per indent level
+//   - LF only, exactly one at EOF, no trailing SP on any line
+//   - Strings emit as "..." by default; style='single' → '...'; block scalars
+//     emit as | or |- with body at indent + 2
+//   - Integers emit in decimal unless radix hint says hex/oct/bin (lowercase)
+//   - Floats emit in shortest decimal round-trip form with explicit '.'
+//   - Empty collections emit as [] or {}
+//   - Tags emit as !name before the tagged value
+
+function emit(ast) {
+  if (ast.kind !== 'map' && ast.kind !== 'seq') {
+    throw new Error('emit: top-level must be map or seq');
+  }
+  const out = [];
+  // Leading comments on the root (file-level pre-comments) — these were
+  // attached to the first entry, so they come out naturally.
+  emitBlock(ast, 0, out, ast.tag || null);
+  // File-level trailing comments
+  for (const c of ast.blockTrailingComments) {
+    out.push('#' + c);
+  }
+  return out.join('\n') + '\n';
+}
+
+// ---- Block emitters ------------------------------------------------------
+
+function emitBlock(node, indent, out, /*unused*/ tagOnBlock) {
+  if (node.kind === 'map') emitMapBlock(node, indent, out);
+  else if (node.kind === 'seq') emitSeqBlock(node, indent, out);
+}
+
+function emitMapBlock(map, indent, out) {
+  const pad = ' '.repeat(indent);
+  for (const entry of map.entries) {
+    for (const c of entry.value.leadingComments) {
+      out.push(pad + '#' + c);
+    }
+    emitMapEntry(entry, indent, out);
+    for (const c of entry.value.blockTrailingComments) {
+      out.push(pad + '#' + c);
+    }
+  }
+}
+
+function emitSeqBlock(seq, indent, out) {
+  const pad = ' '.repeat(indent);
+  for (const item of seq.items) {
+    for (const c of item.leadingComments) {
+      out.push(pad + '#' + c);
+    }
+    emitSeqItem(item, indent, out);
+    for (const c of item.blockTrailingComments) {
+      out.push(pad + '#' + c);
+    }
+  }
+}
+
+function emitMapEntry(entry, indent, out) {
+  const pad = ' '.repeat(indent);
+  const keyRepr = emitKey(entry.key);
+  const value = entry.value;
+  const shape = valueShape(value);
+  const tagPart = value.tag ? ' !' + value.tag : '';
+  const trailing = value.trailingComment ? '  #' + value.trailingComment : '';
+
+  if (shape === 'inline') {
+    out.push(pad + keyRepr + ':' + tagPart + ' ' + emitInlineValue(value) + trailing);
+  } else if (shape === 'block-scalar') {
+    const opener = value.style === 'block-strip' ? '|-' : '|';
+    out.push(pad + keyRepr + ':' + tagPart + ' ' + opener + trailing);
+    emitBlockScalarBody(value.value, indent + 2, out);
+  } else if (shape === 'nested-map') {
+    out.push(pad + keyRepr + ':' + tagPart + trailing);
+    emitMapBlock(value, indent + 2, out);
+  } else if (shape === 'nested-seq') {
+    out.push(pad + keyRepr + ':' + tagPart + trailing);
+    emitSeqBlock(value, indent + 2, out);
+  }
+}
+
+function emitSeqItem(item, indent, out) {
+  const pad = ' '.repeat(indent);
+  const tagPart = item.tag ? ' !' + item.tag : '';
+  const trailing = item.trailingComment ? '  #' + item.trailingComment : '';
+
+  const shape = valueShape(item);
+
+  if (shape === 'inline') {
+    if (item.kind === 'scalar') {
+      out.push(pad + '-' + tagPart + ' ' + emitScalar(item) + trailing);
+    } else {
+      // empty map or seq
+      const repr = item.kind === 'map' ? '{}' : '[]';
+      out.push(pad + '-' + tagPart + ' ' + repr + trailing);
+    }
+  } else if (shape === 'block-scalar') {
+    const opener = item.style === 'block-strip' ? '|-' : '|';
+    out.push(pad + '-' + tagPart + ' ' + opener + trailing);
+    emitBlockScalarBody(item.value, indent + 2, out);
+  } else if (shape === 'nested-map') {
+    // Embedded-map form: write first entry inline on dash line.
+    emitEmbeddedMap(item, indent, out);
+  } else if (shape === 'nested-seq') {
+    // Bare dash, nested seq below.
+    out.push(pad + '-' + tagPart + trailing);
+    emitSeqBlock(item, indent + 2, out);
+  }
+}
+
+function emitEmbeddedMap(mapNode, indent, out) {
+  const pad = ' '.repeat(indent);
+  const tagPart = mapNode.tag ? ' !' + mapNode.tag : '';
+
+  const entries = mapNode.entries;
+  const first = entries[0];
+  const firstVal = first.value;
+  const firstKey = emitKey(first.key);
+
+  const firstShape = valueShape(firstVal);
+  const firstTrailing = firstVal.trailingComment ? '  #' + firstVal.trailingComment : '';
+  const firstValTag = firstVal.tag ? ' !' + firstVal.tag : '';
+
+  if (firstShape === 'inline') {
+    out.push(pad + '-' + tagPart + ' ' + firstKey + ':' + firstValTag + ' '
+      + emitInlineValue(firstVal) + firstTrailing);
+  } else if (firstShape === 'block-scalar') {
+    const opener = firstVal.style === 'block-strip' ? '|-' : '|';
+    out.push(pad + '-' + tagPart + ' ' + firstKey + ':' + firstValTag + ' '
+      + opener + firstTrailing);
+    emitBlockScalarBody(firstVal.value, indent + 4, out);
+  } else if (firstShape === 'nested-map') {
+    out.push(pad + '-' + tagPart + ' ' + firstKey + ':' + firstValTag + firstTrailing);
+    emitMapBlock(firstVal, indent + 4, out);
+  } else if (firstShape === 'nested-seq') {
+    out.push(pad + '-' + tagPart + ' ' + firstKey + ':' + firstValTag + firstTrailing);
+    emitSeqBlock(firstVal, indent + 4, out);
+  }
+
+  // First entry's block-trailing comments (at the map's indent = indent + 2).
+  const subIndent = indent + 2;
+  const subPad = ' '.repeat(subIndent);
+  for (const c of firstVal.blockTrailingComments) {
+    out.push(subPad + '#' + c);
+  }
+
+  // Remaining entries at indent + 2.
+  for (let i = 1; i < entries.length; i++) {
+    const entry = entries[i];
+    for (const c of entry.value.leadingComments) {
+      out.push(subPad + '#' + c);
+    }
+    emitMapEntry(entry, subIndent, out);
+    for (const c of entry.value.blockTrailingComments) {
+      out.push(subPad + '#' + c);
+    }
+  }
+}
+
+// ---- Shape classification ------------------------------------------------
+
+function valueShape(value) {
+  if (value.kind === 'scalar') {
+    if (value.type === 'string'
+        && (value.style === 'block-clip' || value.style === 'block-strip')) {
+      return 'block-scalar';
+    }
+    return 'inline';
+  }
+  if (value.kind === 'map') return value.entries.length === 0 ? 'inline' : 'nested-map';
+  if (value.kind === 'seq') return value.items.length === 0 ? 'inline' : 'nested-seq';
+}
+
+function emitInlineValue(value) {
+  if (value.kind === 'scalar') return emitScalar(value);
+  if (value.kind === 'map') return '{}';
+  if (value.kind === 'seq') return '[]';
+}
+
+// ---- Scalars -------------------------------------------------------------
+
+function emitScalar(s) {
+  if (s.type === 'null') return 'null';
+  if (s.type === 'bool') return s.value ? 'true' : 'false';
+  if (s.type === 'int') return emitInt(s);
+  if (s.type === 'float') return emitFloat(s.value);
+  if (s.type === 'string') {
+    if (s.style === 'single') return emitSingleQuoted(s.value);
+    return emitDoubleQuoted(s.value);
+  }
+  throw new Error('emitScalar: unknown type ' + s.type);
+}
+
+function emitDoubleQuoted(value) {
+  let out = '"';
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    const cc = value.charCodeAt(i);
+    if (ch === '"') out += '\\"';
+    else if (ch === '\\') out += '\\\\';
+    else if (ch === '\n') out += '\\n';
+    else if (ch === '\r') out += '\\r';
+    else if (ch === '\t') out += '\\t';
+    else if (ch === '\b') out += '\\b';
+    else if (ch === '\f') out += '\\f';
+    else if (cc < 0x20 || cc === 0x7F) {
+      out += '\\u' + cc.toString(16).padStart(4, '0');
+    } else {
+      out += ch;
+    }
+  }
+  return out + '"';
+}
+
+function emitSingleQuoted(value) {
+  // Single-quoted can't carry control chars; if any are present, fall back to
+  // double-quoted (which has escape sequences).
+  for (let i = 0; i < value.length; i++) {
+    const cc = value.charCodeAt(i);
+    if (cc < 0x20 || cc === 0x7F) return emitDoubleQuoted(value);
+  }
+  return "'" + value.replace(/'/g, "''") + "'";
+}
+
+function emitInt(node) {
+  const v = node.value;
+  let s;
+  if (node.radix === 'hex') s = (v < 0 ? '-' : '') + '0x' + Math.abs(v).toString(16);
+  else if (node.radix === 'oct') s = (v < 0 ? '-' : '') + '0o' + Math.abs(v).toString(8);
+  else if (node.radix === 'bin') s = (v < 0 ? '-' : '') + '0b' + Math.abs(v).toString(2);
+  else s = String(v);
+
+  if (node.separators) s = applyGrouping(s, node.radix);
+  return s;
+}
+
+function applyGrouping(s, radix) {
+  let prefix = '';
+  let digits = s;
+  if (s.startsWith('-')) { prefix = '-'; digits = s.slice(1); }
+  if (digits.startsWith('0x') || digits.startsWith('0o') || digits.startsWith('0b')) {
+    prefix += digits.slice(0, 2);
+    digits = digits.slice(2);
+  }
+  const groupSize = (radix === 'hex' || radix === 'bin') ? 4 : 3;
+  let result = '';
+  for (let i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % groupSize === 0) result += '_';
+    result += digits[i];
+  }
+  return prefix + result;
+}
+
+function emitFloat(v) {
+  let s = String(v);
+  if (!/[.eE]/.test(s)) s += '.0';
+  return s;
+}
+
+// ---- Keys ----------------------------------------------------------------
+
+function emitKey(keyNode) {
+  const k = keyNode.value;
+  if (keyNode.style !== 'single' && isBareKey(k)) return k;
+  if (keyNode.style === 'single') return emitSingleQuoted(k);
+  return emitDoubleQuoted(k);
+}
+
+function isBareKey(s) {
+  if (s.length === 0) return false;
+  if (!/[A-Za-z_]/.test(s[0])) return false;
+  for (let i = 1; i < s.length; i++) {
+    if (!/[A-Za-z0-9_.\-]/.test(s[i])) return false;
+  }
+  return true;
+}
+
+// ---- Block scalar body ---------------------------------------------------
+
+function emitBlockScalarBody(text, indent, out) {
+  let body = text;
+  // For clip the body ends with \n; for strip it doesn't. The trailing \n
+  // would split as an extra empty line, which we don't want as a body line.
+  if (body.endsWith('\n')) body = body.slice(0, -1);
+  const lines = body.split('\n');
+  const pad = ' '.repeat(indent);
+  for (const ln of lines) {
+    if (ln === '') out.push('');
+    else out.push(pad + ln);
+  }
+}
+
+// -- api.js --
+
+// Public surface for @gcu/yaml.
+
+
+
+
+// Returns null if `text` parses successfully, otherwise the YamlParseError
+// instance from the strict parser.
+function check(text) {
+  try {
+    parse(text);
+    return null;
+  } catch (e) {
+    return e;
+  }
+}
+
+// Parse + emit. Convenience for one-shot canonicalization.
+function format(text) {
+  return emit(parse(text));
+}
+
 // ── src/js/store/schema.js ──
 
 // Data model + pure helpers for the store (SPEC §2/§5). No VFS/DOM here, so
@@ -5710,6 +7387,7 @@ const SCHEMA_VERSION = 1;
 
 const ITEM_TYPES = [
   'article', 'video', 'release', 'paper', 'status', 'track', 'podcast', 'commit', 'issue', 'book',
+  'note', 'file',   // stacks entries (STACKS.md): authored notes + dropped files
 ];
 
 // Retention TTLs in days, or 'forever'. Per-feed `retention` overrides these
@@ -5857,6 +7535,15 @@ function makeItem(raw, feed) {
     has_content: !!(raw.content && String(raw.content).length),
     glass_id: raw.glass_id || undefined,   // catalog card id once cataloged (GLASS.md §3.1)
   };
+  // Stacks entries (STACKS.md §9): identity is a stable `uid`, the `path` is just the
+  // entry's current address, and the body lives at the real tree path (content_path)
+  // rather than /content/<feed>/…. These ride along when present so a stacks item is
+  // a normal Item (tags/search/catalog/views for free).
+  if (raw.uid) rec.uid = String(raw.uid);
+  if (raw.path != null) rec.path = String(raw.path);
+  if (raw.content_path) rec.content_path = String(raw.content_path);
+  if (raw.mime) rec.mime = String(raw.mime);
+  if (raw.missing) rec.missing = true;
   rec.search_text = deriveSearchText(rec);
   rec.expires_at = computeExpiry(rec, feed);
   return rec;
@@ -6750,7 +8437,9 @@ class Store {
   async getContent(id) {
     const rec = this.items.get(String(id));
     if (!rec || !rec.has_content) return null;
-    return this._readText(this._contentPath(rec.feed_id, rec.id), null);
+    // Stacks entries (and anything else) may pin their body to a real tree path
+    // (e.g. /stacks/<path>) instead of the lazy /content/<feed>/… file.
+    return this._readText(rec.content_path || this._contentPath(rec.feed_id, rec.id), null);
   }
 
   // Replace an item's stored content (e.g. fetched full article). Marks `full`
@@ -7000,6 +8689,71 @@ class Store {
     }
     for (const fid of feeds) this._markFeedDirty(fid);
     if (n) this.emit('items', { inserted: 0, updated: n, skipped: 0 });
+    return n;
+  }
+
+  // ── stacks (STACKS.md) ──
+  // A stacks entry is a normal Item under the synthetic 'stacks' feed, but its
+  // identity is the stable `uid` (id = `stacks:<uid>`) and its body lives at the
+  // real tree path. syncStacksEntry upserts WITHOUT resetting read/saved/human
+  // state on re-scan (the never-reset rule, SPEC §5 dedup), and tags from the
+  // file (frontmatter/sidecar) union with what's already there.
+  syncStacksEntry(e) {
+    const id = `stacks:${e.uid}`;
+    const fileTags = Array.isArray(e.tags) ? e.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean) : [];
+    let rec = this.items.get(id);
+    if (!rec) {
+      rec = makeItem({
+        id, type: e.type === 'note' ? 'note' : 'file',
+        title: e.title || e.path, author: e.source || undefined,
+        published_at: e.created, fetched_at: e.created,
+        excerpt: e.excerpt || '', tags: fileTags,
+        uid: e.uid, path: e.path, content_path: `/stacks/${e.path}`, mime: e.mime,
+      }, this.feeds.get('stacks') || { id: 'stacks' });
+      rec.has_content = true;
+      this.items.set(id, rec);
+      this._feedSet('stacks').add(id);
+    } else {
+      rec.title = e.title || rec.title;
+      rec.type = e.type === 'note' ? 'note' : 'file';
+      rec.path = e.path;
+      rec.content_path = `/stacks/${e.path}`;
+      rec.mime = e.mime || rec.mime;
+      if (e.excerpt != null) rec.excerpt = e.excerpt;
+      rec.missing = false;
+      rec.has_content = true;
+      // union file tags in (additive — never drop human/llm tags already on the item)
+      for (const t of fileTags) if (!rec.tags.includes(t)) { rec.tags = [...rec.tags, t]; rec.tag_src = { ...(rec.tag_src || {}), [t]: 'file' }; }
+      rec.search_text = deriveSearchText(rec);
+    }
+    this._markFeedDirty('stacks');
+    return rec;
+  }
+
+  // After a scan, flag every stacks item whose uid isn't on disk as `missing`
+  // (never delete — STACKS.md §9). `presentUids` is a Set of uids found this scan.
+  markStacksMissing(presentUids) {
+    let n = 0;
+    for (const id of this._feedSet('stacks')) {
+      const r = this.items.get(id);
+      if (!r) continue;
+      const want = r.uid ? presentUids.has(r.uid) : false;
+      if (!want && !r.missing) { r.missing = true; n++; }
+    }
+    if (n) this._markFeedDirty('stacks');
+    return n;
+  }
+
+  // "Forget missing" (STACKS.md §9) — drop stacks index entries whose files are
+  // gone, so reorgs don't leave ghosts. The files are already gone; if one ever
+  // reappears, the next scan re-adds it. No tombstone (we WANT re-add on return).
+  forgetMissingStacks() {
+    let n = 0; const set = this._feedSet('stacks');
+    for (const id of [...set]) {
+      const r = this.items.get(id);
+      if (r && r.missing) { this.items.delete(id); set.delete(id); n++; }
+    }
+    if (n) { this._markFeedDirty('stacks'); this.emit('items', { inserted: 0, updated: 0, skipped: 0, removed: n }); }
     return n;
   }
 
@@ -7286,6 +9040,326 @@ class Store {
   async close() { await this.flush(); }
 }
 
+// ── src/js/stacks.js ──
+
+// The Stacks (STACKS.md) — weir's authored-notes + dropped-files surface, living
+// as REAL files under /stacks/ in the VFS (so a mounted folder opens in Obsidian /
+// git / your editor). Entries are first-class Items under the synthetic 'stacks'
+// feed; identity is a stable `uid` written into frontmatter (notes) or a
+// `.meta.json` sidecar (files), so a move/rename keeps the item's tags, read-state,
+// catalog card, and inbound [[uid]] links (STACKS.md §9). The path is just the
+// entry's current address.
+//
+// Frontmatter is parsed/emitted with the vendored @gcu/yaml (strict, no-RCE,
+// quoted-scalar subset). weir owns the files it writes (canonical, quoted, valid
+// standard YAML); external unquoted frontmatter that fails the strict parse is
+// tolerated — the file is treated as bodyless-frontmatter and re-stamped on next
+// write. External-edit two-way sync is a later stage; v1 is weir-authoritative.
+
+
+
+
+const ROOT = '/stacks';
+const INBOX = 'inbox';
+const STACKS_STASH = '/telegram-notes.ndjson';
+
+// Skip dotfiles/dotfolders so a git-backed or Obsidian mount Just Works
+// (.git, .obsidian, …) — STACKS.md §9 "git-friendly mount".
+const isHidden = (name) => name.startsWith('.');
+const isNotePath = (p) => /\.(md|markdown|mdown|txt)$/i.test(p);
+const isSidecar = (p) => /\.meta\.json$/i.test(p);
+
+const MIME = {
+  pdf: 'application/pdf', epub: 'application/epub+zip',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+  md: 'text/markdown', txt: 'text/plain', json: 'application/json', csv: 'text/csv',
+  zip: 'application/zip', mp3: 'audio/mpeg', mp4: 'video/mp4',
+};
+const mimeFor = (name) => MIME[(name.split('.').pop() || '').toLowerCase()] || 'application/octet-stream';
+
+class StacksStore {
+  constructor(store) {
+    this.store = store;
+    this.vfs = store.vfs;
+  }
+
+  // ── identity / paths ──
+  _uid() {
+    const c = globalThis.crypto;
+    if (c && c.randomUUID) return c.randomUUID().replace(/-/g, '').slice(0, 12);
+    return (now().toString(36) + Math.floor(Math.random() * 1e9).toString(36)).slice(0, 12);
+  }
+  _join(folder, name) {
+    const f = String(folder || '').replace(/^\/+|\/+$/g, '');
+    const n = String(name || '').replace(/^\/+/, '');
+    return f ? `${f}/${n}` : n;
+  }
+  _abs(rel) { return `${ROOT}/${String(rel).replace(/^\/+/, '')}`; }
+  _rel(abs) { return String(abs).startsWith(`${ROOT}/`) ? abs.slice(ROOT.length + 1) : abs; }
+  _basename(p) { return String(p).split('/').pop(); }
+  _dirname(p) { const i = String(p).lastIndexOf('/'); return i < 0 ? '' : p.slice(0, i); }
+  _safeName(name, fallbackExt) {
+    let n = String(name || '').trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').slice(0, 120);
+    if (!n) n = 'untitled';
+    if (fallbackExt && !/\.[A-Za-z0-9]+$/.test(n)) n += fallbackExt;
+    return n;
+  }
+  async _exists(abs) { try { return await this.vfs.exists(abs); } catch { return false; } }
+  // Avoid clobbering a different entry: if the path is taken, version it (name (2).ext).
+  async _uniqueRel(rel) {
+    if (!(await this._exists(this._abs(rel)))) return rel;
+    const dir = this._dirname(rel), base = this._basename(rel);
+    const dot = base.lastIndexOf('.');
+    const stem = dot > 0 ? base.slice(0, dot) : base;
+    const ext = dot > 0 ? base.slice(dot) : '';
+    for (let i = 2; i < 999; i++) {
+      const cand = this._join(dir, `${stem} (${i})${ext}`);
+      if (!(await this._exists(this._abs(cand)))) return cand;
+    }
+    return rel;
+  }
+
+  // ── frontmatter ↔ JS (strict @gcu/yaml) ──
+  _fmEmit(obj) {
+    const entries = [];
+    for (const [k, v] of Object.entries(obj)) {
+      if (v == null) continue;
+      if (Array.isArray(v)) {
+        if (!v.length) continue;
+        entries.push({ key: scalar('string', k), value: seqNode(v.map((x) => scalar('string', String(x)))) });
+      } else {
+        entries.push({ key: scalar('string', k), value: scalar('string', String(v)) });
+      }
+    }
+    if (!entries.length) return '';
+    return yamlEmit(mapNode(entries));
+  }
+  _nodeToJs(node) {
+    if (!node) return null;
+    if (node.kind === 'scalar') return node.value;
+    if (node.kind === 'seq') return node.items.map((n) => this._nodeToJs(n));
+    if (node.kind === 'map') { const o = {}; for (const e of node.entries) o[this._nodeToJs(e.key)] = this._nodeToJs(e.value); return o; }
+    return null;
+  }
+  // Split a doc into { data, body }. Frontmatter is a leading --- … --- block.
+  _splitFm(raw) {
+    const text = String(raw == null ? '' : raw);
+    const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+    if (!m) return { data: {}, body: text };
+    let data = {};
+    try { const ast = yamlParse(m[1] + '\n'); if (ast && ast.kind === 'map') data = this._nodeToJs(ast); }
+    catch { data = {}; }   // unparseable (e.g. external unquoted YAML) → re-stamp on next write
+    return { data: data || {}, body: text.slice(m[0].length) };
+  }
+  _titleFromBody(body, rel) {
+    const h = String(body || '').match(/^\s*#\s+(.+?)\s*$/m);
+    if (h) return h[1].trim();
+    const base = this._basename(rel || '');
+    return base.replace(/\.[A-Za-z0-9]+$/, '') || '(untitled note)';
+  }
+
+  // ── low-level fs ──
+  async _readText(abs) { try { return await this.vfs.readFile(abs, 'utf8'); } catch (e) { if (e && e.code === 'ENOENT') return null; throw e; } }
+  async _writeText(abs, text) {
+    const dir = this._dirname(abs);
+    if (dir) await this.vfs.mkdir(dir, { recursive: true });
+    await this.vfs.writeFile(abs, String(text));
+  }
+
+  // ── setup ──
+  async ensure() {
+    await this.vfs.mkdir(`${ROOT}/${INBOX}`, { recursive: true });
+    if (!this.store.getFeed('stacks')) {
+      await this.store.putFeed({ id: 'stacks', name: 'Stacks', adapter: 'stacks', url: '', next_poll_at: 8.64e15 });
+    }
+  }
+
+  // ── scan: reconcile the on-disk tree with the index ──
+  // Walks /stacks, stamps a uid into anything that lacks one, upserts each entry
+  // (preserving human state), and flags vanished entries as missing.
+  async scan() {
+    const res = { notes: 0, files: 0, stamped: 0, missing: 0 };
+    const present = new Set();
+    const files = [];
+    await this._walk(ROOT, files);
+    for (const abs of files) {
+      const rel = this._rel(abs);
+      const base = this._basename(rel);
+      if (isHidden(base) || isSidecar(rel)) continue;
+      const entry = isNotePath(rel) ? await this._scanNote(abs, rel, res) : await this._scanFile(abs, rel, res);
+      if (!entry) continue;
+      present.add(entry.uid);
+      this.store.syncStacksEntry(entry);
+      isNotePath(rel) ? res.notes++ : res.files++;
+    }
+    res.missing = this.store.markStacksMissing(present);
+    return res;
+  }
+
+  async _walk(dir, out) {
+    let names; try { names = await this.vfs.readdir(dir); } catch { return out; }
+    for (const name of names) {
+      if (isHidden(name)) continue;   // git-friendly: never descend dotfolders
+      const p = `${dir}/${name}`;
+      let st; try { st = await this.vfs.stat(p); } catch { continue; }
+      if (st.type === 'directory') await this._walk(p, out);
+      else out.push(p);
+    }
+    return out;
+  }
+
+  async _scanNote(abs, rel, res) {
+    const raw = await this._readText(abs);
+    if (raw == null) return null;
+    const { data, body } = this._splitFm(raw);
+    let uid = data.uid;
+    const created = this._parseTs(data.created);
+    if (!uid) {   // stamp identity into the file (the anchor moves can't strip)
+      uid = this._uid();
+      const fm = this._fmEmit({ uid, title: data.title || this._titleFromBody(body, rel), tags: data.tags || [], created: new Date(created).toISOString(), source: data.source });
+      await this._writeText(abs, `---\n${fm}---\n\n${body.replace(/^\n+/, '')}`);
+      res.stamped++;
+    }
+    return {
+      uid, path: rel, type: 'note',
+      title: data.title || this._titleFromBody(body, rel),
+      tags: Array.isArray(data.tags) ? data.tags : [],
+      created, source: data.source,
+      excerpt: deriveExcerpt(body, 300),
+    };
+  }
+
+  async _scanFile(abs, rel, res) {
+    const sidecarAbs = `${abs}.meta.json`;
+    let data = {};
+    const sc = await this._readText(sidecarAbs);
+    if (sc) { try { data = JSON.parse(sc) || {}; } catch { data = {}; } }
+    let uid = data.uid;
+    const created = this._parseTs(data.created);
+    if (!uid) {
+      uid = this._uid();
+      data = { uid, title: data.title || this._basename(rel), tags: data.tags || [], created: new Date(created).toISOString(), mime: data.mime || mimeFor(rel), source: data.source };
+      await this._writeText(sidecarAbs, JSON.stringify(data, null, 2));
+      res.stamped++;
+    }
+    return {
+      uid, path: rel, type: 'file',
+      title: data.title || this._basename(rel),
+      tags: Array.isArray(data.tags) ? data.tags : [],
+      created, source: data.source,
+      mime: data.mime || mimeFor(rel),
+      excerpt: this._basename(rel),
+    };
+  }
+
+  _parseTs(v) {
+    if (v == null) return now();
+    if (typeof v === 'number') return v;
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : now();
+  }
+
+  // ── authoring ──
+  // Create a note. Returns the stored Item record.
+  async writeNote({ folder = INBOX, name, title, markdown = '', tags = [], source, uid, created } = {}) {
+    uid = uid || this._uid();
+    created = created || now();
+    title = title || this._titleFromBody(markdown, name || '');
+    const base = this._safeName(name || slugify(title) || 'note', '.md');
+    const rel = await this._uniqueRel(this._join(folder, base));
+    const fm = this._fmEmit({ uid, title, tags, created: new Date(created).toISOString(), source });
+    await this._writeText(this._abs(rel), `---\n${fm}---\n\n${String(markdown).trim()}\n`);
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags, created, source, excerpt: deriveExcerpt(markdown, 300) });
+    this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
+    return rec;
+  }
+
+  // Update an existing note's body (and optionally title/tags), keeping its uid +
+  // created. Preserves any frontmatter keys weir doesn't manage.
+  async saveNote(item, markdown, { title, tags } = {}) {
+    const abs = this._abs(item.path);
+    const raw = await this._readText(abs);
+    const { data } = this._splitFm(raw == null ? '' : raw);
+    const uid = data.uid || item.uid || this._uid();
+    const created = this._parseTs(data.created) || item.published_at || now();
+    const nextTitle = title != null ? title : (data.title || item.title);
+    const nextTags = tags != null ? tags : (Array.isArray(data.tags) ? data.tags : (item.tags || []));
+    const fm = this._fmEmit({ ...data, uid, title: nextTitle, tags: nextTags, created: new Date(created).toISOString() });
+    await this._writeText(abs, `---\n${fm}---\n\n${String(markdown).trim()}\n`);
+    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300) });
+    this.store.emit('item', { id: rec.id });
+    return rec;
+  }
+
+  // Drop a binary file into the stacks (bytes = Uint8Array/ArrayBuffer).
+  async addFile({ folder = INBOX, name, bytes, mime, tags = [], source, created } = {}) {
+    const uid = this._uid();
+    created = created || now();
+    const base = this._safeName(name || 'file');
+    const rel = await this._uniqueRel(this._join(folder, base));
+    const abs = this._abs(rel);
+    const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+    await this.vfs.mkdir(this._dirname(abs), { recursive: true });
+    await this.vfs.writeFile(abs, data);
+    const meta = { uid, title: base, tags, created: new Date(created).toISOString(), mime: mime || mimeFor(base), source };
+    await this._writeText(`${abs}.meta.json`, JSON.stringify(meta, null, 2));
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'file', title: base, tags, created, source, mime: meta.mime, excerpt: base });
+    this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
+    return rec;
+  }
+
+  // Move/refile an entry to another folder — keeps the uid (so state + links ride
+  // along, STACKS.md §9). Renames the file and any sidecar.
+  async move(item, toFolder) {
+    const oldRel = item.path;
+    const newRel = await this._uniqueRel(this._join(toFolder, this._basename(oldRel)));
+    if (newRel === oldRel) return item;
+    const oldAbs = this._abs(oldRel), newAbs = this._abs(newRel);
+    await this.vfs.mkdir(this._dirname(newAbs), { recursive: true });
+    try { await this.vfs.rename(oldAbs, newAbs); }
+    catch { const buf = await this.vfs.readFile(oldAbs); await this.vfs.writeFile(newAbs, buf); await this.vfs.unlink(oldAbs).catch(() => {}); }
+    if (item.type === 'file') { try { await this.vfs.rename(`${oldAbs}.meta.json`, `${newAbs}.meta.json`); } catch { /* no sidecar */ } }
+    const rec = this.store.syncStacksEntry({ uid: item.uid, path: newRel, type: item.type, title: item.title, tags: item.tags, created: item.published_at, mime: item.mime, excerpt: item.excerpt });
+    this.store.emit('items', { inserted: 0, updated: 1, skipped: 0 });
+    return rec;
+  }
+
+  // The markdown body of a note (frontmatter stripped), for the reader/editor.
+  async readNote(item) {
+    const raw = await this.store.getContent(item.id);
+    if (raw == null) return '';
+    return this._splitFm(raw).body.replace(/^\n+/, '');
+  }
+  // Raw bytes of a file entry, for preview/download.
+  async readBytes(item) { try { return await this.vfs.readFile(this._abs(item.path)); } catch { return null; } }
+
+  // ── consume the Telegram notes stash into /stacks/inbox/ ──
+  async ingestStash() {
+    const raw = await this._readText(STACKS_STASH);
+    if (!raw || !raw.trim()) return 0;
+    let n = 0;
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      let j; try { j = JSON.parse(line); } catch { continue; }
+      const md = String(j.text || '').trim();
+      if (!md) continue;
+      const title = (md.split('\n')[0] || 'note').slice(0, 80);
+      await this.writeNote({ folder: INBOX, title, markdown: md, tags: ['telegram'], source: 'telegram', created: j.at });
+      n++;
+    }
+    try { await this.vfs.writeFile(STACKS_STASH, ''); } catch { /* best effort */ }   // consumed
+    return n;
+  }
+
+  // ── views for the rail/tree ──
+  entries() {
+    const out = [];
+    for (const id of this.store._feedSet('stacks')) { const r = this.store.getItem(id); if (r) out.push(r); }
+    return out.sort((a, b) => (a.path || '').localeCompare(b.path || ''));
+  }
+  forgetMissing() { return this.store.forgetMissingStacks(); }
+}
+
 // ── src/js/search.js ──
 
 // search.js — full-text search v2 on @gcu/librarian (vendored CSR engine).
@@ -7492,6 +9566,98 @@ function sanitizeHtml(html, opts = {}) {
   }
 
   return s.trim();
+}
+
+// ── src/js/ui/markdown.js ──
+
+// A small, self-contained CommonMark-subset renderer for stacks notes. NOT a full
+// CommonMark implementation — headings, paragraphs, emphasis, code (span + fence),
+// links/images, blockquotes, lists, hr, and weir's `[[uid]]` wiki-links. Output is
+// run through the existing sanitizeHtml before it reaches the DOM (stored content
+// is trusted, but authored markdown can still carry a stray javascript: URL).
+//
+// auditable has heavier renderers (reader-core/docview wrap an injected renderer;
+// gcu-press is a typesetter) but none is a standalone CommonMark→HTML lib — so this
+// is weir's, kept light per the zero-dep ethos. Consolidating the toolkit's
+// scattered md renderers is logged tech debt (STACKS.md §5).
+
+
+
+const SENT = ' ';   // code-span placeholder sentinel — can't occur in markdown prose
+const mdEsc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const attr = (s) => mdEsc(s).replace(/"/g, '&quot;');
+
+function inline(src) {
+  // protect code spans from every other transform with a null-char sentinel
+  const codes = [];
+  let s = String(src).replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return SENT + (codes.length - 1) + SENT; });
+  s = mdEsc(s);
+  // images, then wiki-links, then plain links (wiki before links so [[x]] isn't eaten)
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (_, a, u, t) => `<img alt="${attr(a)}" src="${attr(u)}"${t ? ` title="${attr(t)}"` : ''}>`);
+  s = s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, ref, label) => `<a class="wikilink" data-uid="${attr(ref.trim())}">${mdEsc((label || ref).trim())}</a>`);
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (_, tx, u, t) => `<a href="${attr(u)}"${t ? ` title="${attr(t)}"` : ''}>${tx}</a>`);
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1<em>$2</em>');
+  s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+  s = s.replace(new RegExp(SENT + '(\\d+)' + SENT, 'g'), (_, i) => `<code>${mdEsc(codes[+i])}</code>`);
+  return s;
+}
+
+function renderMarkdown(md) {
+  const lines = String(md == null ? '' : md).replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let i = 0;
+  const para = [];
+  const flushPara = () => { if (para.length) { out.push(`<p>${inline(para.join(' ').trim())}</p>`); para.length = 0; } };
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // fenced code
+    const fence = line.match(/^\s*(```|~~~)(.*)$/);
+    if (fence) {
+      flushPara();
+      const mark = fence[1]; const lang = fence[2].trim();
+      const buf = []; i++;
+      while (i < lines.length && !lines[i].match(new RegExp(`^\\s*${mark}\\s*$`))) { buf.push(lines[i]); i++; }
+      i++;   // closing fence
+      out.push(`<pre><code${lang ? ` class="language-${attr(lang)}"` : ''}>${mdEsc(buf.join('\n'))}</code></pre>`);
+      continue;
+    }
+    // blank → paragraph break
+    if (!line.trim()) { flushPara(); i++; continue; }
+    // heading
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) { flushPara(); out.push(`<h${h[1].length}>${inline(h[2].trim())}</h${h[1].length}>`); i++; continue; }
+    // hr
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flushPara(); out.push('<hr>'); i++; continue; }
+    // blockquote (consume contiguous > lines)
+    if (/^\s*>/.test(line)) {
+      flushPara(); const buf = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
+      out.push(`<blockquote>${renderMarkdown(buf.join('\n'))}</blockquote>`);
+      continue;
+    }
+    // list (consume contiguous list items of the same family)
+    const li = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+    if (li) {
+      flushPara();
+      const ordered = /\d/.test(li[2]);
+      const items = [];
+      while (i < lines.length) {
+        const m = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+        if (!m) { if (!lines[i].trim()) break; if (items.length && /^\s+\S/.test(lines[i])) { items[items.length - 1] += ' ' + lines[i].trim(); i++; continue; } break; }
+        items.push(m[3]); i++;
+      }
+      out.push(`<${ordered ? 'ol' : 'ul'}>${items.map((t) => `<li>${inline(t.trim())}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>`);
+      continue;
+    }
+    // default: paragraph text
+    para.push(line.trim());
+    i++;
+  }
+  flushPara();
+  return sanitizeHtml(out.join('\n'));
 }
 
 // ── src/js/adapters/feed.js ──
@@ -8521,13 +10687,14 @@ const TG_API = 'https://api.telegram.org';
 const NOTES_STASH = '/telegram-notes.ndjson';
 
 class TelegramInflux {
-  constructor(store, { fetch, getToken, onLinks, intervalMs = 18_000 } = {}) {
+  constructor(store, { fetch, getToken, onLinks, onFile, intervalMs = 18_000 } = {}) {
     this.store = store;
     this.fetch = fetch || ((u, o) => globalThis.fetch(u, o));   // direct — CORS-ok, no bridge
     this.getToken = getToken;
     this.onLinks = onLinks;        // (links[]) => Promise, usually app.importLinks
+    this.onFile = onFile;          // ({name,bytes,mime}) => Promise, usually stacks.addFile (Bot API ≤20MB)
     this.intervalMs = intervalMs;
-    this.status = { enabled: false, bot: null, bound: null, lastPoll: null, captured: 0, notes: 0, ignored: 0, error: null };
+    this.status = { enabled: false, bot: null, bound: null, lastPoll: null, captured: 0, notes: 0, files: 0, ignored: 0, error: null };
     this._listeners = new Set();
   }
 
@@ -8568,6 +10735,24 @@ class TelegramInflux {
     this.fetch(`${TG_API}/bot${this._token}/setMessageReaction?chat_id=${msg.chat.id}&message_id=${msg.message_id}&reaction=${reaction}`).catch(() => {});
   }
 
+  // Download a dropped document/photo (Bot API getFile → file path, ≤20MB) and hand
+  // the bytes to onFile (the stacks). A photo arrives as sizes — take the largest.
+  async _ingestFile(msg) {
+    const doc = msg.document || (msg.photo && msg.photo[msg.photo.length - 1]);
+    if (!doc) return;
+    const name = msg.document ? (msg.document.file_name || `file-${doc.file_unique_id || ''}`) : `photo-${doc.file_unique_id || doc.file_id}.jpg`;
+    const mime = msg.document ? (msg.document.mime_type || undefined) : 'image/jpeg';
+    try {
+      const r = await this.fetch(`${TG_API}/bot${this._token}/getFile?file_id=${encodeURIComponent(doc.file_id)}`);
+      const j = JSON.parse(await r.text());
+      if (!j || !j.ok || !j.result || !j.result.file_path) { this.status.error = (j && j.description) || 'getFile failed'; return; }
+      const dl = await this.fetch(`${TG_API}/file/bot${this._token}/${j.result.file_path}`);
+      const bytes = new Uint8Array(await dl.arrayBuffer());
+      await this.onFile({ name, bytes, mime, caption: (msg.caption || '').trim() });
+      this.status.files++; this._react(msg, '👍');
+    } catch (e) { this.status.error = String((e && e.message) || e); }
+  }
+
   // The runner calls this on its cadence (busy-guard + enabled() are the runner's
   // job). It's a CAPTURE pipe — you send from your phone while NOT looking at weir —
   // so it polls backgrounded too; the flight-deck driver restores full speed.
@@ -8599,6 +10784,7 @@ class TelegramInflux {
         if (!allowed && fromId) { allowed = fromId; this.status.bound = fromId; await this.store.setSettings({ telegram_allowed_id: fromId }); }
         if (allowed && fromId !== allowed) { this.status.ignored++; continue; }   // not you → ignore (don't capture or stash)
         if (/^\//.test((msg.text || '').trim())) continue;   // a bot command (/start, /help) — it bound you, but isn't content
+        if ((msg.document || (msg.photo && msg.photo.length)) && this.onFile) { await this._ingestFile(msg); continue; }   // a dropped file → the stacks
         const ls = messageLinks(msg.text, msg.entities);
         if (ls.length) { for (const l of ls) links.push({ ...l, date: msg.date ? msg.date * 1000 : undefined }); this._react(msg, '👍'); }
         else if ((msg.text || '').trim()) { await this._stashNote(msg); this.status.notes++; this._react(msg, '✍'); }   // a note → stash for the notes system
@@ -9882,6 +12068,7 @@ class Poller {
 
 
 
+
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
 const RENDER_CAP = 300;
@@ -9915,6 +12102,10 @@ class App {
     this._health = new Map();    // feed_id → {status, reasons} for non-ok feeds (hijack/stale/failing)
     this._g = false;
     this.pendingImport = null;   // { feeds, youtube } awaiting confirmation
+    this.stacks = null;          // StacksStore (set in boot); the notes/files vault
+    this.stackFilter = null;     // stacks-mode flag (the Stacks tree view is active)
+    this.stackPath = null;       // active stacks folder scope ('' / 'inbox' / 'papers/x'), or null = all
+    this.collapsedStackFolders = new Set();
   }
 
   mount() {
@@ -9946,7 +12137,7 @@ class App {
         return;
       }
       const s = e.target.closest('.source'); if (!s) return;
-      this.catFilter = null; this.route = null; this.smartView = null; this.catalog = null;
+      this.catFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null;
       this.feedFilter = this.feedFilter === s.dataset.feed ? null : s.dataset.feed;
       this.renderAll();
     });
@@ -10000,6 +12191,20 @@ class App {
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
     document.getElementById('btn-saveview')?.addEventListener('click', () => this.saveSearchAsView());
     this.store.on('views', () => this.renderViews());
+
+    // Stacks rail tree + note editor
+    document.getElementById('stacks-head')?.addEventListener('click', (e) => { if (e.target.closest('#stacks-newnote')) return; this.enterStacks(); });
+    document.getElementById('stacks-newnote')?.addEventListener('click', (e) => { e.stopPropagation(); this.openNoteEditor(); });
+    document.getElementById('stacks-tree')?.addEventListener('click', (e) => {
+      if (e.target.closest('[data-stack-forget]')) { this._forgetStackGhosts(); return; }
+      const f = e.target.closest('.stack-folder');
+      if (f) { if (e.target.closest('.sf-tog')) this.toggleStackFolder(f.dataset.stackFolder); else this.setStackFolder(f.dataset.stackFolder); return; }
+      const en = e.target.closest('.stack-entry'); if (en) this.selectStackEntry(en.dataset.stackId);
+    });
+    document.getElementById('se-save')?.addEventListener('click', () => this.saveNoteEditor());
+    document.getElementById('se-close')?.addEventListener('click', () => this.closeNoteEditor());
+    document.querySelectorAll('.se-mode').forEach((b) => b.addEventListener('click', () => this._seSetMode(b.dataset.semode)));
+    { const ed = document.getElementById('se-edit'); ed?.addEventListener('input', () => { clearTimeout(this._sePvTimer); this._sePvTimer = setTimeout(() => this._seSyncPreview(), 150); }); }
     document.getElementById('btn-recover')?.addEventListener('click', () => { if (this.feedFilter) this.recoverHistory(this.feedFilter); });
     document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
     document.getElementById('open-settings')?.addEventListener('click', () => this.openSettings());
@@ -10025,7 +12230,7 @@ class App {
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
-    document.getElementById('resolver-status')?.addEventListener('click', () => { this.catFilter = null; this.route = null; this.smartView = null; this.feedFilter = 'saved'; this.renderAll(); });
+    document.getElementById('resolver-status')?.addEventListener('click', () => { this.catFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.feedFilter = 'saved'; this.renderAll(); });
     document.getElementById('review-status')?.addEventListener('click', () => this.openReview());
     document.getElementById('telegram-status')?.addEventListener('click', () => this.openSettings());
     document.getElementById('review-close')?.addEventListener('click', () => this._reviewClose());
@@ -10090,6 +12295,19 @@ class App {
 
   query() {
     if (this.catalog) return this.catalogQuery();
+    // Stacks mode: the entries of the synthetic 'stacks' feed, scoped to the active
+    // folder, newest-first. (Entries are items, so search/tags work; we just filter
+    // by path here rather than through store.query.)
+    if (this.stackFilter) {
+      let list = this.stacks ? this.stacks.entries() : this.store.query({ feed_id: 'stacks' });
+      if (this.stackPath != null) {   // scope to a folder, recursively
+        const pre = this.stackPath;
+        list = list.filter((e) => { const f = this._stackFolderOf(e.path); return f === pre || f.startsWith(pre + '/'); });
+      }
+      const q = (this.searchText || '').toLowerCase();
+      if (q) list = list.filter((e) => (e.search_text || '').includes(q));
+      return list.sort((a, b) => (b.published_at || 0) - (a.published_at || 0));
+    }
     // Current view's filter (no text) + the effective search text (live box, or a
     // saved smart-view's text).
     let opts, text;
@@ -10109,7 +12327,7 @@ class App {
     return this.store.query({ ...opts, text: text || undefined });   // cursor-scan fallback
   }
 
-  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); }
+  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); }
 
   // The rail's Tags section — every tag in use, with its color + item count,
   // click to filter (a transient tag view). The discoverable home for tags; the
@@ -10133,7 +12351,7 @@ class App {
   // aren't recreated under the cursor on every insert.
   _scheduleRender() {
     if (this._renderTimer) return;
-    this._renderTimer = setTimeout(() => { this._renderTimer = null; this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStream(); }, 250);
+    this._renderTimer = setTimeout(() => { this._renderTimer = null; this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderStream(); }, 250);
   }
 
   // Replace a single row in place — instant feedback for a click action, no
@@ -10154,14 +12372,15 @@ class App {
   renderTopbar() {
     const feed = this.feedFilter && this.store.getFeed(this.feedFilter);
     const rb = document.getElementById('btn-recover'); if (rb) rb.hidden = !this.feedFilter;
-    document.getElementById('view-title').textContent = this.catalog ? 'Catalog' : this.smartView ? this.smartView.name : this.catFilter != null ? (this.catFilter || 'ungrouped') : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
+    document.getElementById('view-title').textContent = this.catalog ? 'Catalog' : this.stackFilter ? (this.stackPath ? `Stacks / ${this.stackPath}` : 'Stacks') : this.smartView ? this.smartView.name : this.catFilter != null ? (this.catFilter || 'ungrouped') : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
     const n = this.items.length;
     const feeds = this.store.listFeeds().length;
     let sub;
     if (this.catalog) {
       const active = Object.entries(this.catalog.filters).flatMap(([fc, s]) => [...s].map((t) => `${fc}:${t}`));
       sub = `${n} item${n === 1 ? '' : 's'}` + (active.length ? ` · ${active.join(' ∩ ')}` : ' · pick a facet →');
-    } else if (this.searchText) sub = `${n} match${n === 1 ? '' : 'es'} for “${this.searchText}”`;
+    } else if (this.stackFilter && !this.searchText) sub = n ? `${n} entr${n === 1 ? 'y' : 'ies'}` : 'empty — ＋ note to start';
+    else if (this.searchText) sub = `${n} match${n === 1 ? '' : 'es'} for “${this.searchText}”`;
     else if (!feeds) sub = 'no feeds yet';
     else sub = `${n} item${n === 1 ? '' : 's'}${feed ? '' : ` · ${feeds} source${feeds === 1 ? '' : 's'}`}`;
     document.getElementById('view-sub').textContent = sub;
@@ -10230,14 +12449,14 @@ class App {
   }
 
   renderRail() {
-    let feeds = this.store.listFeeds();
+    let feeds = this.store.listFeeds().filter((f) => f.id !== 'stacks');   // the stacks have their own tree section, not a Sources row
     this.faviconFetcher?.enqueue(feeds);   // lazily backfill site icons (polite, once each)
     this.recomputeHealth();
     this.renderHealthStatus();
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
       r.classList.toggle('active', r.dataset.view === 'catalog'
         ? !!this.catalog
-        : (!this.feedFilter && !this.route && !this.smartView && !this.catalog && this.catFilter == null && r.dataset.view === this.view)));
+        : (!this.feedFilter && !this.route && !this.smartView && !this.catalog && !this.stackFilter && this.catFilter == null && r.dataset.view === this.view)));
 
     // Catalog mode swaps the Sources rail for the facet browser.
     const srcSec = document.getElementById('sources')?.closest('.rail-section');
@@ -10289,14 +12508,14 @@ class App {
     this.sources.innerHTML = html;
   }
 
-  setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   toggleCat(c) { if (this.collapsedCats.has(c)) this.collapsedCats.delete(c); else this.collapsedCats.add(c); this.renderRail(); }
 
   setSmartView(id) {
     const v = this.store.getViews().find((x) => x.id === id);
     if (!v) return;
     this.smartView = v;
-    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null;
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null; this.stackFilter = null; this.stackPath = null;
     this.selectedId = null; this.expandedId = null;
     this.renderAll();
   }
@@ -10980,6 +13199,7 @@ class App {
   }
 
   expandedHtml(it) {
+    if (it.feed_id === 'stacks') return this._stacksExpandedHtml(it);
     let inner = '';
     if (it.type === 'podcast' && it.media?.audio_url) inner += `<audio class="player" controls preload="none" src="${escapeHtml(it.media.audio_url)}"></audio>`;
 
@@ -11093,6 +13313,8 @@ class App {
     const it = this.store.getItem(id);
     if (!it) return;
     if (act === 'open') { if (it.url) window.open(it.url, '_blank', 'noopener'); return; }
+    if (act === 'editnote') { this.openNoteEditor(id); return; }
+    if (act === 'dlfile') { this.downloadStacksFile(id); return; }
     if (act === 'fullcontent') { this.loadFullContent(id); return; }
     if (act === 'images') { this.loadImages(id); return; }
     if (act === 'save') { this.store.setState(id, { saved: !it.saved }); this.reflectItem(id); return; }
@@ -11557,16 +13779,16 @@ class App {
 
   _reflectSearch() { const b = document.getElementById('btn-saveview'); if (b) b.hidden = !this.searchText || !!this.smartView; }
 
-  setView(view) { if (view === 'catalog') return this.setCatalog(); this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
-  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
-  selectFeed(id) { this.feedFilter = id; this.view = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setView(view) { if (view === 'catalog') return this.setCatalog(); this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  selectFeed(id) { this.feedFilter = id; this.view = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
 
   // Filter the stream to one tag — a transient (unsaved) smart view, so it reuses
   // the existing smartView query plumbing + active-state handling. "Save view" in
   // the search box turns an ad-hoc tag filter into a permanent one.
   filterByTag(tag) {
     this.smartView = { id: `__tag:${tag}`, name: `#${tag}`, query: { tag }, transient: true };
-    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null;
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null; this.stackFilter = null; this.stackPath = null;
     this.selectedId = null; this.expandedId = null; this.renderAll();
   }
 
@@ -11615,12 +13837,13 @@ class App {
   // actions otherwise buried in context menus. Built fresh on each open so it
   // always reflects the current rail.
   openPalette() {
-    const feeds = this.store.listFeeds();
+    const feeds = this.store.listFeeds().filter((f) => f.id !== 'stacks');
     const views = [
       { label: 'Inbox', kind: 'View', run: () => this.setView('inbox') },
       { label: 'Saved', kind: 'View', run: () => this.setView('saved') },
       { label: 'Archived', kind: 'View', run: () => this.setView('archived') },
       { label: 'Catalog', kind: 'View', run: () => this.setCatalog() },
+      { label: 'Stacks', kind: 'View', hint: 'notes + files', run: () => this.enterStacks() },
     ];
     const cmds = [
       { label: this.unreadOnly ? 'Show all (not just unread)' : 'Show only unread', kind: 'Command', run: () => this.toggleUnread() },
@@ -11634,6 +13857,8 @@ class App {
       this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },
       { label: 'Tag all shown items…', kind: 'Command', run: () => this.openBulkTagEditor() },
       { label: 'Manage tags…', kind: 'Command', run: () => this.openTagManager() },
+      { label: 'New note / jot…', kind: 'Command', hint: 'stacks', run: () => this.openNoteEditor() },
+      { label: 'Rescan stacks folder', kind: 'Command', run: () => this.rescanStacks() },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
       { label: 'Re-fetch weak-title links', kind: 'Command', run: () => this.reEnrichWeak() },
       { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },
@@ -11661,8 +13886,12 @@ class App {
   onKey(e) {
     // Command palette (Cmd/Ctrl-K) — works everywhere, even from the search box.
     if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); this.openPalette(); return; }
-    // Esc closes any open overlay first, from anywhere.
+    // Cmd/Ctrl-S saves the open note editor, from anywhere within it.
+    const seOpen = !document.getElementById('stacks-editor-overlay')?.hidden;
+    if (seOpen && (e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); this.saveNoteEditor(); return; }
+    // Esc closes any open overlay first, from anywhere (incl. from a field in it).
     if (e.key === 'Escape') {
+      if (seOpen) { e.preventDefault(); this.closeNoteEditor(); if (e.target.blur) e.target.blur(); return; }
       for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; return; }
@@ -11697,6 +13926,7 @@ class App {
       case 'e': if (this.selectedId) { const cur = this.selectedId; this.moveSelection(1); this.doAct('archive', cur); } break;
       case 'o': if (this.selectedId) this.doAct('open', this.selectedId); break;
       case 't': if (this.selectedId) { e.preventDefault(); this.openTagEditor(this.selectedId); } break;
+      case 'n': e.preventDefault(); this.openNoteEditor(); break;
       case 'u': e.preventDefault(); this.toggleUnread(); break;
       case 'g': this._g = true; setTimeout(() => { this._g = false; }, 800); break;
       case '/': e.preventDefault(); this.searchEl.focus(); break;
@@ -11977,6 +14207,173 @@ class App {
     r.addEventListener('mousedown', (e) => { dragging = true; r.classList.add('dragging'); document.body.style.userSelect = 'none'; e.preventDefault(); });
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  }
+
+  // ── STACKS (STACKS.md): a folder-tree of authored notes + dropped files ──
+  _stackFolderOf(p) { const i = String(p || '').lastIndexOf('/'); return i < 0 ? '' : p.slice(0, i); }
+
+  // Build a nested folder tree from the flat stacks entries.
+  _stackTree() {
+    const root = { name: '', path: '', folders: new Map(), entries: [] };
+    if (!this.stacks) return root;
+    for (const e of this.stacks.entries()) {
+      const parts = String(e.path || '').split('/');
+      parts.pop();   // drop the filename
+      let node = root, acc = '';
+      for (const p of parts) { acc = acc ? `${acc}/${p}` : p; if (!node.folders.has(p)) node.folders.set(p, { name: p, path: acc, folders: new Map(), entries: [] }); node = node.folders.get(p); }
+      node.entries.push(e);
+    }
+    return root;
+  }
+  _stackFolderCount(f) { let n = f.entries.length; for (const c of f.folders.values()) n += this._stackFolderCount(c); return n; }
+
+  renderStacks() {
+    const sec = document.getElementById('stacks-section'); const el = document.getElementById('stacks-tree');
+    if (!sec || !el) return;
+    const entries = this.stacks ? this.stacks.entries() : [];
+    sec.style.display = entries.length ? '' : 'none';
+    if (!entries.length) { el.innerHTML = ''; return; }
+    const head = document.getElementById('stacks-head'); if (head) head.classList.toggle('active', !!this.stackFilter && this.stackPath == null);
+    let html = this._renderStackNode(this._stackTree(), 0);
+    const missing = entries.filter((e) => e.missing).length;
+    if (missing) html += `<div class="stack-missing"><span>${missing} missing on disk</span><button data-stack-forget="1" title="Forget the vanished entries (their files are already gone)">forget</button></div>`;
+    el.innerHTML = html;
+  }
+  _renderStackNode(node, depth) {
+    let html = '';
+    for (const f of [...node.folders.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+      const collapsed = this.collapsedStackFolders.has(f.path);
+      const active = this.stackFilter && this.stackPath === f.path ? ' active' : '';
+      html += `<div class="stack-folder${active}" data-stack-folder="${escapeHtml(f.path)}" style="padding-left:${6 + depth * 12}px">`
+        + `<span class="sf-tog">${collapsed ? '▸' : '▾'}</span><span class="sf-name">${escapeHtml(f.name)}</span><span class="sf-count">${this._stackFolderCount(f)}</span></div>`;
+      if (!collapsed) html += this._renderStackNode(f, depth + 1);
+    }
+    for (const e of node.entries.slice().sort((a, b) => (a.title || '').localeCompare(b.title || ''))) {
+      const active = this.stackFilter && this.selectedId === e.id ? ' active' : '';
+      const ico = e.type === 'note' ? '✎' : '📄';
+      html += `<div class="stack-entry${active}${e.missing ? ' missing' : ''}" data-stack-id="${escapeHtml(e.id)}" style="padding-left:${6 + depth * 12}px" title="${escapeHtml(e.path)}">`
+        + `<span class="se-ico">${ico}</span><span class="se-name">${escapeHtml(e.title || e.path)}</span></div>`;
+    }
+    return html;
+  }
+
+  enterStacks() {
+    this.stackFilter = true; this.stackPath = null;
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null;
+    this.selectedId = null; this.expandedId = null; this.renderAll();
+  }
+  setStackFolder(path) {
+    this.stackFilter = true; this.stackPath = path;
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null;
+    this.selectedId = null; this.expandedId = null; this.renderAll();
+  }
+  toggleStackFolder(path) { if (this.collapsedStackFolders.has(path)) this.collapsedStackFolders.delete(path); else this.collapsedStackFolders.add(path); this.renderStacks(); }
+  selectStackEntry(id) {
+    const it = this.store.getItem(id); if (!it) return;
+    this.stackFilter = true; this.stackPath = this._stackFolderOf(it.path);
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null;
+    this.selectedId = id; this.expandedId = id; this.renderAll();
+  }
+
+  async rescanStacks() {
+    if (!this.stacks) return;
+    const sub = document.getElementById('view-sub'); if (sub) sub.textContent = 'rescanning stacks…';
+    const r = await this.stacks.scan(); await this.store.flush();
+    this.renderStacks(); if (this.stackFilter) this.renderStream();
+    if (sub) sub.textContent = `stacks: ${r.notes} note${r.notes === 1 ? '' : 's'}, ${r.files} file${r.files === 1 ? '' : 's'}${r.stamped ? `, ${r.stamped} newly indexed` : ''}${r.missing ? `, ${r.missing} missing` : ''}`;
+  }
+  _forgetStackGhosts() {
+    if (!this.stacks) return;
+    const n = this.stacks.forgetMissing(); this.store.flush();
+    this.renderStacks(); if (this.stackFilter) this.renderStream();
+    const sub = document.getElementById('view-sub'); if (sub && n) sub.textContent = `forgot ${n} missing stack entr${n === 1 ? 'y' : 'ies'}`;
+  }
+
+  // ── note editor (edit / split / preview toggle; cm6 swaps in for the textarea later) ──
+  async openNoteEditor(id) {
+    const ov = document.getElementById('stacks-editor-overlay'); if (!ov || !this.stacks) return;
+    this._seEditing = id || null;
+    const titleEl = document.getElementById('se-title'), pathEl = document.getElementById('se-path');
+    const editEl = document.getElementById('se-edit'), tagsEl = document.getElementById('se-tags'), statusEl = document.getElementById('se-status');
+    if (statusEl) statusEl.textContent = '';
+    if (id) {
+      const it = this.store.getItem(id);
+      titleEl.value = it.title || ''; pathEl.textContent = it.path || ''; tagsEl.value = (it.tags || []).join(', ');
+      editEl.value = it.type === 'note' ? await this.stacks.readNote(it) : '';
+    } else { titleEl.value = ''; pathEl.textContent = 'inbox/ · new note'; tagsEl.value = ''; editEl.value = ''; }
+    ov.hidden = false;
+    this._seSetMode(this._seMode || 'split');
+    this._seSyncPreview();
+    (id ? editEl : titleEl).focus();
+  }
+  _seSetMode(mode) {
+    this._seMode = mode;
+    const body = document.getElementById('se-body'); if (body) body.className = `se-body mode-${mode}`;
+    document.querySelectorAll('.se-mode').forEach((b) => b.classList.toggle('active', b.dataset.semode === mode));
+    if (mode !== 'edit') this._seSyncPreview();
+  }
+  _seSyncPreview() {
+    const pv = document.getElementById('se-preview'), ed = document.getElementById('se-edit');
+    if (pv && ed) pv.innerHTML = renderMarkdown(ed.value) || '<p class="se-empty">nothing to preview</p>';
+  }
+  async saveNoteEditor() {
+    if (!this.stacks) return;
+    const editEl = document.getElementById('se-edit'), titleEl = document.getElementById('se-title'), tagsEl = document.getElementById('se-tags'), statusEl = document.getElementById('se-status');
+    const md = editEl.value; const title = titleEl.value.trim() || undefined;
+    const tags = tagsEl.value.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+    try {
+      let rec;
+      if (this._seEditing) { const it = this.store.getItem(this._seEditing); rec = await this.stacks.saveNote(it, md, { title, tags }); }
+      else { rec = await this.stacks.writeNote({ folder: 'inbox', title, markdown: md, tags }); }
+      await this.store.flush();
+      this._seEditing = rec.id; this._content.delete(rec.id);
+      document.getElementById('se-path').textContent = rec.path;
+      if (statusEl) statusEl.textContent = 'saved ✓';
+      this.renderStacks(); if (this.stackFilter) this.renderStream();
+    } catch (e) { if (statusEl) statusEl.textContent = `save failed: ${e.message || e}`; }
+  }
+  closeNoteEditor() { const ov = document.getElementById('stacks-editor-overlay'); if (ov) ov.hidden = true; this._seEditing = null; }
+
+  async downloadStacksFile(id) {
+    const it = this.store.getItem(id); if (!it || !this.stacks) return;
+    const bytes = await this.stacks.readBytes(it); if (!bytes) return;
+    const blob = new Blob([bytes], { type: it.mime || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = this.stacks._basename(it.path); a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  _stacksExpandedHtml(it) {
+    let inner = '';
+    if (it.type === 'note') {
+      const cached = this._content.get(it.id);
+      if (cached === undefined) {
+        this.store.getContent(it.id).then((raw) => {
+          const bodyMd = String(raw || '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+          this._content.set(it.id, renderMarkdown(bodyMd)); if (this.expandedId === it.id) this.renderStream();
+        });
+        inner += '<div class="icontent loading">loading…</div>';
+      } else inner += `<div class="icontent">${cached || '<p>(empty note)</p>'}</div>`;
+      inner += '<div class="ifooter"><button data-act="editnote">✎ edit</button>';
+      inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button></div>`;
+    } else {
+      let imgHtml = '';
+      if ((it.mime || '').startsWith('image/')) {
+        const ck = `img:${it.id}`; const c = this._content.get(ck);
+        if (c === undefined) {
+          this._content.set(ck, '');
+          this.stacks.readBytes(it).then((b) => { if (!b) return; const url = URL.createObjectURL(new Blob([b], { type: it.mime })); this._content.set(ck, `<img src="${url}" alt="">`); if (this.expandedId === it.id) this.renderStream(); });
+        }
+        imgHtml = this._content.get(ck) || '';
+      }
+      const name = this.stacks ? this.stacks._basename(it.path) : it.path;
+      inner += `<div class="icontent"><p>📄 ${escapeHtml(name)} · ${escapeHtml(it.mime || 'file')}</p>${imgHtml}</div>`;
+      inner += '<div class="ifooter"><button data-act="dlfile">⬇ download</button>';
+      if (it.url) inner += '<button data-act="open">open original ↗</button>';
+      inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button></div>`;
+    }
+    if (it.missing) inner += '<div class="ifooter"><span class="hint" style="color:var(--au-warn)">file missing on disk — “forget” in the rail to clear</span></div>';
+    return inner;
   }
 
   renderRoutes() {
@@ -13091,9 +15488,10 @@ function initWebmcp({ store, app, fetch }) {
 
 
 
+
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'eeb0620';          // short content hash of the bundle (build id)
+const COMMIT = '3a6158a';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -13171,8 +15569,26 @@ async function boot() {
   const app = new App({ store, poller, router, adapters, faviconFetcher });
   app.searchIndex = search;
   app.fsMount = { type: backendType, pending: pendingMount };   // filesystem-mount state for the UI
+
+  // Stacks (STACKS.md) — the notes/files vault. Set on the app before mount so the
+  // rail tree renders any persisted entries immediately; ensure + scan + drain the
+  // Telegram stash run just after (async), reconciling the on-disk tree.
+  const stacks = new StacksStore(store);
+  app.stacks = stacks;
+
   app.mount();
   poller.start();
+
+  (async () => {
+    try {
+      await stacks.ensure();
+      await stacks.scan();
+      const ingested = await stacks.ingestStash();   // drain /telegram-notes.ndjson → /stacks/inbox
+      await store.flush();
+      app.renderStacks();
+      if (ingested) app.renderCounts();
+    } catch (e) { console.error('stacks init failed', e); }
+  })();
 
   // WebMCP — register weir's tools on the shim-polyfilled navigator.modelContext
   // and reconnect to the bridge if a connection string was saved. gcuFetch is the
@@ -13213,6 +15629,7 @@ async function boot() {
   const telegram = new TelegramInflux(store, {
     getToken: () => getKey('telegram'),
     onLinks: (links) => app.importLinks(links, 'telegram'),
+    onFile: async ({ name, bytes, mime }) => { await stacks.addFile({ folder: 'inbox', name, bytes, mime, source: 'telegram' }); await store.flush(); app.renderStacks(); },
   });
   app.telegram = telegram;
   telegram.on((st) => app.renderTelegramStatus(st));
@@ -13220,7 +15637,7 @@ async function boot() {
   if (store.getSettings().telegram_enabled && await getKey('telegram')) { telegram.start(); runner.kick('telegram'); }
   app.renderTelegramStatus(telegram.status);   // reflect enabled/polling in the footer from the start
 
-  window.__weir = { store, poller, router, drip, retainer, linkResolver, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
+  window.__weir = { store, poller, router, drip, retainer, linkResolver, stacks, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();
       const provider = o.provider || s.catalog_provider || 'ollama';

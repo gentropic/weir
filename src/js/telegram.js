@@ -15,13 +15,14 @@ const TG_API = 'https://api.telegram.org';
 const NOTES_STASH = '/telegram-notes.ndjson';
 
 export class TelegramInflux {
-  constructor(store, { fetch, getToken, onLinks, intervalMs = 18_000 } = {}) {
+  constructor(store, { fetch, getToken, onLinks, onFile, intervalMs = 18_000 } = {}) {
     this.store = store;
     this.fetch = fetch || ((u, o) => globalThis.fetch(u, o));   // direct — CORS-ok, no bridge
     this.getToken = getToken;
     this.onLinks = onLinks;        // (links[]) => Promise, usually app.importLinks
+    this.onFile = onFile;          // ({name,bytes,mime}) => Promise, usually stacks.addFile (Bot API ≤20MB)
     this.intervalMs = intervalMs;
-    this.status = { enabled: false, bot: null, bound: null, lastPoll: null, captured: 0, notes: 0, ignored: 0, error: null };
+    this.status = { enabled: false, bot: null, bound: null, lastPoll: null, captured: 0, notes: 0, files: 0, ignored: 0, error: null };
     this._listeners = new Set();
   }
 
@@ -62,6 +63,24 @@ export class TelegramInflux {
     this.fetch(`${TG_API}/bot${this._token}/setMessageReaction?chat_id=${msg.chat.id}&message_id=${msg.message_id}&reaction=${reaction}`).catch(() => {});
   }
 
+  // Download a dropped document/photo (Bot API getFile → file path, ≤20MB) and hand
+  // the bytes to onFile (the stacks). A photo arrives as sizes — take the largest.
+  async _ingestFile(msg) {
+    const doc = msg.document || (msg.photo && msg.photo[msg.photo.length - 1]);
+    if (!doc) return;
+    const name = msg.document ? (msg.document.file_name || `file-${doc.file_unique_id || ''}`) : `photo-${doc.file_unique_id || doc.file_id}.jpg`;
+    const mime = msg.document ? (msg.document.mime_type || undefined) : 'image/jpeg';
+    try {
+      const r = await this.fetch(`${TG_API}/bot${this._token}/getFile?file_id=${encodeURIComponent(doc.file_id)}`);
+      const j = JSON.parse(await r.text());
+      if (!j || !j.ok || !j.result || !j.result.file_path) { this.status.error = (j && j.description) || 'getFile failed'; return; }
+      const dl = await this.fetch(`${TG_API}/file/bot${this._token}/${j.result.file_path}`);
+      const bytes = new Uint8Array(await dl.arrayBuffer());
+      await this.onFile({ name, bytes, mime, caption: (msg.caption || '').trim() });
+      this.status.files++; this._react(msg, '👍');
+    } catch (e) { this.status.error = String((e && e.message) || e); }
+  }
+
   // The runner calls this on its cadence (busy-guard + enabled() are the runner's
   // job). It's a CAPTURE pipe — you send from your phone while NOT looking at weir —
   // so it polls backgrounded too; the flight-deck driver restores full speed.
@@ -93,6 +112,7 @@ export class TelegramInflux {
         if (!allowed && fromId) { allowed = fromId; this.status.bound = fromId; await this.store.setSettings({ telegram_allowed_id: fromId }); }
         if (allowed && fromId !== allowed) { this.status.ignored++; continue; }   // not you → ignore (don't capture or stash)
         if (/^\//.test((msg.text || '').trim())) continue;   // a bot command (/start, /help) — it bound you, but isn't content
+        if ((msg.document || (msg.photo && msg.photo.length)) && this.onFile) { await this._ingestFile(msg); continue; }   // a dropped file → the stacks
         const ls = messageLinks(msg.text, msg.entities);
         if (ls.length) { for (const l of ls) links.push({ ...l, date: msg.date ? msg.date * 1000 : undefined }); this._react(msg, '👍'); }
         else if ((msg.text || '').trim()) { await this._stashNote(msg); this.status.notes++; this._react(msg, '✍'); }   // a note → stash for the notes system

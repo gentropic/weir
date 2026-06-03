@@ -318,7 +318,9 @@ export class Store {
   async getContent(id) {
     const rec = this.items.get(String(id));
     if (!rec || !rec.has_content) return null;
-    return this._readText(this._contentPath(rec.feed_id, rec.id), null);
+    // Stacks entries (and anything else) may pin their body to a real tree path
+    // (e.g. /stacks/<path>) instead of the lazy /content/<feed>/… file.
+    return this._readText(rec.content_path || this._contentPath(rec.feed_id, rec.id), null);
   }
 
   // Replace an item's stored content (e.g. fetched full article). Marks `full`
@@ -568,6 +570,71 @@ export class Store {
     }
     for (const fid of feeds) this._markFeedDirty(fid);
     if (n) this.emit('items', { inserted: 0, updated: n, skipped: 0 });
+    return n;
+  }
+
+  // ── stacks (STACKS.md) ──
+  // A stacks entry is a normal Item under the synthetic 'stacks' feed, but its
+  // identity is the stable `uid` (id = `stacks:<uid>`) and its body lives at the
+  // real tree path. syncStacksEntry upserts WITHOUT resetting read/saved/human
+  // state on re-scan (the never-reset rule, SPEC §5 dedup), and tags from the
+  // file (frontmatter/sidecar) union with what's already there.
+  syncStacksEntry(e) {
+    const id = `stacks:${e.uid}`;
+    const fileTags = Array.isArray(e.tags) ? e.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean) : [];
+    let rec = this.items.get(id);
+    if (!rec) {
+      rec = makeItem({
+        id, type: e.type === 'note' ? 'note' : 'file',
+        title: e.title || e.path, author: e.source || undefined,
+        published_at: e.created, fetched_at: e.created,
+        excerpt: e.excerpt || '', tags: fileTags,
+        uid: e.uid, path: e.path, content_path: `/stacks/${e.path}`, mime: e.mime,
+      }, this.feeds.get('stacks') || { id: 'stacks' });
+      rec.has_content = true;
+      this.items.set(id, rec);
+      this._feedSet('stacks').add(id);
+    } else {
+      rec.title = e.title || rec.title;
+      rec.type = e.type === 'note' ? 'note' : 'file';
+      rec.path = e.path;
+      rec.content_path = `/stacks/${e.path}`;
+      rec.mime = e.mime || rec.mime;
+      if (e.excerpt != null) rec.excerpt = e.excerpt;
+      rec.missing = false;
+      rec.has_content = true;
+      // union file tags in (additive — never drop human/llm tags already on the item)
+      for (const t of fileTags) if (!rec.tags.includes(t)) { rec.tags = [...rec.tags, t]; rec.tag_src = { ...(rec.tag_src || {}), [t]: 'file' }; }
+      rec.search_text = deriveSearchText(rec);
+    }
+    this._markFeedDirty('stacks');
+    return rec;
+  }
+
+  // After a scan, flag every stacks item whose uid isn't on disk as `missing`
+  // (never delete — STACKS.md §9). `presentUids` is a Set of uids found this scan.
+  markStacksMissing(presentUids) {
+    let n = 0;
+    for (const id of this._feedSet('stacks')) {
+      const r = this.items.get(id);
+      if (!r) continue;
+      const want = r.uid ? presentUids.has(r.uid) : false;
+      if (!want && !r.missing) { r.missing = true; n++; }
+    }
+    if (n) this._markFeedDirty('stacks');
+    return n;
+  }
+
+  // "Forget missing" (STACKS.md §9) — drop stacks index entries whose files are
+  // gone, so reorgs don't leave ghosts. The files are already gone; if one ever
+  // reappears, the next scan re-adds it. No tombstone (we WANT re-add on return).
+  forgetMissingStacks() {
+    let n = 0; const set = this._feedSet('stacks');
+    for (const id of [...set]) {
+      const r = this.items.get(id);
+      if (r && r.missing) { this.items.delete(id); set.delete(id); n++; }
+    }
+    if (n) { this._markFeedDirty('stacks'); this.emit('items', { inserted: 0, updated: 0, skipped: 0, removed: n }); }
     return n;
   }
 

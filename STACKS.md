@@ -50,10 +50,12 @@ Two entry kinds: **notes** (markdown, authored) and **files** (any dropped binar
 
 ## 3. Metadata + tags (sidecar) **[designed]**
 
-- **Notes (`.md`)** carry **YAML frontmatter**: `tags`, `source`, `created`,
-  `glass_id?`. Portable + Obsidian-native.
-- **Files** carry a **sidecar** `…​.meta.json` next to them: same fields. The file
-  itself stays pristine.
+- **Notes (`.md`)** carry **YAML frontmatter**: `uid`, `tags`, `source`, `created`,
+  `glass_id?`. Portable + Obsidian-native. The `uid` is weir's stable identity for the
+  entry (see §9) — stamped on first index, the anchor that lets moves and `[[uid]]`
+  links survive a reorg.
+- **Files** carry a **sidecar** `…​.meta.json` next to them: same fields (incl. `uid`).
+  The file itself stays pristine.
 - **Parsed with our own `@gcu/yaml`** (vendor `../auditable/ext/yaml`, bundled into
   `/vendor/` like vfs/librarian) — a strict YAML 1.2 subset with **no parse-time tag
   resolution / no RCE surface**, which matters because frontmatter can arrive from an
@@ -79,12 +81,29 @@ An arriving entry's subfolder is decided by, in order:
    folder: 'specs', tag: ['spec'] }`. Stored as JS, `eval`'d, applied at intake.
 3. **Fallback → `/stacks/inbox/`** (unfiled), so nothing is ever lost waiting to be sorted.
 
-## 5. The Stacks view **[designed]**
+## 5. The Stacks view + editor **[designed]**
 
-- A **folder tree** (rail or main) — expand/collapse, item counts, drag-to-move
-  (later). Distinct from the Sources rail.
-- A **note reader/editor** — render markdown; edit in place (saves to the file +
-  frontmatter). Files get a preview/download/open-original.
+- A **rail section with a folder tree** (alongside Sources / Views / Routed / Tags) —
+  expand/collapse, counts, drag-to-move (later). The main pane shows the tree → a
+  note/file.
+- **Editor = `cm6`** (CodeMirror 6, vendored from `auditable/ext/cm6` — the bundled
+  runtime is ~654 KB). It's the **heaviest single add** to the bundle (~0.8 MB →
+  ~1.2 MB+) — accepted, since weir is loaded-once-local and a real editor earns it;
+  flagged so it's an eyes-open choice. **Stage A ships a plain `<textarea>`** with the
+  full edit/split/preview toggle + save pipeline; cm6 swaps in for the textarea as an
+  isolated follow-up (a widget swap — the toggle UI and save path don't change), so the
+  654 KB bundle jump lands in its own reviewable commit rather than the foundation.
+- **UX = edit / split / preview *toggle***, NOT Obsidian-style inline live-preview.
+  CM6 *can* do live-preview via decorations, but it's fragile/finicky to maintain;
+  the toggle is robust and well-understood. (Live-preview = a maybe-later refinement,
+  not a Stage-A goal.) You author specs in Claude web and *send* them anyway, so the
+  in-app editor is more tweak-and-read than primary authoring.
+- **Markdown render (preview pane) — renderer TBD.** `gcu-press` is **stale** (don't
+  default to it); evaluate the fresher **`reader-core`** / **`docview`** for a
+  CommonMark→HTML render (sanitized via weir's `sanitizeHtml`). cm6 edits+highlights
+  but doesn't render-to-HTML, so a renderer is needed regardless. **Tech debt:** several
+  md renderers are scattered across auditable — pick one for weir now, log the
+  consolidation for the toolkit later.
 - Filing UI: move an entry to another folder; create folders; the routing-rules editor
   (reusing the feed-rules editor).
 
@@ -134,23 +153,57 @@ automatic (your notes aren't feed slop to auto-classify).
   review/accept). No file-watcher exists in the browser, so it's poll-on-focus +
   manual, not live — but enough to notice Obsidian edits. Reconcile: frontmatter wins
   for tags, newer mtime for body.
+- **Missing entries: flag, never auto-delete — but one-click to clear.** ✅ A file gone
+  from disk on rescan → the entry is marked **missing** (never silently tombstoned;
+  "never really delete"). To avoid being *haunted by ghosts of reorgs past*, the Stacks
+  view surfaces missing entries with a **"forget missing"** affordance (review list +
+  bulk-clear, or per-entry dismiss) — a reorg/rename flags ghosts you sweep in one click
+  rather than letting cruft accumulate forever. (A rename = delete-old + add-new; v1
+  treats it as missing-old + new-entry; content-hash rename-detection is a later nicety.)
 - **Stacks entries are items.** ✅ Confirmed — the unification stands.
-- **Conflict / dedup**: stable **id = `stacks:<path-hash>`**, so a re-send or external
-  edit at the same path **updates** (never duplicates). A genuinely new file at a taken
-  path → version (`name (2).ext`).
+- **Identity survives moves — id is a stable `uid`, not the path.** ✅ *(reopened &
+  resettled — the path-hash model lost state on reorg.)* On first index, weir stamps a
+  stable **`uid`** into the entry's frontmatter (notes) / `.meta.json` (files); the item
+  **id = `stacks:<uid>`**. The **path is just the entry's current address**, not its
+  identity. So **moving/renaming a note keeps the same id** → its tags, read-state,
+  catalog card, and inbound links all ride along; a reorg costs you nothing. Match-on-
+  rescan is **by uid** (path changed, uid same → it moved), making rename-detection
+  mostly free and demoting the §-missing "delete-old+add-new" path to the genuinely-new
+  case. **Fallback** for an entry with no uid yet (a raw file dropped into the mount
+  externally): `stacks:<path-hash>` until weir stamps it on next write/scan.
+- **Conflict / dedup**: a re-send or external edit at the **same uid** (or same path,
+  pre-stamp) **updates**, never duplicates. A genuinely new file at a taken path →
+  version (`name (2).ext`).
+- **Links — notes are connective tissue over the whole catalog.** ✅ Reserve **`[[uid]]`**
+  (and `[[glass-id]]`) wiki-link syntax now, resolving **by uid** so links survive moves
+  (the payoff of the stable-id decision above). Because **entries are items**, a note can
+  cite *any* holding — a feed article, a book, another note — and "what links here" falls
+  out for free. v1 reserves the syntax + the by-uid resolver; **rendering/editing links
+  (autocomplete, backlink panel) is later** — the cheap, must-not-rot part is the id
+  contract, which we're settling now.
+- **Git-friendly mount.** ✅ The stacks **ignore dotfiles/dotfolders** (`.git`, `.obsidian`,
+  etc.) on scan and never write into them — so pointing the mount at a **git repo** gives
+  full version history for free, zero-dep, with weir managing nothing. This honors "never
+  really delete" at the *content* level (not just at the entry level), without us building
+  a snapshot system.
 - **Folder moves don't touch call numbers** — the glass call number is from facets, not
   the stacks path. File by folder *and* wander by subject; independent axes.
 
 ## 10. Staging (build order)
 
-- **A — Foundation.** `/stacks` store (real files when mounted; IDB blobs otherwise),
-  stacks items (`feed_id:'stacks'`, `path`), a **Stacks tree view** + a markdown
-  reader/editor + file preview. Telegram drops notes+files into `/stacks/inbox/`.
-  *Ships: a working stacks you can put things in and browse.*
+- **A — Foundation. ✅ SHIPPED.** `/stacks` store (`stacks.js` — uid-keyed identity,
+  scan/stamp, move-keeps-state, missing/forget, frontmatter via `@gcu/yaml`), stacks
+  items (`feed_id:'stacks'`, `uid`, `path`, `content_path`), a **Stacks rail tree** +
+  markdown reader (`ui/markdown.js`) + a textarea **note editor** (edit/split/preview)
+  + file preview/download. Telegram drops notes (stash ingest) **and files** (getFile
+  download) into `/stacks/inbox/`. Palette "Stacks"/"New note", `n` to jot. Covered by
+  `tools/smoke-stacks.mjs`. *(Remaining within A: swap the textarea for cm6.)*
 - **B — Filing.** Naming-scheme (path/frontmatter) + stacks routing rules → auto-subfolder.
   *Ships: the "lands in the right place" magic.*
 - **C — Metadata + MCP.** Frontmatter/sidecar tags + the `weir_stacks*` tools (so Claude
   reads/writes/files/tags). Opt-in cataloging of stacks entries. *Ships: co-curation.*
 
 Later: drag-to-move UI, external-edit rescan/sync, PDF text-extraction → catalog,
-backlinks/wiki-links between notes (Obsidian-style), Mini-App remote browse.
+**wiki-link rendering** (autocomplete + a "what links here" backlink panel — the `[[uid]]`
+syntax + by-uid resolver are reserved in Stage A per §9, only the UI is later),
+Mini-App remote browse.

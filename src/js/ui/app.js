@@ -11,6 +11,7 @@ import { DEFAULT_ROUTING } from '../router.js';
 import { parseWatchDigest } from '../affinity.js';
 import { showMenu } from './menu.js';
 import { showPalette } from './palette.js';
+import { renderMarkdown } from './markdown.js';
 import { extractArticle } from '../extract.js';
 import { checkForUpdateNow, setAutoCheck } from '../pwa.js';
 import { recoverFeed } from '../wayback.js';
@@ -58,6 +59,10 @@ export class App {
     this._health = new Map();    // feed_id → {status, reasons} for non-ok feeds (hijack/stale/failing)
     this._g = false;
     this.pendingImport = null;   // { feeds, youtube } awaiting confirmation
+    this.stacks = null;          // StacksStore (set in boot); the notes/files vault
+    this.stackFilter = null;     // stacks-mode flag (the Stacks tree view is active)
+    this.stackPath = null;       // active stacks folder scope ('' / 'inbox' / 'papers/x'), or null = all
+    this.collapsedStackFolders = new Set();
   }
 
   mount() {
@@ -89,7 +94,7 @@ export class App {
         return;
       }
       const s = e.target.closest('.source'); if (!s) return;
-      this.catFilter = null; this.route = null; this.smartView = null; this.catalog = null;
+      this.catFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null;
       this.feedFilter = this.feedFilter === s.dataset.feed ? null : s.dataset.feed;
       this.renderAll();
     });
@@ -143,6 +148,20 @@ export class App {
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
     document.getElementById('btn-saveview')?.addEventListener('click', () => this.saveSearchAsView());
     this.store.on('views', () => this.renderViews());
+
+    // Stacks rail tree + note editor
+    document.getElementById('stacks-head')?.addEventListener('click', (e) => { if (e.target.closest('#stacks-newnote')) return; this.enterStacks(); });
+    document.getElementById('stacks-newnote')?.addEventListener('click', (e) => { e.stopPropagation(); this.openNoteEditor(); });
+    document.getElementById('stacks-tree')?.addEventListener('click', (e) => {
+      if (e.target.closest('[data-stack-forget]')) { this._forgetStackGhosts(); return; }
+      const f = e.target.closest('.stack-folder');
+      if (f) { if (e.target.closest('.sf-tog')) this.toggleStackFolder(f.dataset.stackFolder); else this.setStackFolder(f.dataset.stackFolder); return; }
+      const en = e.target.closest('.stack-entry'); if (en) this.selectStackEntry(en.dataset.stackId);
+    });
+    document.getElementById('se-save')?.addEventListener('click', () => this.saveNoteEditor());
+    document.getElementById('se-close')?.addEventListener('click', () => this.closeNoteEditor());
+    document.querySelectorAll('.se-mode').forEach((b) => b.addEventListener('click', () => this._seSetMode(b.dataset.semode)));
+    { const ed = document.getElementById('se-edit'); ed?.addEventListener('input', () => { clearTimeout(this._sePvTimer); this._sePvTimer = setTimeout(() => this._seSyncPreview(), 150); }); }
     document.getElementById('btn-recover')?.addEventListener('click', () => { if (this.feedFilter) this.recoverHistory(this.feedFilter); });
     document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
     document.getElementById('open-settings')?.addEventListener('click', () => this.openSettings());
@@ -168,7 +187,7 @@ export class App {
     document.getElementById('open-help')?.addEventListener('click', () => this.openHelp());
     document.getElementById('help-close')?.addEventListener('click', () => this.closeHelp());
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
-    document.getElementById('resolver-status')?.addEventListener('click', () => { this.catFilter = null; this.route = null; this.smartView = null; this.feedFilter = 'saved'; this.renderAll(); });
+    document.getElementById('resolver-status')?.addEventListener('click', () => { this.catFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.feedFilter = 'saved'; this.renderAll(); });
     document.getElementById('review-status')?.addEventListener('click', () => this.openReview());
     document.getElementById('telegram-status')?.addEventListener('click', () => this.openSettings());
     document.getElementById('review-close')?.addEventListener('click', () => this._reviewClose());
@@ -233,6 +252,19 @@ export class App {
 
   query() {
     if (this.catalog) return this.catalogQuery();
+    // Stacks mode: the entries of the synthetic 'stacks' feed, scoped to the active
+    // folder, newest-first. (Entries are items, so search/tags work; we just filter
+    // by path here rather than through store.query.)
+    if (this.stackFilter) {
+      let list = this.stacks ? this.stacks.entries() : this.store.query({ feed_id: 'stacks' });
+      if (this.stackPath != null) {   // scope to a folder, recursively
+        const pre = this.stackPath;
+        list = list.filter((e) => { const f = this._stackFolderOf(e.path); return f === pre || f.startsWith(pre + '/'); });
+      }
+      const q = (this.searchText || '').toLowerCase();
+      if (q) list = list.filter((e) => (e.search_text || '').includes(q));
+      return list.sort((a, b) => (b.published_at || 0) - (a.published_at || 0));
+    }
     // Current view's filter (no text) + the effective search text (live box, or a
     // saved smart-view's text).
     let opts, text;
@@ -252,7 +284,7 @@ export class App {
     return this.store.query({ ...opts, text: text || undefined });   // cursor-scan fallback
   }
 
-  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); }
+  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); }
 
   // The rail's Tags section — every tag in use, with its color + item count,
   // click to filter (a transient tag view). The discoverable home for tags; the
@@ -276,7 +308,7 @@ export class App {
   // aren't recreated under the cursor on every insert.
   _scheduleRender() {
     if (this._renderTimer) return;
-    this._renderTimer = setTimeout(() => { this._renderTimer = null; this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStream(); }, 250);
+    this._renderTimer = setTimeout(() => { this._renderTimer = null; this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderStream(); }, 250);
   }
 
   // Replace a single row in place — instant feedback for a click action, no
@@ -297,14 +329,15 @@ export class App {
   renderTopbar() {
     const feed = this.feedFilter && this.store.getFeed(this.feedFilter);
     const rb = document.getElementById('btn-recover'); if (rb) rb.hidden = !this.feedFilter;
-    document.getElementById('view-title').textContent = this.catalog ? 'Catalog' : this.smartView ? this.smartView.name : this.catFilter != null ? (this.catFilter || 'ungrouped') : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
+    document.getElementById('view-title').textContent = this.catalog ? 'Catalog' : this.stackFilter ? (this.stackPath ? `Stacks / ${this.stackPath}` : 'Stacks') : this.smartView ? this.smartView.name : this.catFilter != null ? (this.catFilter || 'ungrouped') : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
     const n = this.items.length;
     const feeds = this.store.listFeeds().length;
     let sub;
     if (this.catalog) {
       const active = Object.entries(this.catalog.filters).flatMap(([fc, s]) => [...s].map((t) => `${fc}:${t}`));
       sub = `${n} item${n === 1 ? '' : 's'}` + (active.length ? ` · ${active.join(' ∩ ')}` : ' · pick a facet →');
-    } else if (this.searchText) sub = `${n} match${n === 1 ? '' : 'es'} for “${this.searchText}”`;
+    } else if (this.stackFilter && !this.searchText) sub = n ? `${n} entr${n === 1 ? 'y' : 'ies'}` : 'empty — ＋ note to start';
+    else if (this.searchText) sub = `${n} match${n === 1 ? '' : 'es'} for “${this.searchText}”`;
     else if (!feeds) sub = 'no feeds yet';
     else sub = `${n} item${n === 1 ? '' : 's'}${feed ? '' : ` · ${feeds} source${feeds === 1 ? '' : 's'}`}`;
     document.getElementById('view-sub').textContent = sub;
@@ -373,14 +406,14 @@ export class App {
   }
 
   renderRail() {
-    let feeds = this.store.listFeeds();
+    let feeds = this.store.listFeeds().filter((f) => f.id !== 'stacks');   // the stacks have their own tree section, not a Sources row
     this.faviconFetcher?.enqueue(feeds);   // lazily backfill site icons (polite, once each)
     this.recomputeHealth();
     this.renderHealthStatus();
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
       r.classList.toggle('active', r.dataset.view === 'catalog'
         ? !!this.catalog
-        : (!this.feedFilter && !this.route && !this.smartView && !this.catalog && this.catFilter == null && r.dataset.view === this.view)));
+        : (!this.feedFilter && !this.route && !this.smartView && !this.catalog && !this.stackFilter && this.catFilter == null && r.dataset.view === this.view)));
 
     // Catalog mode swaps the Sources rail for the facet browser.
     const srcSec = document.getElementById('sources')?.closest('.rail-section');
@@ -432,14 +465,14 @@ export class App {
     this.sources.innerHTML = html;
   }
 
-  setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   toggleCat(c) { if (this.collapsedCats.has(c)) this.collapsedCats.delete(c); else this.collapsedCats.add(c); this.renderRail(); }
 
   setSmartView(id) {
     const v = this.store.getViews().find((x) => x.id === id);
     if (!v) return;
     this.smartView = v;
-    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null;
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null; this.stackFilter = null; this.stackPath = null;
     this.selectedId = null; this.expandedId = null;
     this.renderAll();
   }
@@ -1123,6 +1156,7 @@ export class App {
   }
 
   expandedHtml(it) {
+    if (it.feed_id === 'stacks') return this._stacksExpandedHtml(it);
     let inner = '';
     if (it.type === 'podcast' && it.media?.audio_url) inner += `<audio class="player" controls preload="none" src="${escapeHtml(it.media.audio_url)}"></audio>`;
 
@@ -1236,6 +1270,8 @@ export class App {
     const it = this.store.getItem(id);
     if (!it) return;
     if (act === 'open') { if (it.url) window.open(it.url, '_blank', 'noopener'); return; }
+    if (act === 'editnote') { this.openNoteEditor(id); return; }
+    if (act === 'dlfile') { this.downloadStacksFile(id); return; }
     if (act === 'fullcontent') { this.loadFullContent(id); return; }
     if (act === 'images') { this.loadImages(id); return; }
     if (act === 'save') { this.store.setState(id, { saved: !it.saved }); this.reflectItem(id); return; }
@@ -1700,16 +1736,16 @@ export class App {
 
   _reflectSearch() { const b = document.getElementById('btn-saveview'); if (b) b.hidden = !this.searchText || !!this.smartView; }
 
-  setView(view) { if (view === 'catalog') return this.setCatalog(); this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
-  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
-  selectFeed(id) { this.feedFilter = id; this.view = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setView(view) { if (view === 'catalog') return this.setCatalog(); this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  selectFeed(id) { this.feedFilter = id; this.view = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
 
   // Filter the stream to one tag — a transient (unsaved) smart view, so it reuses
   // the existing smartView query plumbing + active-state handling. "Save view" in
   // the search box turns an ad-hoc tag filter into a permanent one.
   filterByTag(tag) {
     this.smartView = { id: `__tag:${tag}`, name: `#${tag}`, query: { tag }, transient: true };
-    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null;
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null; this.stackFilter = null; this.stackPath = null;
     this.selectedId = null; this.expandedId = null; this.renderAll();
   }
 
@@ -1758,12 +1794,13 @@ export class App {
   // actions otherwise buried in context menus. Built fresh on each open so it
   // always reflects the current rail.
   openPalette() {
-    const feeds = this.store.listFeeds();
+    const feeds = this.store.listFeeds().filter((f) => f.id !== 'stacks');
     const views = [
       { label: 'Inbox', kind: 'View', run: () => this.setView('inbox') },
       { label: 'Saved', kind: 'View', run: () => this.setView('saved') },
       { label: 'Archived', kind: 'View', run: () => this.setView('archived') },
       { label: 'Catalog', kind: 'View', run: () => this.setCatalog() },
+      { label: 'Stacks', kind: 'View', hint: 'notes + files', run: () => this.enterStacks() },
     ];
     const cmds = [
       { label: this.unreadOnly ? 'Show all (not just unread)' : 'Show only unread', kind: 'Command', run: () => this.toggleUnread() },
@@ -1777,6 +1814,8 @@ export class App {
       this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },
       { label: 'Tag all shown items…', kind: 'Command', run: () => this.openBulkTagEditor() },
       { label: 'Manage tags…', kind: 'Command', run: () => this.openTagManager() },
+      { label: 'New note / jot…', kind: 'Command', hint: 'stacks', run: () => this.openNoteEditor() },
+      { label: 'Rescan stacks folder', kind: 'Command', run: () => this.rescanStacks() },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
       { label: 'Re-fetch weak-title links', kind: 'Command', run: () => this.reEnrichWeak() },
       { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },
@@ -1804,8 +1843,12 @@ export class App {
   onKey(e) {
     // Command palette (Cmd/Ctrl-K) — works everywhere, even from the search box.
     if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); this.openPalette(); return; }
-    // Esc closes any open overlay first, from anywhere.
+    // Cmd/Ctrl-S saves the open note editor, from anywhere within it.
+    const seOpen = !document.getElementById('stacks-editor-overlay')?.hidden;
+    if (seOpen && (e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); this.saveNoteEditor(); return; }
+    // Esc closes any open overlay first, from anywhere (incl. from a field in it).
     if (e.key === 'Escape') {
+      if (seOpen) { e.preventDefault(); this.closeNoteEditor(); if (e.target.blur) e.target.blur(); return; }
       for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; return; }
@@ -1840,6 +1883,7 @@ export class App {
       case 'e': if (this.selectedId) { const cur = this.selectedId; this.moveSelection(1); this.doAct('archive', cur); } break;
       case 'o': if (this.selectedId) this.doAct('open', this.selectedId); break;
       case 't': if (this.selectedId) { e.preventDefault(); this.openTagEditor(this.selectedId); } break;
+      case 'n': e.preventDefault(); this.openNoteEditor(); break;
       case 'u': e.preventDefault(); this.toggleUnread(); break;
       case 'g': this._g = true; setTimeout(() => { this._g = false; }, 800); break;
       case '/': e.preventDefault(); this.searchEl.focus(); break;
@@ -2120,6 +2164,173 @@ export class App {
     r.addEventListener('mousedown', (e) => { dragging = true; r.classList.add('dragging'); document.body.style.userSelect = 'none'; e.preventDefault(); });
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  }
+
+  // ── STACKS (STACKS.md): a folder-tree of authored notes + dropped files ──
+  _stackFolderOf(p) { const i = String(p || '').lastIndexOf('/'); return i < 0 ? '' : p.slice(0, i); }
+
+  // Build a nested folder tree from the flat stacks entries.
+  _stackTree() {
+    const root = { name: '', path: '', folders: new Map(), entries: [] };
+    if (!this.stacks) return root;
+    for (const e of this.stacks.entries()) {
+      const parts = String(e.path || '').split('/');
+      parts.pop();   // drop the filename
+      let node = root, acc = '';
+      for (const p of parts) { acc = acc ? `${acc}/${p}` : p; if (!node.folders.has(p)) node.folders.set(p, { name: p, path: acc, folders: new Map(), entries: [] }); node = node.folders.get(p); }
+      node.entries.push(e);
+    }
+    return root;
+  }
+  _stackFolderCount(f) { let n = f.entries.length; for (const c of f.folders.values()) n += this._stackFolderCount(c); return n; }
+
+  renderStacks() {
+    const sec = document.getElementById('stacks-section'); const el = document.getElementById('stacks-tree');
+    if (!sec || !el) return;
+    const entries = this.stacks ? this.stacks.entries() : [];
+    sec.style.display = entries.length ? '' : 'none';
+    if (!entries.length) { el.innerHTML = ''; return; }
+    const head = document.getElementById('stacks-head'); if (head) head.classList.toggle('active', !!this.stackFilter && this.stackPath == null);
+    let html = this._renderStackNode(this._stackTree(), 0);
+    const missing = entries.filter((e) => e.missing).length;
+    if (missing) html += `<div class="stack-missing"><span>${missing} missing on disk</span><button data-stack-forget="1" title="Forget the vanished entries (their files are already gone)">forget</button></div>`;
+    el.innerHTML = html;
+  }
+  _renderStackNode(node, depth) {
+    let html = '';
+    for (const f of [...node.folders.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+      const collapsed = this.collapsedStackFolders.has(f.path);
+      const active = this.stackFilter && this.stackPath === f.path ? ' active' : '';
+      html += `<div class="stack-folder${active}" data-stack-folder="${escapeHtml(f.path)}" style="padding-left:${6 + depth * 12}px">`
+        + `<span class="sf-tog">${collapsed ? '▸' : '▾'}</span><span class="sf-name">${escapeHtml(f.name)}</span><span class="sf-count">${this._stackFolderCount(f)}</span></div>`;
+      if (!collapsed) html += this._renderStackNode(f, depth + 1);
+    }
+    for (const e of node.entries.slice().sort((a, b) => (a.title || '').localeCompare(b.title || ''))) {
+      const active = this.stackFilter && this.selectedId === e.id ? ' active' : '';
+      const ico = e.type === 'note' ? '✎' : '📄';
+      html += `<div class="stack-entry${active}${e.missing ? ' missing' : ''}" data-stack-id="${escapeHtml(e.id)}" style="padding-left:${6 + depth * 12}px" title="${escapeHtml(e.path)}">`
+        + `<span class="se-ico">${ico}</span><span class="se-name">${escapeHtml(e.title || e.path)}</span></div>`;
+    }
+    return html;
+  }
+
+  enterStacks() {
+    this.stackFilter = true; this.stackPath = null;
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null;
+    this.selectedId = null; this.expandedId = null; this.renderAll();
+  }
+  setStackFolder(path) {
+    this.stackFilter = true; this.stackPath = path;
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null;
+    this.selectedId = null; this.expandedId = null; this.renderAll();
+  }
+  toggleStackFolder(path) { if (this.collapsedStackFolders.has(path)) this.collapsedStackFolders.delete(path); else this.collapsedStackFolders.add(path); this.renderStacks(); }
+  selectStackEntry(id) {
+    const it = this.store.getItem(id); if (!it) return;
+    this.stackFilter = true; this.stackPath = this._stackFolderOf(it.path);
+    this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null;
+    this.selectedId = id; this.expandedId = id; this.renderAll();
+  }
+
+  async rescanStacks() {
+    if (!this.stacks) return;
+    const sub = document.getElementById('view-sub'); if (sub) sub.textContent = 'rescanning stacks…';
+    const r = await this.stacks.scan(); await this.store.flush();
+    this.renderStacks(); if (this.stackFilter) this.renderStream();
+    if (sub) sub.textContent = `stacks: ${r.notes} note${r.notes === 1 ? '' : 's'}, ${r.files} file${r.files === 1 ? '' : 's'}${r.stamped ? `, ${r.stamped} newly indexed` : ''}${r.missing ? `, ${r.missing} missing` : ''}`;
+  }
+  _forgetStackGhosts() {
+    if (!this.stacks) return;
+    const n = this.stacks.forgetMissing(); this.store.flush();
+    this.renderStacks(); if (this.stackFilter) this.renderStream();
+    const sub = document.getElementById('view-sub'); if (sub && n) sub.textContent = `forgot ${n} missing stack entr${n === 1 ? 'y' : 'ies'}`;
+  }
+
+  // ── note editor (edit / split / preview toggle; cm6 swaps in for the textarea later) ──
+  async openNoteEditor(id) {
+    const ov = document.getElementById('stacks-editor-overlay'); if (!ov || !this.stacks) return;
+    this._seEditing = id || null;
+    const titleEl = document.getElementById('se-title'), pathEl = document.getElementById('se-path');
+    const editEl = document.getElementById('se-edit'), tagsEl = document.getElementById('se-tags'), statusEl = document.getElementById('se-status');
+    if (statusEl) statusEl.textContent = '';
+    if (id) {
+      const it = this.store.getItem(id);
+      titleEl.value = it.title || ''; pathEl.textContent = it.path || ''; tagsEl.value = (it.tags || []).join(', ');
+      editEl.value = it.type === 'note' ? await this.stacks.readNote(it) : '';
+    } else { titleEl.value = ''; pathEl.textContent = 'inbox/ · new note'; tagsEl.value = ''; editEl.value = ''; }
+    ov.hidden = false;
+    this._seSetMode(this._seMode || 'split');
+    this._seSyncPreview();
+    (id ? editEl : titleEl).focus();
+  }
+  _seSetMode(mode) {
+    this._seMode = mode;
+    const body = document.getElementById('se-body'); if (body) body.className = `se-body mode-${mode}`;
+    document.querySelectorAll('.se-mode').forEach((b) => b.classList.toggle('active', b.dataset.semode === mode));
+    if (mode !== 'edit') this._seSyncPreview();
+  }
+  _seSyncPreview() {
+    const pv = document.getElementById('se-preview'), ed = document.getElementById('se-edit');
+    if (pv && ed) pv.innerHTML = renderMarkdown(ed.value) || '<p class="se-empty">nothing to preview</p>';
+  }
+  async saveNoteEditor() {
+    if (!this.stacks) return;
+    const editEl = document.getElementById('se-edit'), titleEl = document.getElementById('se-title'), tagsEl = document.getElementById('se-tags'), statusEl = document.getElementById('se-status');
+    const md = editEl.value; const title = titleEl.value.trim() || undefined;
+    const tags = tagsEl.value.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+    try {
+      let rec;
+      if (this._seEditing) { const it = this.store.getItem(this._seEditing); rec = await this.stacks.saveNote(it, md, { title, tags }); }
+      else { rec = await this.stacks.writeNote({ folder: 'inbox', title, markdown: md, tags }); }
+      await this.store.flush();
+      this._seEditing = rec.id; this._content.delete(rec.id);
+      document.getElementById('se-path').textContent = rec.path;
+      if (statusEl) statusEl.textContent = 'saved ✓';
+      this.renderStacks(); if (this.stackFilter) this.renderStream();
+    } catch (e) { if (statusEl) statusEl.textContent = `save failed: ${e.message || e}`; }
+  }
+  closeNoteEditor() { const ov = document.getElementById('stacks-editor-overlay'); if (ov) ov.hidden = true; this._seEditing = null; }
+
+  async downloadStacksFile(id) {
+    const it = this.store.getItem(id); if (!it || !this.stacks) return;
+    const bytes = await this.stacks.readBytes(it); if (!bytes) return;
+    const blob = new Blob([bytes], { type: it.mime || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = this.stacks._basename(it.path); a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  _stacksExpandedHtml(it) {
+    let inner = '';
+    if (it.type === 'note') {
+      const cached = this._content.get(it.id);
+      if (cached === undefined) {
+        this.store.getContent(it.id).then((raw) => {
+          const bodyMd = String(raw || '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+          this._content.set(it.id, renderMarkdown(bodyMd)); if (this.expandedId === it.id) this.renderStream();
+        });
+        inner += '<div class="icontent loading">loading…</div>';
+      } else inner += `<div class="icontent">${cached || '<p>(empty note)</p>'}</div>`;
+      inner += '<div class="ifooter"><button data-act="editnote">✎ edit</button>';
+      inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button></div>`;
+    } else {
+      let imgHtml = '';
+      if ((it.mime || '').startsWith('image/')) {
+        const ck = `img:${it.id}`; const c = this._content.get(ck);
+        if (c === undefined) {
+          this._content.set(ck, '');
+          this.stacks.readBytes(it).then((b) => { if (!b) return; const url = URL.createObjectURL(new Blob([b], { type: it.mime })); this._content.set(ck, `<img src="${url}" alt="">`); if (this.expandedId === it.id) this.renderStream(); });
+        }
+        imgHtml = this._content.get(ck) || '';
+      }
+      const name = this.stacks ? this.stacks._basename(it.path) : it.path;
+      inner += `<div class="icontent"><p>📄 ${escapeHtml(name)} · ${escapeHtml(it.mime || 'file')}</p>${imgHtml}</div>`;
+      inner += '<div class="ifooter"><button data-act="dlfile">⬇ download</button>';
+      if (it.url) inner += '<button data-act="open">open original ↗</button>';
+      inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button></div>`;
+    }
+    if (it.missing) inner += '<div class="ifooter"><span class="hint" style="color:var(--au-warn)">file missing on disk — “forget” in the rail to clear</span></div>';
+    return inner;
   }
 
   renderRoutes() {

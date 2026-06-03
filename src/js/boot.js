@@ -17,6 +17,7 @@ import { SearchIndex } from './search.js';
 import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
 import { TelegramInflux } from './telegram.js';
+import { StacksStore } from './stacks.js';
 import { BackgroundRunner } from './runner.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
@@ -104,8 +105,26 @@ async function boot() {
   const app = new App({ store, poller, router, adapters, faviconFetcher });
   app.searchIndex = search;
   app.fsMount = { type: backendType, pending: pendingMount };   // filesystem-mount state for the UI
+
+  // Stacks (STACKS.md) — the notes/files vault. Set on the app before mount so the
+  // rail tree renders any persisted entries immediately; ensure + scan + drain the
+  // Telegram stash run just after (async), reconciling the on-disk tree.
+  const stacks = new StacksStore(store);
+  app.stacks = stacks;
+
   app.mount();
   poller.start();
+
+  (async () => {
+    try {
+      await stacks.ensure();
+      await stacks.scan();
+      const ingested = await stacks.ingestStash();   // drain /telegram-notes.ndjson → /stacks/inbox
+      await store.flush();
+      app.renderStacks();
+      if (ingested) app.renderCounts();
+    } catch (e) { console.error('stacks init failed', e); }
+  })();
 
   // WebMCP — register weir's tools on the shim-polyfilled navigator.modelContext
   // and reconnect to the bridge if a connection string was saved. gcuFetch is the
@@ -146,6 +165,7 @@ async function boot() {
   const telegram = new TelegramInflux(store, {
     getToken: () => getKey('telegram'),
     onLinks: (links) => app.importLinks(links, 'telegram'),
+    onFile: async ({ name, bytes, mime }) => { await stacks.addFile({ folder: 'inbox', name, bytes, mime, source: 'telegram' }); await store.flush(); app.renderStacks(); },
   });
   app.telegram = telegram;
   telegram.on((st) => app.renderTelegramStatus(st));
@@ -153,7 +173,7 @@ async function boot() {
   if (store.getSettings().telegram_enabled && await getKey('telegram')) { telegram.start(); runner.kick('telegram'); }
   app.renderTelegramStatus(telegram.status);   // reflect enabled/polling in the footer from the start
 
-  window.__weir = { store, poller, router, drip, retainer, linkResolver, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
+  window.__weir = { store, poller, router, drip, retainer, linkResolver, stacks, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();
       const provider = o.provider || s.catalog_provider || 'ollama';

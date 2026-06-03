@@ -39,6 +39,11 @@
       <div id="tags-list"></div>
     </div>
 
+    <div class="rail-section" id="stacks-section" style="display:none">
+      <div class="rail-label" id="stacks-head">Stacks<span class="rail-acts"><button id="stacks-newnote" class="btn-link" type="button" title="New note (n)">＋ note</button></span></div>
+      <div id="stacks-tree"></div>
+    </div>
+
   </aside>
 
   <div class="resizer" id="rail-resizer" title="Drag to resize"></div>
@@ -271,6 +276,31 @@
     <div class="panel-foot">
       <span class="hint">click a swatch to recolor · rename into an existing tag to merge</span>
       <button class="btn" id="tags-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Stacks note editor — edit / split / preview toggle (cm6 swaps in for the textarea later) -->
+<div class="overlay" id="stacks-editor-overlay" hidden>
+  <div class="panel panel-wide">
+    <div class="panel-head se-head">
+      <input id="se-title" class="field se-title" type="text" placeholder="note title…" autocomplete="off" spellcheck="false">
+      <span class="se-path" id="se-path"></span>
+      <span class="se-modes">
+        <button class="btn-link se-mode" data-semode="edit" type="button" title="Edit only">✎ edit</button>
+        <button class="btn-link se-mode active" data-semode="split" type="button" title="Edit + preview">▥ split</button>
+        <button class="btn-link se-mode" data-semode="preview" type="button" title="Preview only">▦ preview</button>
+      </span>
+    </div>
+    <div class="se-body" id="se-body">
+      <textarea id="se-edit" class="se-edit" spellcheck="false" placeholder="# Write markdown…&#10;&#10;Link other holdings with [[uid]]."></textarea>
+      <div id="se-preview" class="se-preview icontent"></div>
+    </div>
+    <div class="panel-foot se-foot">
+      <input id="se-tags" class="field se-tags" type="text" placeholder="tags, comma-separated…" autocomplete="off" spellcheck="false">
+      <span class="hint" id="se-status"></span>
+      <button class="btn btn-primary" id="se-save">Save</button>
+      <button class="btn" id="se-close">Close</button>
     </div>
   </div>
 </div>
