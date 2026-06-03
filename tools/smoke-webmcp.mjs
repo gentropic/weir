@@ -150,6 +150,12 @@ await store.putFeed({ id: 'dead2', name: 'D2', adapter: 'feed', url: 'http://d2/
 await assert.rejects(tools.removeFeed({ id: 'dead2' }), /disabled/, 'gated off → refuses, points to UI');
 await store.setSettings({ mcp_allow_feed_removal: true });
 
+// ── listSources q: find a feed by URL / name across all folders (incl. its url) ──
+const foundByUrl = await tools.listSources({ q: 'new.example' });
+assert.ok(foundByUrl.feeds.some((x) => x.id === 'f'), 'listSources q finds a feed by URL substring');
+assert.ok(foundByUrl.feeds.every((x) => 'url' in x), 'q results include the url (so a feed is recognizable)');
+assert.ok((await tools.listSources({ q: 'bb' })).feeds.some((x) => x.id === 'f'), 'and finds it by name');
+
 // ── catalog control (mock app) ──
 const calls = [];
 const mockApp = {

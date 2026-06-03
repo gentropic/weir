@@ -15850,13 +15850,20 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // Default → a COMPACT overview (folder summaries + health tally + just the troubled
   // feeds), so a 400+ feed corpus doesn't blow the result budget. Pass a `category` to
   // get the full per-feed list for one folder (bounded by folder size).
+  const projFeed = (f, stats) => ({ id: f.id, name: f.name, url: f.url || undefined, adapter: f.adapter, category: f.category || '(ungrouped)', inbox: stats.byFeed[f.id] || 0, ...feedHealth(f) });
   async function listSources(input = {}) {
     const stats = store.counts();
     const feeds = store.listFeeds();
+    if (input.q != null && String(input.q).trim()) {   // FIND a feed by name / url / id, across all folders
+      const q = String(input.q).trim().toLowerCase();
+      const rows = feeds.filter((f) => (f.name || '').toLowerCase().includes(q) || (f.url || '').toLowerCase().includes(q) || (f.site_url || '').toLowerCase().includes(q) || f.id.toLowerCase().includes(q))
+        .slice(0, 50).map((f) => projFeed(f, stats));
+      return { query: String(input.q), count: rows.length, feeds: rows };
+    }
     if (input.category !== undefined) {   // detail mode: one folder
       const cat = String(input.category);
       const rows = feeds.filter((f) => (f.category || '') === cat)
-        .map((f) => ({ id: f.id, name: f.name, adapter: f.adapter, inbox: stats.byFeed[f.id] || 0, ...feedHealth(f) }))
+        .map((f) => projFeed(f, stats))
         .sort((a, b) => b.inbox - a.inbox || a.name.localeCompare(b.name));
       return { category: cat || '(ungrouped)', count: rows.length, feeds: rows };
     }
@@ -16103,8 +16110,8 @@ const TOOLS = [
   },
   {
     name: 'weir_listSources', fn: 'listSources',
-    description: 'Source overview (compact — safe on a 400+ feed corpus). DEFAULT returns { feedCount, folders:[{category,feeds,inbox}], health:{failing,stale,…}, troubled:[…] } — folder summaries + a health tally + ONLY the non-healthy feeds (state/lastPolled/fails/lastError), so you can spot prune candidates without dumping everything. Pass `category` to get the FULL per-feed list for one folder → { category, count, feeds:[{id,name,adapter,inbox,…health}] }. Pair with weir_updateFeed to curate, weir_queryItems({feed}) to drill in.',
-    inputSchema: { type: 'object', properties: { category: { type: 'string', description: 'Full per-feed detail for one folder ("" = ungrouped); omit for the overview' } } },
+    description: 'Source overview (compact — safe on a 400+ feed corpus). DEFAULT returns { feedCount, folders:[{category,feeds,inbox}], health:{failing,stale,…}, troubled:[…] } — folder summaries + a health tally + ONLY the non-healthy feeds (state/lastPolled/fails/lastError), so you can spot prune candidates without dumping everything. Pass `q` to FIND a feed by name/URL/id across ALL folders (the way to locate a specific feed) → { query, count, feeds:[…incl url] }. Pass `category` for the FULL per-feed list of one folder. Pair with weir_updateFeed / weir_removeFeed to curate, weir_queryItems({feed}) to drill in.',
+    inputSchema: { type: 'object', properties: { q: { type: 'string', description: 'Find feeds whose name/URL/id contains this (across all folders)' }, category: { type: 'string', description: 'Full per-feed detail for one folder ("" = ungrouped)' } } },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'List weir sources' },
   },
   {
@@ -16427,7 +16434,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '170f571';          // short content hash of the bundle (build id)
+const COMMIT = '78f9f2c';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
