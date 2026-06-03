@@ -31,7 +31,7 @@ export function parseYoutube(text, opts = {}) {
       id: `${feed.id}:${videoId || link}`,
       feed_id: feed.id,
       url: link,
-      title: e.textOf('title') || group?.textOf('title') || '(untitled)',
+      title: e.textOf('title') || group?.textOf('title') || undefined,
       author: e.child('author')?.textOf('name') || undefined,
       published_at: ytEpoch(e.textOf('published') || e.textOf('updated')),
       type: 'video',

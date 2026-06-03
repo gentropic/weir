@@ -113,4 +113,21 @@ assert.equal(imgItems[1].media.thumbnail, 'https://blog.example/cover.png', 'inl
 assert.equal(imgItems[2].media, undefined, 'tracking pixel skipped → no thumbnail');
 assert.equal(imgItems[3].media, undefined, 'no image → no media');
 
+// ── title-less items (microblogs: Bluesky/Mastodon RSS ship no <title>) ──
+// The adapter must NOT pre-fill "(untitled)" — it leaves title empty so the
+// store synthesizes one from the body. (Regression guard: adapters used to
+// hardcode "(untitled)", which short-circuited the synthesis.)
+const NOTITLE = `<rss version="2.0"><channel><title>Microblog</title>
+  <item><guid>p1</guid><link>https://m.example/p1</link>
+    <description>Web novel xianxia: MC is a cold deathmachine, never bowing.</description></item>
+</channel></rss>`;
+const ntItems = parseFeed(NOTITLE, { feed }).items;
+assert.equal(ntItems[0].title, undefined, 'adapter leaves a title-less item title undefined (no hardcoded fallback)');
+const ntStore = new Store(await VFS.create()); await ntStore._hydrate();
+await ntStore.putFeed({ id: 'demo', name: 'Demo', adapter: 'feed', url: 'https://m.example/' });
+await ntStore.upsertItems(parseFeed(NOTITLE, { feed: ntStore.getFeed('demo') }).items);
+const nt = ntStore.query({ feed_id: 'demo' })[0];
+assert.equal(nt.title, 'Web novel xianxia: MC is a cold deathmachine, never bowing.', 'store synthesizes title from body');
+assert.equal(nt.title_synth, true, 'flagged title_synth');
+
 console.log('feed smoke ok:', JSON.stringify(store.counts()));

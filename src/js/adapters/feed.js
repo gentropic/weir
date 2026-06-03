@@ -86,7 +86,7 @@ function rssItem(item, feed) {
     id: stableId(feed, [guid, link, item.textOf('title')]),
     feed_id: feed.id,
     url: link,
-    title: item.textOf('title') || '(untitled)',
+    title: item.textOf('title') || undefined,   // empty → makeItem synthesizes from the body (microblogs)
     author: item.textOf('creator') || item.textOf('author') || undefined,
     published_at: toEpoch(date),
     type: isPodcast ? 'podcast' : 'article',
@@ -105,7 +105,7 @@ function atomEntry(entry, feed) {
     id: stableId(feed, [id, link, entry.textOf('title')]),
     feed_id: feed.id,
     url: link,
-    title: entry.textOf('title') || '(untitled)',
+    title: entry.textOf('title') || undefined,   // empty → makeItem synthesizes from the body (microblogs)
     author: entry.child('author')?.textOf('name') || undefined,
     published_at: toEpoch(date),
     type: 'article',
@@ -125,7 +125,7 @@ function jsonItem(it, top, feed) {
     id: stableId(feed, [it.id, it.url, it.title]),
     feed_id: feed.id,
     url: it.url || it.external_url || '',
-    title: it.title || '(untitled)',
+    title: it.title || undefined,   // empty → makeItem synthesizes from the body (microblogs)
     author: (it.author && it.author.name) || (top.author && top.author.name) || (top.authors && top.authors[0] && top.authors[0].name) || undefined,
     published_at: toEpoch(it.date_published || it.date_modified),
     type: isPodcast ? 'podcast' : 'article',

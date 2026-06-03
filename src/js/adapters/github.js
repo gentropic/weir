@@ -65,7 +65,7 @@ export function parseGithub(text, opts = {}) {
       id: `${feed.id}:${id || link}`,
       feed_id: feed.id,
       url: link,
-      title: e.textOf('title') || '(untitled)',
+      title: e.textOf('title') || undefined,
       author: e.child('author')?.textOf('name') || undefined,
       published_at: ghEpoch(e.textOf('updated') || e.textOf('published')),
       type,
