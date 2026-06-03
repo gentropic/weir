@@ -37,6 +37,8 @@ export const DEFAULT_SETTINGS = {
   theme: 'switchboard-dark',
   fetch_full_content_default: false,
   rail_width: 240,                       // source rail width in px (drag to resize)
+  rail_order: null,                      // user's rail-section order (array of keys); null = default order
+  rail_collapsed: [],                    // collapsed rail sections (keys) — fold the body, keep the header
   density: 'comfortable',                // row density: 'comfortable' | 'compact'
   stream_layout: 'list',                 // stream layout: 'list' | 'gallery' (thumbnail grid)
   feed_stale_days: 120,                  // a feed quiet longer than this reads as "stale" in health

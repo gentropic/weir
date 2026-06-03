@@ -9,8 +9,8 @@
       <span class="name">@gcu/<b>weir</b></span>
     </div>
 
-    <nav class="rail-section">
-      <div class="rail-label">Views</div>
+    <nav class="rail-section" data-rail-section="views">
+      <div class="rail-label"><span class="sec-tog" title="Collapse section">▾</span> Views</div>
       <div class="navrow active" data-view="inbox"><span class="lbl"><span class="ico ico-inbox">⬓</span> Inbox</span><span class="count" id="count-inbox">0</span></div>
       <div class="navrow" data-view="saved"><span class="lbl"><span class="ico">★</span> saved</span><span class="count" id="count-saved">0</span></div>
       <div class="navrow" data-view="archived"><span class="lbl"><span class="ico">▤</span> archived</span><span class="count" id="count-archived">0</span></div>
@@ -24,24 +24,24 @@
       <div id="facets"></div>
     </div>
 
-    <div class="rail-section">
-      <div class="rail-label" id="sources-head">Sources<span class="rail-acts"><button id="src-collapse-all" class="btn-link" type="button" title="Collapse all folders">▸</button><button id="src-expand-all" class="btn-link" type="button" title="Expand all folders">▾</button></span></div>
+    <div class="rail-section" data-rail-section="sources">
+      <div class="rail-label" id="sources-head"><span class="sec-tog" title="Collapse section">▾</span> Sources<span class="rail-acts"><button id="src-collapse-all" class="btn-link" type="button" title="Collapse all folders">▸</button><button id="src-expand-all" class="btn-link" type="button" title="Expand all folders">▾</button></span></div>
       <input id="source-filter" class="source-filter" type="search" placeholder="filter sources…" spellcheck="false" autocomplete="off">
       <div id="sources"><div class="rail-empty">No sources yet</div></div>
     </div>
 
-    <div class="rail-section" id="routes-section" style="display:none">
-      <div class="rail-label">Routed</div>
+    <div class="rail-section" id="routes-section" data-rail-section="routed" style="display:none">
+      <div class="rail-label"><span class="sec-tog" title="Collapse section">▾</span> Routed</div>
       <div id="routes"></div>
     </div>
 
-    <div class="rail-section" id="tags-section" style="display:none">
-      <div class="rail-label" id="tags-head">Tags<span class="rail-acts"><button id="tags-manage" class="btn-link" type="button" title="Manage tags — rename, merge, color, delete">⚙</button></span></div>
+    <div class="rail-section" id="tags-section" data-rail-section="tags" style="display:none">
+      <div class="rail-label" id="tags-head"><span class="sec-tog" title="Collapse section">▾</span> Tags<span class="rail-acts"><button id="tags-manage" class="btn-link" type="button" title="Manage tags — rename, merge, color, delete">⚙</button></span></div>
       <div id="tags-list"></div>
     </div>
 
-    <div class="rail-section" id="stacks-section" style="display:none">
-      <div class="rail-label" id="stacks-head">Stacks<span class="rail-acts"><button id="stacks-newnote" class="btn-link" type="button" title="New note (n)">＋ note</button></span></div>
+    <div class="rail-section" id="stacks-section" data-rail-section="stacks" style="display:none">
+      <div class="rail-label" id="stacks-head"><span class="sec-tog" title="Collapse section">▾</span> Stacks<span class="rail-acts"><button id="stacks-newnote" class="btn-link" type="button" title="New note (n)">＋ note</button></span></div>
       <div id="stacks-tree"></div>
     </div>
 

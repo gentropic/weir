@@ -135,7 +135,21 @@ export class App {
     document.getElementById('src-expand-all')?.addEventListener('click', () => this.expandAllCats());
     const srcFilter = document.getElementById('source-filter');
     srcFilter?.addEventListener('input', () => { this.sourceFilter = srcFilter.value; this.renderRail(); });
-    document.getElementById('sources-head')?.addEventListener('contextmenu', (e) => { e.preventDefault(); this.railMenu(e.clientX, e.clientY); });
+
+    // Rail sections: chevron click → collapse; header right-click → move/collapse menu.
+    // Both in the CAPTURE phase so they beat the section's own handlers (e.g. the
+    // Stacks header's enterStacks, the Sources list's feed railMenu).
+    const railEl = document.querySelector('.rail');
+    railEl?.addEventListener('click', (e) => {
+      const tog = e.target.closest('.sec-tog'); if (!tog) return;
+      const sec = tog.closest('.rail-section[data-rail-section]'); if (!sec) return;
+      e.stopPropagation(); this.toggleRailSection(sec.dataset.railSection);
+    }, true);
+    railEl?.addEventListener('contextmenu', (e) => {
+      const label = e.target.closest('.rail-label'); if (!label) return;
+      const sec = label.closest('.rail-section[data-rail-section]'); if (!sec) return;
+      e.preventDefault(); e.stopPropagation(); this.railSectionMenu(sec.dataset.railSection, e.clientX, e.clientY);
+    }, true);
 
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
     document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
@@ -244,6 +258,7 @@ export class App {
     setInterval(() => this.renderPollStatus(), 30_000);
 
     this.renderAll();
+    this.applyRailLayout();   // restore the user's section order + collapsed-set
     if (this.store.getFeed('books')) this._ensureBooksView();   // back-fill the Books view for an existing books library
     this.renderNotify();
     this.renderPollStatus();
@@ -1658,6 +1673,66 @@ export class App {
       { sep: true },
       { label: 'Manage tags…', onClick: () => this.openTagManager() },
     ]);
+  }
+
+  // ── rail sections: collapse + reorder (persisted) ──
+  // The rail is an ordered list of collapsible sections. Order + collapsed-set live
+  // in settings so a user can pin Stacks up top, fold Sources away, etc.
+  _railSectionKeys() { return ['views', 'sources', 'routed', 'tags', 'stacks']; }
+  _railOrder() {
+    const all = this._railSectionKeys();
+    const saved = Array.isArray(this.store.getSettings().rail_order) ? this.store.getSettings().rail_order : [];
+    const order = saved.filter((k) => all.includes(k));
+    for (const k of all) if (!order.includes(k)) order.push(k);   // append any section new since the order was saved
+    return order;
+  }
+  // Reflect the saved order + collapsed-set onto the DOM. Only touches section
+  // wrappers (not their contents), so it's safe to run once at mount — renderRail/
+  // renderTags/etc. set inner HTML + the wrapper's display, never the order/collapse.
+  applyRailLayout() {
+    const aside = document.querySelector('.rail'); if (!aside) return;
+    const collapsed = new Set(this.store.getSettings().rail_collapsed || []);
+    const brand = aside.querySelector('.brand');
+    let anchor = brand;
+    for (const key of this._railOrder()) {
+      const sec = aside.querySelector(`.rail-section[data-rail-section="${key}"]`);
+      if (!sec) continue;
+      if (anchor) aside.insertBefore(sec, anchor.nextSibling); else aside.appendChild(sec);
+      anchor = sec;
+      sec.classList.toggle('collapsed', collapsed.has(key));
+      const tog = sec.querySelector('.sec-tog'); if (tog) tog.textContent = collapsed.has(key) ? '▸' : '▾';
+    }
+    // Keep the catalog facet browser glued to the Sources slot (it replaces Sources
+    // in catalog mode), so it lands wherever Sources sits.
+    const fac = document.getElementById('facets-section'); const src = aside.querySelector('.rail-section[data-rail-section="sources"]');
+    if (fac && src) aside.insertBefore(fac, src);
+  }
+  toggleRailSection(key) {
+    const c = new Set(this.store.getSettings().rail_collapsed || []);
+    c.has(key) ? c.delete(key) : c.add(key);
+    this.store.setSettings({ rail_collapsed: [...c] });
+    this.applyRailLayout();
+  }
+  moveRailSection(key, where) {
+    const order = this._railOrder(); const i = order.indexOf(key);
+    if (i < 0) return;
+    order.splice(i, 1);
+    const at = where === 'top' ? 0 : where === 'bottom' ? order.length : where === 'up' ? Math.max(0, i - 1) : Math.min(order.length, i + 1);
+    order.splice(at, 0, key);
+    this.store.setSettings({ rail_order: order });
+    this.applyRailLayout();
+  }
+  railSectionMenu(key, x, y) {
+    const collapsed = new Set(this.store.getSettings().rail_collapsed || []);
+    const order = this._railOrder(); const i = order.indexOf(key);
+    showMenu(x, y, [
+      { label: collapsed.has(key) ? 'Expand section' : 'Collapse section', onClick: () => this.toggleRailSection(key) },
+      { sep: true },
+      i > 0 && { label: 'Move up', onClick: () => this.moveRailSection(key, 'up') },
+      i >= 0 && i < order.length - 1 && { label: 'Move down', onClick: () => this.moveRailSection(key, 'down') },
+      i > 0 && { label: 'Move to top', onClick: () => this.moveRailSection(key, 'top') },
+      i >= 0 && i < order.length - 1 && { label: 'Move to bottom', onClick: () => this.moveRailSection(key, 'bottom') },
+    ].filter(Boolean));
   }
 
   // Reorder the feeds within a folder — a move up/down list that writes a manual
