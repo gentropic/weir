@@ -95,6 +95,18 @@ assert.ok(bytes && bytes.length === 4, 'file bytes read back');
   assert.equal(await store.vfs.exists('/stacks/inbox/data.csv'), false, 'old .csv removed after ext swap');
 }
 
+// ── a .md/.txt FILE stays a file across a rescan (sidecar guards it) ──
+{
+  const enc = new TextEncoder();
+  const md = await stacks.addFile({ name: 'dropped.md', bytes: enc.encode('# Dropped\n\nplain markdown content') });
+  assert.equal(md.type, 'file', '.md ingested as a file');
+  const r = await stacks.scan();
+  const rec = store.getItem(md.id);
+  assert.ok(rec && rec.type === 'file', '.md-with-sidecar stays a file on rescan (not re-read as a note)');
+  assert.equal(rec.uid, md.uid, 'uid stable across rescan');
+  assert.ok(!rec.missing, 'not flagged missing (no duplicate note)');
+}
+
 // ── missing → forget (never auto-delete) ──
 await store.vfs.unlink('/stacks/papers/raw.md');
 const r3 = await stacks.scan();
