@@ -219,7 +219,8 @@
         <h4>Claude (WebMCP)</h4>
         <div class="set-row"><span>status: <b id="set-webmcp-state">—</b></span><button class="btn-link" id="set-webmcp-toggle" type="button">connect</button></div>
         <label class="set-row">connection<input type="text" id="set-webmcp-conn" class="field" autocomplete="off" spellcheck="false" placeholder="port:token (e.g. 7801:…)"></label>
-        <div class="hint">Lets Claude Code read weir's corpus over localhost via <b>@gcu/webmcp</b> (read-only: query items, get an item, list facets). Run <code>node webmcp-bridge.js --app weir --port 7801 --info</code> in the webmcp repo to get the connection string, paste it, and connect — weir remembers it (origin-local, never in backups). Uses the same @gcu/bridge extension as the cataloger to reach localhost.</div>
+        <label class="set-row check"><input type="checkbox" id="set-mcp-feed-removal"> let Claude prune feeds (the weir_removeFeed tool — deletes a dead feed + its items; off = Claude can’t)</label>
+        <div class="hint">Lets Claude Code curate weir over localhost via <b>@gcu/webmcp</b> (query/tag items, manage feeds, write to the stacks). Run <code>node webmcp-bridge.js --app weir --port 7801 --info</code> in the webmcp repo to get the connection string, paste it, and connect — weir remembers it (origin-local, never in backups). Uses the same @gcu/bridge extension as the cataloger to reach localhost.</div>
       </section>
       <section class="set-group">
         <h4>Updates</h4>

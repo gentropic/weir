@@ -857,7 +857,8 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
         <h4>Claude (WebMCP)</h4>
         <div class="set-row"><span>status: <b id="set-webmcp-state">—</b></span><button class="btn-link" id="set-webmcp-toggle" type="button">connect</button></div>
         <label class="set-row">connection<input type="text" id="set-webmcp-conn" class="field" autocomplete="off" spellcheck="false" placeholder="port:token (e.g. 7801:…)"></label>
-        <div class="hint">Lets Claude Code read weir's corpus over localhost via <b>@gcu/webmcp</b> (read-only: query items, get an item, list facets). Run <code>node webmcp-bridge.js --app weir --port 7801 --info</code> in the webmcp repo to get the connection string, paste it, and connect — weir remembers it (origin-local, never in backups). Uses the same @gcu/bridge extension as the cataloger to reach localhost.</div>
+        <label class="set-row check"><input type="checkbox" id="set-mcp-feed-removal"> let Claude prune feeds (the weir_removeFeed tool — deletes a dead feed + its items; off = Claude can’t)</label>
+        <div class="hint">Lets Claude Code curate weir over localhost via <b>@gcu/webmcp</b> (query/tag items, manage feeds, write to the stacks). Run <code>node webmcp-bridge.js --app weir --port 7801 --info</code> in the webmcp repo to get the connection string, paste it, and connect — weir remembers it (origin-local, never in backups). Uses the same @gcu/bridge extension as the cataloger to reach localhost.</div>
       </section>
       <section class="set-group">
         <h4>Updates</h4>
@@ -7531,6 +7532,7 @@ const DEFAULT_SETTINGS = {
   telegram_allowed_id: 0,                // owner's Telegram user id — only ingest from you (0 = auto-bind on first message)
   catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
+  mcp_allow_feed_removal: true,          // let the weir_removeFeed MCP tool hard-delete a feed (+ its items); off = Claude can't prune feeds
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
   retention_enabled: false,
@@ -15136,6 +15138,7 @@ class App {
     val('set-tg-allowed', s.telegram_allowed_id || '');
     { const k = document.getElementById('set-tg-token'); if (k) { k.value = ''; hasKey('telegram').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     if (this.telegram) this.renderTelegramStatus(this.telegram.status);
+    chk('set-mcp-feed-removal', s.mcp_allow_feed_removal);
     chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
     val('set-wb-interval', Math.round(s.wayback_min_interval_ms / 1000));
@@ -15296,6 +15299,7 @@ class App {
       retention_enabled: chk('set-retention'),
       telegram_enabled: chk('set-tg-enabled'),
       telegram_allowed_id: parseInt(document.getElementById('set-tg-allowed')?.value, 10) || 0,
+      mcp_allow_feed_removal: chk('set-mcp-feed-removal'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
       wayback_min_interval_ms: Math.max(1000, num('set-wb-interval', 5) * 1000),
@@ -15935,6 +15939,20 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { id: f.id, ...patch, ...(repoll ? { repoll } : {}) };
   }
 
+  // Unsubscribe + delete a feed (and its items) — for pruning dead/moved sources during
+  // a curation sweep. DESTRUCTIVE + not reversible (no trash, unlike the stacks). Gated
+  // behind the `mcp_allow_feed_removal` setting so the user can switch this capability
+  // off entirely. Returns { removed, items } (item count erased).
+  async function removeFeed(input = {}) {
+    if (!store.getSettings().mcp_allow_feed_removal) throw new Error('feed removal over MCP is disabled (Settings → “let Claude prune feeds”). Remove it in the UI instead (right-click → Remove feed).');
+    const f = input.id != null && store.getFeed(String(input.id));
+    if (!f) throw new Error(`No feed "${input.id}". Use weir_listSources for ids.`);
+    const items = (store.byFeed.get(f.id) || new Set()).size;
+    await store.removeFeed(f.id);
+    if (app && app.renderAll) app.renderAll();
+    return { removed: f.id, name: f.name, items };
+  }
+
   // Kick the background link resolver — resolve wrapped saved links (share.google
   // etc.) to their real url + fetch thumbnail/title metadata, gently over time.
   async function resolveLinks() {
@@ -16058,7 +16076,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -16117,6 +16135,12 @@ const TOOLS = [
       }, required: ['id'],
     },
     annotations: { title: 'Update a feed' },
+  },
+  {
+    name: 'weir_removeFeed', fn: 'removeFeed',
+    description: 'Unsubscribe and DELETE a feed and its items — for pruning dead/moved sources (DNS-gone, TLS-dead, 404) during a curation sweep. Destructive + NOT reversible (no trash, unlike the stacks). Gated behind a user setting; if disabled, errors and points to the UI. Confirm with the user before calling. Returns { removed, name, items }.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Feed id (from weir_listSources)' } }, required: ['id'] },
+    annotations: { title: 'Remove a feed', destructiveHint: true },
   },
   {
     name: 'weir_resolveLinks', fn: 'resolveLinks',
@@ -16403,7 +16427,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'e46c68a';          // short content hash of the bundle (build id)
+const COMMIT = '170f571';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

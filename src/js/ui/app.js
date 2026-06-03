@@ -2794,6 +2794,7 @@ export class App {
     val('set-tg-allowed', s.telegram_allowed_id || '');
     { const k = document.getElementById('set-tg-token'); if (k) { k.value = ''; hasKey('telegram').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     if (this.telegram) this.renderTelegramStatus(this.telegram.status);
+    chk('set-mcp-feed-removal', s.mcp_allow_feed_removal);
     chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
     val('set-wb-interval', Math.round(s.wayback_min_interval_ms / 1000));
@@ -2954,6 +2955,7 @@ export class App {
       retention_enabled: chk('set-retention'),
       telegram_enabled: chk('set-tg-enabled'),
       telegram_allowed_id: parseInt(document.getElementById('set-tg-allowed')?.value, 10) || 0,
+      mcp_allow_feed_removal: chk('set-mcp-feed-removal'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
       wayback_min_interval_ms: Math.max(1000, num('set-wb-interval', 5) * 1000),

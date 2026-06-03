@@ -139,6 +139,17 @@ assert.equal(ls2.health.failing, 1, 'health tally counts the failing feed');
 const ff = (ls2.troubled || []).find((x) => x.id === 'f');
 assert.ok(ff && ff.fails === 3 && ff.lastError === 'HTTP 500', 'troubled list surfaces fails + last error');
 
+// ── removeFeed: gated on the mcp_allow_feed_removal setting; deletes feed + items ──
+await store.putFeed({ id: 'dead', name: 'Dead Feed', adapter: 'feed', url: 'http://dead/f' });
+await store.upsertItems([{ id: 'd1', feed_id: 'dead', type: 'article', title: 'old' }]);
+const rm = await tools.removeFeed({ id: 'dead' });
+assert.equal(rm.removed, 'dead'); assert.ok(rm.items >= 1, 'reports erased item count');
+assert.equal(store.getFeed('dead'), null, 'feed gone after removeFeed');
+await store.setSettings({ mcp_allow_feed_removal: false });
+await store.putFeed({ id: 'dead2', name: 'D2', adapter: 'feed', url: 'http://d2/f' });
+await assert.rejects(tools.removeFeed({ id: 'dead2' }), /disabled/, 'gated off → refuses, points to UI');
+await store.setSettings({ mcp_allow_feed_removal: true });
+
 // ── catalog control (mock app) ──
 const calls = [];
 const mockApp = {

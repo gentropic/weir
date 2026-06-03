@@ -460,6 +460,20 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { id: f.id, ...patch, ...(repoll ? { repoll } : {}) };
   }
 
+  // Unsubscribe + delete a feed (and its items) — for pruning dead/moved sources during
+  // a curation sweep. DESTRUCTIVE + not reversible (no trash, unlike the stacks). Gated
+  // behind the `mcp_allow_feed_removal` setting so the user can switch this capability
+  // off entirely. Returns { removed, items } (item count erased).
+  async function removeFeed(input = {}) {
+    if (!store.getSettings().mcp_allow_feed_removal) throw new Error('feed removal over MCP is disabled (Settings → “let Claude prune feeds”). Remove it in the UI instead (right-click → Remove feed).');
+    const f = input.id != null && store.getFeed(String(input.id));
+    if (!f) throw new Error(`No feed "${input.id}". Use weir_listSources for ids.`);
+    const items = (store.byFeed.get(f.id) || new Set()).size;
+    await store.removeFeed(f.id);
+    if (app && app.renderAll) app.renderAll();
+    return { removed: f.id, name: f.name, items };
+  }
+
   // Kick the background link resolver — resolve wrapped saved links (share.google
   // etc.) to their real url + fetch thumbnail/title metadata, gently over time.
   async function resolveLinks() {
@@ -583,7 +597,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -642,6 +656,12 @@ const TOOLS = [
       }, required: ['id'],
     },
     annotations: { title: 'Update a feed' },
+  },
+  {
+    name: 'weir_removeFeed', fn: 'removeFeed',
+    description: 'Unsubscribe and DELETE a feed and its items — for pruning dead/moved sources (DNS-gone, TLS-dead, 404) during a curation sweep. Destructive + NOT reversible (no trash, unlike the stacks). Gated behind a user setting; if disabled, errors and points to the UI. Confirm with the user before calling. Returns { removed, name, items }.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Feed id (from weir_listSources)' } }, required: ['id'] },
+    annotations: { title: 'Remove a feed', destructiveHint: true },
   },
   {
     name: 'weir_resolveLinks', fn: 'resolveLinks',
