@@ -578,8 +578,10 @@ export class Store {
   // identity is the stable `uid` (id = `stacks:<uid>`) and its body lives at the
   // real tree path. syncStacksEntry upserts WITHOUT resetting read/saved/human
   // state on re-scan (the never-reset rule, SPEC §5 dedup), and tags from the
-  // file (frontmatter/sidecar) union with what's already there.
-  syncStacksEntry(e) {
+  // file (frontmatter/sidecar) union with what's already there — EXCEPT when
+  // opts.replaceTags is set (an authoritative save), where the given tags become the
+  // exact set (so a save can remove a tag, not only add).
+  syncStacksEntry(e, opts = {}) {
     const id = `stacks:${e.uid}`;
     const fileTags = Array.isArray(e.tags) ? e.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean) : [];
     let rec = this.items.get(id);
@@ -603,8 +605,17 @@ export class Store {
       if (e.excerpt != null) rec.excerpt = e.excerpt;
       rec.missing = false;
       rec.has_content = true;
-      // union file tags in (additive — never drop human/llm tags already on the item)
-      for (const t of fileTags) if (!rec.tags.includes(t)) { rec.tags = [...rec.tags, t]; rec.tag_src = { ...(rec.tag_src || {}), [t]: 'file' }; }
+      if (opts.replaceTags) {
+        // authoritative save → the given tags are the exact set (keep prior source
+        // for surviving tags, 'file' for new; drop the rest)
+        const src = {};
+        for (const t of fileTags) src[t] = (rec.tag_src && rec.tag_src[t]) || 'file';
+        rec.tags = fileTags;
+        rec.tag_src = Object.keys(src).length ? src : undefined;
+      } else {
+        // scan/move → union additively, never dropping human/llm tags already on the item
+        for (const t of fileTags) if (!rec.tags.includes(t)) { rec.tags = [...rec.tags, t]; rec.tag_src = { ...(rec.tag_src || {}), [t]: 'file' }; }
+      }
       rec.search_text = deriveSearchText(rec);
     }
     this._markFeedDirty('stacks');

@@ -8715,8 +8715,10 @@ class Store {
   // identity is the stable `uid` (id = `stacks:<uid>`) and its body lives at the
   // real tree path. syncStacksEntry upserts WITHOUT resetting read/saved/human
   // state on re-scan (the never-reset rule, SPEC §5 dedup), and tags from the
-  // file (frontmatter/sidecar) union with what's already there.
-  syncStacksEntry(e) {
+  // file (frontmatter/sidecar) union with what's already there — EXCEPT when
+  // opts.replaceTags is set (an authoritative save), where the given tags become the
+  // exact set (so a save can remove a tag, not only add).
+  syncStacksEntry(e, opts = {}) {
     const id = `stacks:${e.uid}`;
     const fileTags = Array.isArray(e.tags) ? e.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean) : [];
     let rec = this.items.get(id);
@@ -8740,8 +8742,17 @@ class Store {
       if (e.excerpt != null) rec.excerpt = e.excerpt;
       rec.missing = false;
       rec.has_content = true;
-      // union file tags in (additive — never drop human/llm tags already on the item)
-      for (const t of fileTags) if (!rec.tags.includes(t)) { rec.tags = [...rec.tags, t]; rec.tag_src = { ...(rec.tag_src || {}), [t]: 'file' }; }
+      if (opts.replaceTags) {
+        // authoritative save → the given tags are the exact set (keep prior source
+        // for surviving tags, 'file' for new; drop the rest)
+        const src = {};
+        for (const t of fileTags) src[t] = (rec.tag_src && rec.tag_src[t]) || 'file';
+        rec.tags = fileTags;
+        rec.tag_src = Object.keys(src).length ? src : undefined;
+      } else {
+        // scan/move → union additively, never dropping human/llm tags already on the item
+        for (const t of fileTags) if (!rec.tags.includes(t)) { rec.tags = [...rec.tags, t]; rec.tag_src = { ...(rec.tag_src || {}), [t]: 'file' }; }
+      }
       rec.search_text = deriveSearchText(rec);
     }
     this._markFeedDirty('stacks');
@@ -9307,7 +9318,9 @@ class StacksStore {
     const nextTags = tags != null ? tags : (Array.isArray(data.tags) ? data.tags : (item.tags || []));
     const fm = this._fmEmit({ ...data, uid, title: nextTitle, tags: nextTags, created: new Date(created).toISOString() });
     await this._writeText(abs, `---\n${fm}---\n\n${String(markdown).trim()}\n`);
-    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300) });
+    // replaceTags: a save is authoritative over the entry's tag set (so it can remove,
+    // not just add) — unlike a scan, which unions to protect human/llm tags.
+    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300) }, { replaceTags: true });
     this.store.emit('item', { id: rec.id });
     return rec;
   }
@@ -15897,7 +15910,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '46c451e';          // short content hash of the bundle (build id)
+const COMMIT = 'e11db62';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

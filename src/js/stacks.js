@@ -245,7 +245,9 @@ export class StacksStore {
     const nextTags = tags != null ? tags : (Array.isArray(data.tags) ? data.tags : (item.tags || []));
     const fm = this._fmEmit({ ...data, uid, title: nextTitle, tags: nextTags, created: new Date(created).toISOString() });
     await this._writeText(abs, `---\n${fm}---\n\n${String(markdown).trim()}\n`);
-    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300) });
+    // replaceTags: a save is authoritative over the entry's tag set (so it can remove,
+    // not just add) — unlike a scan, which unions to protect human/llm tags.
+    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300) }, { replaceTags: true });
     this.store.emit('item', { id: rec.id });
     return rec;
   }

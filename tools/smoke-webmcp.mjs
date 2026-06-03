@@ -195,6 +195,10 @@ assert.equal(lm.count, 2); assert.deepEqual(lm.models, ['m1', 'm2'], 'models lis
   const w2 = await st.stacksWrite({ path: 'specs/weir/idea.md', markdown: '# Idea v2\n\nupdated.' });
   assert.equal(w2.uid, w.uid, 'update kept the uid (no dupe)');
   assert.match((await st.stacksRead({ path: 'specs/weir/idea.md' })).markdown, /v2/, 'body updated in place');
+  // authoritative save REPLACES the tag set (can remove, not only add)
+  const w3 = await st.stacksWrite({ path: 'specs/weir/idea.md', markdown: '# Idea v3', tags: ['spec', 'kept'] });
+  assert.deepEqual(w3.tags.slice().sort(), ['kept', 'spec'], 'write set the new tag list');
+  assert.deepEqual(s.getItem(w.id).tags.slice().sort(), ['kept', 'spec'], 'and dropped "weir" (replace, not union)');
 
   // tag → mirrored to frontmatter on disk
   await st.stacksTag({ path: 'specs/weir/idea.md', add: ['Reviewed'], remove: ['weir'] });
