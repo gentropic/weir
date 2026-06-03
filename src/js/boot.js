@@ -17,6 +17,7 @@ import { SearchIndex } from './search.js';
 import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
 import { TelegramInflux } from './telegram.js';
+import { BackgroundRunner } from './runner.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
 import { githubAdapter } from './adapters/github.js';
@@ -126,12 +127,18 @@ async function boot() {
   // Background link resolver — politely resolves wrapped saved links (share.google
   // etc.) over time, so imports never have to burst-hit (and get throttled by) the
   // shortener. Resumes any unresolved links from prior imports.
-  const linkResolver = new LinkResolver(store, { fetch: gcuFetch, extract: extractArticle });
+  // One runner drives every background loop, so the flight-deck keep-alive is a
+  // single switch (setDriver) and new loops can't forget to be kept alive.
+  const runner = new BackgroundRunner();
+  app.runner = runner;
+
+  const linkResolver = new LinkResolver(store, { fetch: gcuFetch, extract: extractArticle, onKick: () => runner.kick('resolver') });
   app.linkResolver = linkResolver;
   await linkResolver._loadLog();   // resume the run log (so the overnight tally survives reloads)
   linkResolver.on((st) => app.renderResolverStatus(st));
   app.renderResolverStatus(linkResolver.status());
-  linkResolver.kick();
+  runner.add({ name: 'resolver', intervalMs: linkResolver.intervalMs, tick: () => linkResolver.tick(), enabled: () => linkResolver.enabled() });
+  linkResolver.kick();   // clear misses + (via onKick) an immediate run
 
   // Telegram influxer — poll a weir-only bot's getUpdates (direct fetch; CORS-ok)
   // for live captures: links → Saved Links (resolved), notes → stashed. Token in the
@@ -142,7 +149,8 @@ async function boot() {
   });
   app.telegram = telegram;
   telegram.on((st) => app.renderTelegramStatus(st));
-  if (store.getSettings().telegram_enabled && await getKey('telegram')) telegram.start();
+  runner.add({ name: 'telegram', intervalMs: telegram.intervalMs, tick: () => telegram.tick(), enabled: () => telegram.enabled() });
+  if (store.getSettings().telegram_enabled && await getKey('telegram')) { telegram.start(); runner.kick('telegram'); }
   app.renderTelegramStatus(telegram.status);   // reflect enabled/polling in the footer from the start
 
   window.__weir = { store, poller, router, drip, retainer, linkResolver, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),

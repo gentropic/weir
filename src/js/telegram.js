@@ -21,7 +21,6 @@ export class TelegramInflux {
     this.getToken = getToken;
     this.onLinks = onLinks;        // (links[]) => Promise, usually app.importLinks
     this.intervalMs = intervalMs;
-    this._timer = null; this._busy = false;
     this.status = { enabled: false, bot: null, bound: null, lastPoll: null, captured: 0, notes: 0, ignored: 0, error: null };
     this._listeners = new Set();
   }
@@ -32,14 +31,11 @@ export class TelegramInflux {
   _offset() { return this.store.getSettings().telegram_offset || 0; }
   _setOffset(n) { return this.store.setSettings({ telegram_offset: n }); }
 
-  start() {
-    if (this._timer) return;
-    this.status.enabled = true; this._emit();
-    this._timer = setInterval(() => this.tick().catch(() => {}), this.intervalMs);
-    if (this._timer && typeof this._timer.unref === 'function') this._timer.unref();
-    this.tick().catch(() => {});
-  }
-  stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } this.status.enabled = false; this._emit(); }
+  // Runner-driven: start/stop just flip `enabled` (the BackgroundRunner owns the
+  // timer + keep-alive). enabled() gates whether the runner ticks us.
+  enabled() { return this.status.enabled; }
+  start() { this.status.enabled = true; this._emit(); }
+  stop() { this.status.enabled = false; this._emit(); }
 
   // One-time check for the settings UI: confirm the token + grab the bot's @username.
   async verify(token) {
@@ -66,25 +62,13 @@ export class TelegramInflux {
     this.fetch(`${TG_API}/bot${this._token}/setMessageReaction?chat_id=${msg.chat.id}&message_id=${msg.message_id}&reaction=${reaction}`).catch(() => {});
   }
 
-  // Drive polling from the flight-deck PiP window's always-visible (un-throttled)
-  // timer, so live capture keeps up at full speed even when the main tab is hidden —
-  // same trick the poller/resolver use. `win` = the PiP window, or null to detach.
-  setKeepAlive(win) {
-    if (this._kaTimer && this._kaWin) { try { this._kaWin.clearInterval(this._kaTimer); } catch { /* window gone */ } }
-    this._kaTimer = null; this._kaWin = null;
-    if (win) { this._kaWin = win; this._kaTimer = win.setInterval(() => this.tick().catch(() => {}), this.intervalMs); this.tick().catch(() => {}); }
-  }
-
+  // The runner calls this on its cadence (busy-guard + enabled() are the runner's
+  // job). It's a CAPTURE pipe — you send from your phone while NOT looking at weir —
+  // so it polls backgrounded too; the flight-deck driver restores full speed.
   async tick() {
-    if (this._busy) return;
-    // No hidden-tab guard: this is a CAPTURE pipe — you send from your phone while
-    // NOT looking at weir, so it must poll backgrounded too. (Hidden tabs throttle
-    // the interval to ~1/min; the flight-deck keepalive restores full speed.)
-    if (!this.status.enabled) return;
     const token = this.getToken ? await this.getToken() : null;
     if (!token) return;
     this._token = token;
-    this._busy = true;
     try {
       const offset = this._offset();
       const r = await this.fetch(`${TG_API}/bot${token}/getUpdates?timeout=0&offset=${offset}&allowed_updates=${encodeURIComponent('["message"]')}`);
@@ -118,6 +102,6 @@ export class TelegramInflux {
       this._emit();
     } catch (e) {
       this.status.error = String((e && e.message) || e); this._emit();
-    } finally { this._busy = false; }
+    }
   }
 }

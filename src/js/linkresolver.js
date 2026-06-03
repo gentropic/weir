@@ -54,11 +54,12 @@ function absUrl(href, base) { try { return new URL(href, base).href; } catch { r
 function lrHostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return String(u).slice(0, 48); } }
 
 export class LinkResolver {
-  constructor(store, { fetch, extract, intervalMs = 15_000, batch = 2, maxMisses = 8 } = {}) {
+  constructor(store, { fetch, extract, intervalMs = 15_000, batch = 2, maxMisses = 8, onKick } = {}) {
     this.store = store;
     this.fetch = fetch;
     this.extract = extract || null;   // readability extractor (browser-only; injected so node tests can omit it)
     this.intervalMs = intervalMs;
+    this._onKick = onKick || null;    // boot wires this to runner.kick('resolver') for an immediate run after an import
     this.batch = batch;
     this.maxMisses = maxMisses;     // park a link after this many failed ticks (until the next kick / reload)
     this._misses = new Map();       // id → consecutive miss count
@@ -68,23 +69,12 @@ export class LinkResolver {
     // (so share.google throttling shows up); recent = the last few parked links.
     this.log = { resolved: 0, parked: 0, reasons: {}, recent: [], startedAt: null, updatedAt: null };
     this._lastLogSave = 0;
-    this._timer = null; this._busy = false; this._listeners = new Set();
-    this._keepAlive = false; this._keepAliveTimer = null; this._keepAliveWin = null;
+    this._busy = false; this._listeners = new Set();
   }
 
-  // Drive ticks from the flight-deck PiP window's timer (always-visible →
-  // un-throttled) so resolving continues while the main tab is backgrounded —
-  // same trick the poller uses. `win` = the PiP window, or null to detach.
-  setKeepAlive(win) {
-    if (this._keepAliveTimer && this._keepAliveWin) { try { this._keepAliveWin.clearInterval(this._keepAliveTimer); } catch { /* window gone */ } }
-    this._keepAliveTimer = null; this._keepAliveWin = null; this._keepAlive = !!win;
-    if (win) {
-      this._keepAliveWin = win;
-      this._keepAliveTimer = win.setInterval(() => this.tick().catch(() => {}), this.intervalMs);
-      if (this._pending().length) this.start();
-      this.tick().catch(() => {});
-    }
-  }
+  // Runner-driven: there's work to do iff something's still pending. The
+  // BackgroundRunner owns the timer + keep-alive; this gates whether it ticks us.
+  enabled() { return this._pending().length > 0; }
 
   on(fn) { this._listeners.add(fn); return () => this._listeners.delete(fn); }
   emit() { const st = this.status(); this._listeners.forEach((fn) => { try { fn(st); } catch { /* ignore */ } }); }
@@ -121,9 +111,9 @@ export class LinkResolver {
     }
   }
 
-  // (Re)start resolving — called at boot and after each import. Clears the
-  // parked-misses so a fresh import retries everything (throttle may have lifted).
-  kick() { this._misses.clear(); if (!this.log.startedAt) this.log.startedAt = Date.now(); if (!this._timer && this._pending().length) this.start(); }
+  // After an import: clear the parked-misses so a fresh import retries everything
+  // (throttle may have lifted), then ask the runner for an immediate run (onKick).
+  kick() { this._misses.clear(); if (!this.log.startedAt) this.log.startedAt = Date.now(); this._onKick?.(); }
 
   // ── rework ── Clear the `enriched` flag on saved links matching `matchFn` so
   // the drip re-fetches + re-applies metadata (after improving the title logic /
@@ -139,14 +129,8 @@ export class LinkResolver {
   // og:title is applied after isWeakTitle is improved (the "Source: X" fix).
   reEnrichWeakTitles() { return this.reEnrich((r) => r.enriched && isWeakTitle(r.title, r.url)); }
 
-  start() {
-    if (this._timer) return;
-    this._timer = setInterval(() => this.tick().catch((e) => console.error('linkresolver', e)), this.intervalMs);
-    if (this._timer && typeof this._timer.unref === 'function') this._timer.unref();
-    this.emit();
-    this.tick().catch(() => {});
-  }
-  stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } this._saveLog(true); this.emit(); }
+  // Flush the run log (e.g. on pagehide). No timer to clear — the runner owns it.
+  stop() { this._saveLog(true); this.emit(); }
 
   // Fetch a saved link's page once and do both jobs from the single response:
   // follow redirects to the real url (if it's a wrapper) AND parse OpenGraph
@@ -181,14 +165,11 @@ export class LinkResolver {
   }
 
   async tick() {
-    if (this._busy) return;
-    // Pause when the main tab is hidden — UNLESS the flight-deck is keeping us
-    // alive through its always-visible PiP timer.
-    if (!this._keepAlive && typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    if (this._busy) return;   // belt-and-suspenders alongside the runner's own guard
     this._busy = true;
     try {
       const batch = this._pending().slice(0, this.batch);
-      if (!batch.length) { this.stop(); return; }
+      if (!batch.length) { this._saveLog(); return; }
       let changed = 0;
       for (const it of batch) {
         const res = await this.enrichOne(it);

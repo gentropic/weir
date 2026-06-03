@@ -696,9 +696,8 @@ export class App {
     }
     // Keep the saved-link resolver dripping through the deck's (un-throttled,
     // always-visible) timer too, so a backgrounded tab keeps resolving/enriching.
-    this.linkResolver?.setKeepAlive(pip);
-    this.telegram?.setKeepAlive(pip);
-    pip.addEventListener('pagehide', () => { this._pipWin = null; this.poller.setKeepAlive(null); this.linkResolver?.setKeepAlive(null); this.telegram?.setKeepAlive(null); if (this._deckPollOff) { this._deckPollOff(); this._deckPollOff = null; } });
+    this.runner?.setDriver(pip);   // one switch drives the resolver, telegram, + any future loop
+    pip.addEventListener('pagehide', () => { this._pipWin = null; this.poller.setKeepAlive(null); this.runner?.setDriver(null); if (this._deckPollOff) { this._deckPollOff(); this._deckPollOff = null; } });
     pip.document.getElementById('flightdeck').addEventListener('click', (e) => {
       if (e.target.closest('[data-fd-pin]')) { this._pinDeck(); return; }
       if (e.target.closest('[data-fd-reset]')) { this.store.setSettings({ flightdeck_scope: null }); this._fdSig = null; this._renderFlightDeck(); return; }
@@ -2459,7 +2458,7 @@ export class App {
     if (keyVal) { await saveKey(patch.catalog_provider, keyVal); const k = document.getElementById('set-cat-key'); if (k) k.value = ''; }
     { const tg = document.getElementById('set-tg-token')?.value; if (tg) { await saveKey('telegram', tg); const t = document.getElementById('set-tg-token'); if (t) t.value = ''; } }
     if (this.telegram) {   // (re)start or stop the influxer to match the new setting
-      if (patch.telegram_enabled && await getKey('telegram')) this.telegram.start(); else this.telegram.stop();
+      if (patch.telegram_enabled && await getKey('telegram')) { this.telegram.start(); this.runner?.kick('telegram'); } else this.telegram.stop();
     }
     this._setDensity(patch.density);
     setAutoCheck(patch.auto_check_updates);   // push the preference to the SW
