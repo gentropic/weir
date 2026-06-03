@@ -2723,7 +2723,7 @@ export class App {
   // ── feed archaeology (Wayback recovery) ──
   async recoverHistory(feedId) {
     const feed = this.store.getFeed(feedId);
-    if (!feed) return;
+    if (!feed) return { error: 'no such feed' };
     const s = this.store.getSettings();
     const btn = document.getElementById('btn-recover');
     const setPoll = (t) => { const el = document.getElementById('poll-status'); if (el) el.textContent = t; };
@@ -2739,8 +2739,10 @@ export class App {
       await this.store.flush();
       setPoll(`recovered ${up.inserted} new from ${r.fetched}/${r.total} snapshots${r.failed ? ` (${r.failed} failed)` : ''}`);
       this.renderAll();
+      return { inserted: up.inserted, updated: up.updated, fetched: r.fetched, total: r.total, failed: r.failed };
     } catch (e) {
       setPoll(`recovery failed: ${e.message}`);
+      return { error: e.message };
     } finally {
       if (btn) btn.disabled = false;
     }

@@ -139,6 +139,7 @@ async function boot() {
 
   // Background IA recovery drip — resumes if there's pending work from last time.
   const drip = new RecoveryDrip(store, { fetch: gcuFetch, parseFeed, intervalMs: store.getSettings().recovery_drip_interval_ms });
+  app.recovery = drip;   // expose for the MCP weir_recover tool (queue dead feeds for archival recovery)
   await drip.load();
   drip.on((st) => app.renderDripStatus(st));
   app.renderDripStatus(drip.status());

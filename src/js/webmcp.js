@@ -512,6 +512,33 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { id: f.id, ...(result || { skipped: 'already polling' }) };
   }
 
+  // Recover a dead/truncated feed's lost history from the Internet Archive
+  // (Wayback): find old snapshots of the feed URL, re-parse their items, store
+  // them (archived history preserved — nothing is deleted). Default QUEUES feed(s)
+  // into the gentle background drip (one IA request every few minutes, resumes
+  // across restarts) — the right tool for a batch; a foreground burst over many
+  // feeds would hammer archive.org. `now:true` recovers a single `id` immediately
+  // (throttled burst) and returns counts — good for proving one feed before
+  // committing a batch. Scope by id / ids[] / category.
+  async function recover(input = {}) {
+    if (!app || !app.recovery) throw new Error('recovery is only available in the running app');
+    if (input.now) {
+      const f = input.id != null && store.getFeed(String(input.id));
+      if (!f) throw new Error(`No feed "${input.id}". Pass an id (from weir_listSources) with now:true.`);
+      const r = await app.recoverHistory(f.id);   // foreground burst → counts
+      return { mode: 'now', id: f.id, ...(r || {}) };
+    }
+    let ids = [];
+    if (input.id != null) ids = [String(input.id)];
+    else if (Array.isArray(input.ids)) ids = input.ids.map(String);
+    else if (input.category != null) ids = store.listFeeds().filter((f) => (f.category || '') === String(input.category)).map((f) => f.id);
+    else throw new Error('pass id, ids[], or category to queue for recovery (or { now:true, id } for an immediate single recover)');
+    ids = ids.filter((id) => store.getFeed(id));
+    if (!ids.length) throw new Error('no matching feeds to recover');
+    await app.recovery.enqueue(ids);
+    return { mode: 'drip', queued: ids.length, status: app.recovery.status() };
+  }
+
   // Kick the background link resolver — resolve wrapped saved links (share.google
   // etc.) to their real url + fetch thumbnail/title metadata, gently over time.
   async function resolveLinks() {
@@ -635,7 +662,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -717,6 +744,19 @@ const TOOLS = [
     description: 'Force a fresh poll of one feed right now, bypassing conditional-GET so the full body re-parses even if nothing changed — re-derives titles, picks up edits. The clean way to refresh a feed (does NOT reset validators or schedule, unlike changing the URL). Use it to heal a microblog feed reading as "(untitled)", or to pull a feed immediately. Returns { id, inserted, updated, skipped } or { error }.',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Feed id (from weir_listSources)' } }, required: ['id'] },
     annotations: { title: 'Force-refresh a feed' },
+  },
+  {
+    name: 'weir_recover', fn: 'recover',
+    description: 'Recover a dead/truncated feed\'s lost history from the Internet Archive (Wayback Machine): finds old snapshots of the feed URL, re-parses their items, and stores them — archived history preserved, nothing deleted. Default QUEUES feed(s) into a gentle background drip (one IA request every few minutes, resumes across restarts) — the right tool for a batch of dead feeds; `now:true` recovers a single feed immediately as a throttled burst and returns counts (good for proving one feed before queuing many). Scope by id, ids[], or category. Returns recovery counts (now) or drip status (queued). Pairs with never-delete: recover the data, keep the feed, don\'t prune.',
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'A single feed id (from weir_listSources)' },
+        ids: { type: 'array', items: { type: 'string' }, description: 'Multiple feed ids to queue into the drip' },
+        category: { type: 'string', description: 'Queue every feed in this folder' },
+        now: { type: 'boolean', description: 'Recover the single `id` immediately (foreground burst) instead of queuing the background drip' },
+      },
+    },
+    annotations: { title: 'Recover feed history (Wayback)' },
   },
   {
     name: 'weir_resolveLinks', fn: 'resolveLinks',

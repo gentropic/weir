@@ -180,6 +180,35 @@ await assert.rejects(tools.repoll({ id: 'f' }), /only available/, 'repoll needs 
   await assert.rejects(rpTools.repoll({ id: 'nope' }), /No feed/, 'unknown feed errors');
 }
 
+// ── recover: queue dead feeds for Wayback recovery (drip) or recover one now ──
+await assert.rejects(tools.recover({ id: 'f' }), /only available/, 'recover needs the running app');
+{
+  const queued = [];
+  let recoveredNow = null;
+  const recApp = {
+    recovery: { enqueue: async (ids) => { queued.push(...ids); }, status: () => ({ queued: queued.length, current: null, done: 0, running: false }) },
+    recoverHistory: async (id) => { recoveredNow = id; return { inserted: 7, fetched: 12, total: 40 }; },
+  };
+  await store.putFeed({ id: 'dead-a', name: 'Dead A', adapter: 'feed', url: 'http://a/f', category: 'gone' });
+  await store.putFeed({ id: 'dead-b', name: 'Dead B', adapter: 'feed', url: 'http://b/f', category: 'gone' });
+  const recTools = buildWeirTools({ store, app: recApp });
+  // queue a list
+  const ql = await recTools.recover({ ids: ['dead-a', 'dead-b', 'ghost'] });
+  assert.equal(ql.mode, 'drip', 'default mode queues the drip');
+  assert.equal(ql.queued, 2, 'only existing feeds queued (ghost dropped)');
+  assert.deepEqual(queued, ['dead-a', 'dead-b'], 'enqueued the real ids');
+  // queue a whole category
+  const qc = await recTools.recover({ category: 'gone' });
+  assert.equal(qc.queued, 2, 'category queues both feeds in the folder');
+  // recover one NOW (foreground)
+  const rn = await recTools.recover({ id: 'dead-a', now: true });
+  assert.equal(rn.mode, 'now'); assert.equal(rn.inserted, 7, 'now-mode returns recovery counts');
+  assert.equal(recoveredNow, 'dead-a', 'foreground recoverHistory invoked for the feed');
+  await assert.rejects(recTools.recover({}), /id, ids\[\], or category/, 'needs a scope');
+  await assert.rejects(recTools.recover({ ids: ['ghost'] }), /no matching feeds/, 'all-unknown → errors');
+  await store.removeFeed('dead-a'); await store.removeFeed('dead-b');   // restore baseline
+}
+
 // ── catalog control (mock app) ──
 const calls = [];
 const mockApp = {
