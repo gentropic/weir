@@ -117,7 +117,11 @@ the trigger/query layer on top.
   that doesn't overflow), maybe **grouped tabs or an accordion** instead of one long
   scroll, password fields with a reveal toggle, and per-section "saved ✓" feedback.
   Pure presentation — the settings *model* (DEFAULT_SETTINGS + load/save) is fine;
-  this is `template.html` + `style.css` + the `openSettings`/save wiring.
+  this is `template.html` + `style.css` + the `openSettings`/save wiring. **The status
+  bar** is heading the same way — it's accreting indicators (store, poll, drip,
+  resolver, telegram, health, review, catalog, notify, webmcp, bridge, persist,
+  storage, version) and will need a tidy: overflow/prioritization, consistent
+  glyph+count chips, maybe a collapse for the quiet ones.
 
 - ~~**Views over sources (smart-folders).**~~ ✅ Shipped 2026-05-31 — a rail
   **Views** area with persisted saved filters (`/views.json`), seeded type

@@ -170,6 +170,7 @@ export class App {
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
     document.getElementById('resolver-status')?.addEventListener('click', () => { this.catFilter = null; this.route = null; this.smartView = null; this.feedFilter = 'saved'; this.renderAll(); });
     document.getElementById('review-status')?.addEventListener('click', () => this.openReview());
+    document.getElementById('telegram-status')?.addEventListener('click', () => this.openSettings());
     document.getElementById('review-close')?.addEventListener('click', () => this._reviewClose());
     document.getElementById('review-body')?.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-rvact]');
@@ -1936,18 +1937,33 @@ export class App {
   // via a textarea — full named-entity support, browser-native.
   _decodeHtml(s) { if (!s) return s; const t = (this._teDecode = this._teDecode || document.createElement('textarea')); t.innerHTML = String(s); return t.value; }
 
-  // Telegram capture status (settings line) + the verify button.
+  // Telegram capture status — the settings-panel line AND a tiny footer indicator.
   renderTelegramStatus(st) {
-    const el = document.getElementById('tg-status'); if (!el || !st) return;
-    if (st.error) { el.textContent = `error: ${st.error}`; return; }
-    const parts = [];
-    if (st.bot) parts.push(`@${st.bot}`);
-    parts.push(st.enabled ? 'polling' : 'idle');
-    if (st.bound) parts.push(`bound to ${st.bound}`);
-    if (st.captured) parts.push(`${st.captured} captured`);
-    if (st.notes) parts.push(`${st.notes} note${st.notes === 1 ? '' : 's'} stashed`);
-    if (st.ignored) parts.push(`${st.ignored} ignored`);
-    el.textContent = parts.join(' · ') || 'not connected';
+    st = st || (this.telegram && this.telegram.status) || {};
+    const el = document.getElementById('tg-status');
+    if (el) {
+      if (st.error) el.textContent = `error: ${st.error}`;
+      else {
+        const parts = [];
+        if (st.bot) parts.push(`@${st.bot}`);
+        parts.push(st.enabled ? 'polling' : 'idle');
+        if (st.bound) parts.push(`bound to ${st.bound}`);
+        if (st.captured) parts.push(`${st.captured} captured`);
+        if (st.notes) parts.push(`${st.notes} note${st.notes === 1 ? '' : 's'} stashed`);
+        if (st.ignored) parts.push(`${st.ignored} ignored`);
+        el.textContent = parts.join(' · ') || 'not connected';
+      }
+    }
+    const bar = document.getElementById('telegram-status');
+    if (bar) {
+      if (!st.enabled) { bar.textContent = ''; bar.title = 'Telegram capture bot'; }
+      else if (st.error) { bar.textContent = '✈ ⚠'; bar.title = `Telegram capture — ${st.error}`; }
+      else {
+        bar.textContent = `✈${st.captured ? ' ' + st.captured : ''}`;
+        bar.title = `Telegram capture${st.bot ? ' @' + st.bot : ''} — polling`
+          + `${st.bound ? `, bound to ${st.bound}` : ''}${st.captured ? `, ${st.captured} captured` : ''}${st.notes ? `, ${st.notes} notes stashed` : ''}`;
+      }
+    }
   }
   async _verifyTelegram() {
     const el = document.getElementById('tg-status');

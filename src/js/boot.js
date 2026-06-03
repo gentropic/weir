@@ -143,6 +143,7 @@ async function boot() {
   app.telegram = telegram;
   telegram.on((st) => app.renderTelegramStatus(st));
   if (store.getSettings().telegram_enabled && await getKey('telegram')) telegram.start();
+  app.renderTelegramStatus(telegram.status);   // reflect enabled/polling in the footer from the start
 
   window.__weir = { store, poller, router, drip, retainer, linkResolver, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {
