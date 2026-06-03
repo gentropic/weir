@@ -53,6 +53,12 @@ Two entry kinds: **notes** (markdown, authored) and **files** (any dropped binar
   `glass_id?`. Portable + Obsidian-native.
 - **Files** carry a **sidecar** `…​.meta.json` next to them: same fields. The file
   itself stays pristine.
+- **Parsed with our own `@gcu/yaml`** (vendor `../auditable/ext/yaml`, bundled into
+  `/vendor/` like vfs/librarian) — a strict YAML 1.2 subset with **no parse-time tag
+  resolution / no RCE surface**, which matters because frontmatter can arrive from an
+  external editor or from Claude. Tag-free docs **round-trip identically through
+  vanilla YAML**, so the frontmatter stays Obsidian/standard-tooling readable. (We do
+  NOT pull in a full YAML library — same zero-dep rule as everything else.)
 - Tags written here are the *portable* copy; weir's in-memory index is still hydrated
   from the per-feed shard (`/items/vault.ndjson`) like every item. **Source of truth
   in v1: the shard**; frontmatter/sidecar is the mirror weir writes on save and reads
@@ -112,20 +118,39 @@ roadmap's "extract at import" stretch) — until then they catalog from filename
 sidecar, or stay Stage-0. Cataloging the vault is **opt-in per entry / folder**, not
 automatic (your notes aren't feed slop to auto-classify).
 
-## 9. Open questions / decisions to make
+## 9. Decisions **[settled]** + remaining detail
 
-- **Mount required for files?** Proposal: vault works unmounted (IDB blobs), but warn
-  on large file drops; markdown always fine. Or: gate *file* drops on a mount.
-- **Sync / source-of-truth** when files are edited externally (Obsidian) *and* in weir.
-  Proposal: shard is truth; a manual/periodic **rescan** reconciles from disk
-  (frontmatter wins for tags, mtime for body?). Real two-way live sync is a later, hard
-  problem — don't promise it in v1.
-- **Conflict / dedup**: same path twice → overwrite, or version (`name (2).md`)?
-  Idempotent re-send should update, not duplicate (stable id from path).
-- **Item id**: `vault:<path-hash>` (stable across re-sends/edits at the same path).
-- **Does moving a folder rewrite call numbers?** No — the glass call number is from
-  facets, not the vault path; the vault tree and the catalog shelf are independent axes
-  (you can file by folder *and* wander by subject).
+- **Files unmounted: allowed.** ✅ Vault works without FSA — markdown notes + lighter
+  file drops live as IDB blobs; surface a gentle size/eviction nudge on big drops, and
+  the "mount for the full filesystem experience" hint. Lightweight use shouldn't need a
+  mount.
+- **Sync: refresh + best-effort detection, no live two-way.** ✅ A **"rescan vault"**
+  button (and per-folder refresh) re-reads from disk. **Detection where feasible**: on
+  rescan / tab-focus, compare each file's `lastModified` (FSA `getFile().lastModified`)
+  against the indexed mtime and flag what changed externally (a "3 changed on disk"
+  badge → review/accept). No file-watcher exists in the browser, so it's poll-on-
+  focus + manual, not live — but enough to notice Obsidian edits. Reconcile: frontmatter
+  wins for tags, newer mtime for body.
+- **Vault entries are items.** ✅ Confirmed — the unification stands.
+- **Conflict / dedup**: stable **id = `vault:<path-hash>`**, so a re-send or external
+  edit at the same path **updates** (never duplicates). A genuinely new file at a taken
+  path → version (`name (2).ext`).
+- **Folder moves don't touch call numbers** — the glass call number is from facets, not
+  the vault path. File by folder *and* wander by subject; independent axes.
+
+## 9a. The name **[open — your call]**
+
+"Vault" is borrowed straight from Obsidian — worth a more weir-native word. Candidates:
+
+- **Stacks** — library stacks (where holdings live, shelved). Ties to glass + the call
+  number; "in the stacks" reads right. *My lean — it's the LIS-library identity.*
+- **Reservoir** / **Pool** — the water a weir holds back. The most *weir*-native
+  metaphor (a weir literally pools a stream); "the pool" is short, "reservoir" = reserve/keep.
+- **Drawer** — the cozy scratch-drawer (you already call `personal/` the local drawer);
+  a place you toss things. Less library, more desk.
+- **Holdings** — the dry LIS term; accurate, a touch flat.
+
+(Keep this `VAULT.md` filename until you pick; then rename.)
 
 ## 10. Staging (build order)
 
