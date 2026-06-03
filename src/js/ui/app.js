@@ -413,7 +413,10 @@ export class App {
     document.querySelectorAll('.navrow[data-view]').forEach((r) =>
       r.classList.toggle('active', r.dataset.view === 'catalog'
         ? !!this.catalog
-        : (!this.feedFilter && !this.route && !this.smartView && !this.catalog && !this.stackFilter && this.catFilter == null && r.dataset.view === this.view)));
+        : r.dataset.view === 'stacks'
+          ? !!this.stackFilter
+          : (!this.feedFilter && !this.route && !this.smartView && !this.catalog && !this.stackFilter && this.catFilter == null && r.dataset.view === this.view)));
+    { const cs = document.getElementById('count-stacks'); if (cs) { const n = this.stacks ? this.stacks.entries().filter((e) => !e.missing).length : 0; cs.textContent = n || ''; } }
 
     // Catalog mode swaps the Sources rail for the facet browser.
     const srcSec = document.getElementById('sources')?.closest('.rail-section');
@@ -934,6 +937,18 @@ export class App {
   }
 
   emptyHtml() {
+    if (this.stackFilter) {
+      const where = this.stackPath ? ` in <code>${escapeHtml(this.stackPath)}/</code>` : '';
+      return `<section class="onboard">
+        <div class="onboard-glyph">❏</div>
+        <h2>The stacks${where} are empty</h2>
+        <p>Notes you write and files you drop live here as real files under <code>/stacks/</code> — filed, tagged, searchable, and (later) catalogued alongside your feeds. They're <em>yours</em> to author, not a stream to clear.</p>
+        <div class="onboard-actions">
+          <button class="btn btn-primary" data-stack-new="1">＋ New note</button>
+        </div>
+        <p class="onboard-or">also: drop a file on the window, send your weir Telegram bot a note or file (→ <code>inbox/</code>), or jot from anywhere with <kbd>n</kbd>.</p>
+      </section>`;
+    }
     const hasFeeds = this.store.listFeeds().length > 0;
     if (hasFeeds) return `<div class="empty">Nothing in ${escapeHtml(VIEW_LABELS[this.view] || this.view)}${this.searchText ? ' for that search' : ''}.</div>`;
     return `<section class="onboard">
@@ -1204,6 +1219,7 @@ export class App {
   onStreamClick(e) {
     const onb = e.target.closest('[data-onboard]');
     if (onb) { if (onb.dataset.onboard === 'import') document.getElementById('opml-file')?.click(); return; }
+    if (e.target.closest('[data-stack-new]')) { this.openNoteEditor(); return; }
     const imp = e.target.closest('[data-import]');
     if (imp) { this.runImport(imp.dataset.import); return; }
     const sample = e.target.closest('[data-sample]');
@@ -1736,7 +1752,7 @@ export class App {
 
   _reflectSearch() { const b = document.getElementById('btn-saveview'); if (b) b.hidden = !this.searchText || !!this.smartView; }
 
-  setView(view) { if (view === 'catalog') return this.setCatalog(); this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setView(view) { if (view === 'catalog') return this.setCatalog(); if (view === 'stacks') return this.enterStacks(); this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   selectFeed(id) { this.feedFilter = id; this.view = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
 
