@@ -19,7 +19,10 @@ let _autoCheck = true;   // toggled by the page via a message; gates background 
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => { /* offline at install — best effort */ })
+    // Fetch the shell with `cache: 'reload'` so a NEWLY-installing SW always caches
+    // FRESH bytes — never an HTTP-cached stale index.html (which would trap the update
+    // and leave the PWA on the old build despite a successful deploy + cache bump).
+    caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).catch(() => { /* offline at install — best effort */ })
   );
   self.skipWaiting();
 });
