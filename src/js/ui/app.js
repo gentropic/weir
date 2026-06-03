@@ -222,6 +222,7 @@ export class App {
     setInterval(() => this.renderPollStatus(), 30_000);
 
     this.renderAll();
+    if (this.store.getFeed('books')) this._ensureBooksView();   // back-fill the Books view for an existing books library
     this.renderNotify();
     this.renderPollStatus();
     this.checkBridge();
@@ -1927,6 +1928,18 @@ export class App {
     await this.store.putFeed({ id: 'books', name: 'Books', adapter: 'books', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever', read_days: 'forever' } });
   }
 
+  // Make sure the built-in "Books" smart view exists (it appears in VIEWS like
+  // Links). DEFAULT_VIEWS covers fresh installs; this back-fills an existing user
+  // who imported before the view existed. Slotted right after Links.
+  async _ensureBooksView() {
+    const views = this.store.getViews();
+    if (views.some((v) => v.id === 'v-books')) return;
+    const at = (views.findIndex((v) => v.id === 'v-links') + 1) || views.length;
+    const next = [...views]; next.splice(at, 0, { id: 'v-books', name: 'Books', builtin: true, query: { feed_id: 'books' } });
+    await this.store.saveViews(next);
+    this.renderViews();
+  }
+
   // Import a LibraryThing export → book holdings. Idempotent: the id is the stable
   // LibraryThing book id (or an ISBN/title hash), so re-importing a fuller export
   // UPDATES rather than dupes, and never clobbers reading state or weir tags. ISBN
@@ -1937,6 +1950,7 @@ export class App {
     const sub = document.getElementById('view-sub');
     if (!books || !books.length) { if (sub) sub.textContent = `no books found in that ${format} file`; return { inserted: 0, updated: 0 }; }
     await this._ensureBooksSource();
+    await this._ensureBooksView();
     const raws = books.map((b) => {
       const id = `book:${b.lt_id || `h${hash32(String(b.isbn || b.title || '').toLowerCase())}`}`;
       const url = b.isbn ? `https://openlibrary.org/isbn/${b.isbn}` : (b.lt_id ? `https://www.librarything.com/work/${b.lt_id}` : '');
@@ -1945,7 +1959,7 @@ export class App {
       return {
         id, feed_id: 'books', type: 'book', url,
         title: this._decodeHtml(b.title), author: this._decodeHtml(b.author) || undefined,
-        published_at: b.date || undefined, excerpt: this._decodeHtml(b.excerpt) || undefined,
+        published_at: b.date || undefined, excerpt: this._decodeHtml(b.excerpt) || '',   // '' (not undefined) so a re-import CLEARS a stale first-import excerpt
         tags, tag_src: tags.reduce((o, t) => { o[t] = 'human'; return o; }, {}), structured,
       };
     });
@@ -2059,7 +2073,7 @@ export class App {
       const items = this.store.query(v.query);
       if (v.builtin && items.length === 0) continue;     // empty type default → hide
       const unread = items.reduce((n, i) => n + (i.read ? 0 : 1), 0);
-      const ico = v.id === 'v-links' ? '⧉' : (ICONS[v.query.type] || (v.query.text ? ICONS.search : '◆'));
+      const ico = v.id === 'v-links' ? '⧉' : v.id === 'v-books' ? '▤' : (ICONS[v.query.type] || (v.query.text ? ICONS.search : '◆'));
       const active = this.smartView?.id === v.id ? ' active' : '';
       rows.push(`<div class="navrow view${active}" data-view-id="${escapeHtml(v.id)}" title="${escapeHtml(this.viewSummary(v))}">`
         + `<span class="lbl"><span class="ico">${ico}</span> ${escapeHtml(v.name)}</span><span class="count">${unread || items.length || ''}</span></div>`);
