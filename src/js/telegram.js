@@ -87,6 +87,7 @@ export class TelegramInflux {
         const fromId = msg.from && msg.from.id;
         if (!allowed && fromId) { allowed = fromId; this.status.bound = fromId; await this.store.setSettings({ telegram_allowed_id: fromId }); }
         if (allowed && fromId !== allowed) { this.status.ignored++; continue; }   // not you → ignore (don't capture or stash)
+        if (/^\//.test((msg.text || '').trim())) continue;   // a bot command (/start, /help) — it bound you, but isn't content
         const ls = messageLinks(msg.text, msg.entities);
         if (ls.length) for (const l of ls) links.push({ ...l, date: msg.date ? msg.date * 1000 : undefined });
         else if ((msg.text || '').trim()) { await this._stashNote(msg); this.status.notes++; }   // a note → stash for the notes system

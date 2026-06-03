@@ -109,6 +109,16 @@ the trigger/query layer on top.
 
 ## Near term — small UX / polish
 
+- **Settings panel redesign.** The overlay has grown a lot (cataloger, WebMCP,
+  Telegram capture, updates, retention, recovery, IA keys, storage mount, density…)
+  and it's gone janky — inconsistent input widths, fields overflowing their rows
+  (the cataloger token, the WebMCP connection string), single scrolling column. It
+  needs a real pass: consistent field/row layout (label-left / control-right grid
+  that doesn't overflow), maybe **grouped tabs or an accordion** instead of one long
+  scroll, password fields with a reveal toggle, and per-section "saved ✓" feedback.
+  Pure presentation — the settings *model* (DEFAULT_SETTINGS + load/save) is fine;
+  this is `template.html` + `style.css` + the `openSettings`/save wiring.
+
 - ~~**Views over sources (smart-folders).**~~ ✅ Shipped 2026-05-31 — a rail
   **Views** area with persisted saved filters (`/views.json`), seeded type
   defaults (Videos/Articles/Papers/Releases, shown when non-empty), and
