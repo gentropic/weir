@@ -1176,10 +1176,10 @@ export class App {
       const thumb = hasThumb ? `<img class="thumbimg" loading="lazy" src="${escapeHtml(it.media.thumbnail)}" alt="">` : '';
       const play = isVideo ? '<span class="playover">▶</span>' : '';
       const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
-      const excerpt = (!isVideo && it.excerpt) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
+      const excerpt = (!isVideo && it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
       body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${ddc}${meta}${views} ${tags}</div></div></div>`;
     } else {
-      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}</div>`;
+      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${(it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}</div>`;
     }
     const actions = `<div class="iactions">`
       + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`

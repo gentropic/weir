@@ -15,7 +15,7 @@
 import { VFS } from '../../../vendor/vfs.js';
 import {
   SCHEMA_VERSION, DEFAULT_SETTINGS, DEFAULT_VIEWS, makeItem, makeFeed, makeTombstone,
-  fsKey, hash32, slugify, deriveExcerpt, deriveSearchText, computeExpiry, now,
+  fsKey, hash32, slugify, deriveExcerpt, deriveTitle, deriveSearchText, computeExpiry, now,
 } from './schema.js';
 import { buildCard, nextGlassId } from '../glass.js';
 import { inputMultiplier } from '../llm.js';
@@ -353,7 +353,11 @@ export class Store {
 
       const existing = this.items.get(id);
       if (existing) {
-        if (raw.title != null) existing.title = raw.title;
+        // Title-less items keep a body-derived title (microblogs etc.); re-derive
+        // it on update so already-stored "(untitled)" items heal as their content
+        // refreshes. A real title supersedes the synthesized one.
+        if (raw.title != null && String(raw.title).trim() !== '') { existing.title = raw.title; existing.title_synth = undefined; }
+        else if (raw.content != null) { const t = deriveTitle(raw.content); if (t) { existing.title = t; existing.title_synth = true; } }
         if (raw.url != null) existing.url = raw.url;
         if (raw.author !== undefined) existing.author = raw.author || undefined;
         if (raw.media !== undefined) existing.media = raw.media;

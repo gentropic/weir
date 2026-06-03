@@ -281,4 +281,33 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.ok(s2.archived.has('arne-androidarts:3'), 'tombstone survives reload');
 }
 
+// ── title-less items: synthesize a title from the body (microblogs etc.) ──
+{
+  const s = new Store(await VFS.create()); await s._hydrate();
+  await s.putFeed({ id: 'micro', name: 'Microblog', adapter: 'feed', url: 'http://m/f' });
+  await s.upsertItems([
+    { id: 'micro:1', feed_id: 'micro', type: 'article', content: '<p>Web novel xianxia: MC is a cold deathmachine, never bowing.</p>' },
+    { id: 'micro:2', feed_id: 'micro', type: 'article', title: 'Has A Title', content: '<p>body</p>' },
+    { id: 'micro:3', feed_id: 'micro', type: 'article' },   // no title, no body
+  ]);
+  const i1 = s.items.get('micro:1');
+  assert.equal(i1.title, 'Web novel xianxia: MC is a cold deathmachine, never bowing.', 'title synthesized from body');
+  assert.equal(i1.title_synth, true, 'flagged as synthesized (so UI drops the duplicate excerpt)');
+  assert.equal(s.items.get('micro:2').title, 'Has A Title', 'real title untouched');
+  assert.ok(!s.items.get('micro:2').title_synth, 'real-title item not flagged');
+  assert.equal(s.items.get('micro:3').title, '(untitled)', 'no body → keeps (untitled) fallback');
+  // long body → capped with ellipsis on a word boundary
+  await s.upsertItems([{ id: 'micro:4', feed_id: 'micro', type: 'article', content: 'x '.repeat(200) }]);
+  const i4 = s.items.get('micro:4');
+  assert.ok(i4.title.length <= 142 && i4.title.endsWith('…'), 'long title capped + ellipsis');
+  // update-path heal: an existing "(untitled)" item gains a title when content arrives
+  await s.upsertItems([{ id: 'micro:3', feed_id: 'micro', type: 'article', content: '<p>Later this post got some text.</p>' }]);
+  assert.equal(s.items.get('micro:3').title, 'Later this post got some text.', 'title re-derived on update');
+  assert.equal(s.items.get('micro:3').title_synth, true, 'healed item flagged');
+  // a real title arriving later supersedes the synthesized one
+  await s.upsertItems([{ id: 'micro:1', feed_id: 'micro', type: 'article', title: 'Now Titled', content: '<p>Web novel xianxia…</p>' }]);
+  assert.equal(s.items.get('micro:1').title, 'Now Titled', 'real title supersedes synth');
+  assert.ok(!s.items.get('micro:1').title_synth, 'synth flag cleared when a real title arrives');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

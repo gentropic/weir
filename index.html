@@ -7585,6 +7585,30 @@ function slugify(s) {
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'feed';
 }
 
+// Synthesize a title from the body for title-less items — microblogs (Bluesky,
+// Mastodon), link-blogs, status/note feeds all ship items with no <title>, and
+// "(untitled)" reads as broken. Take the leading text (newlines → spaces, common
+// entities decoded so "Tom &amp; Jerry" stays readable), capped at ~n chars on a
+// word boundary. Returns '' when there's no usable text (caller keeps the
+// "(untitled)" fallback). Distinct from deriveExcerpt: shorter, entity-decoded,
+// and meant to stand in as a heading.
+function deriveTitle(htmlOrText, n = 140) {
+  if (!htmlOrText) return '';
+  const text = String(htmlOrText)
+    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(?:nbsp|#160);/gi, ' ')
+    .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&(?:quot|#34);/gi, '"').replace(/&(?:#0?39|apos);/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  if (text.length <= n) return text;
+  const cut = text.slice(0, n);
+  const sp = cut.lastIndexOf(' ');
+  return (sp > n * 0.6 ? cut.slice(0, sp) : cut).trimEnd() + '…';
+}
+
 // Strip tags + collapse whitespace, take the first ~n chars. For list previews.
 function deriveExcerpt(htmlOrText, n = 300) {
   if (!htmlOrText) return '';
@@ -7618,11 +7642,16 @@ function computeExpiry(rec, feed) {
 // — this record is what the in-memory index and per-feed shard hold.
 function makeItem(raw, feed) {
   const fetched_at = raw.fetched_at ?? now();
+  // Title-less items (microblogs, note feeds) get a body-derived title rather
+  // than "(untitled)"; title_synth flags it so the UI doesn't then repeat the
+  // same text in the excerpt line below.
+  const hasTitle = raw.title != null && String(raw.title).trim() !== '';
+  const synthTitle = hasTitle ? '' : deriveTitle(raw.content || raw.text || '');
   const rec = {
     id: String(raw.id),
     feed_id: feed.id,
     url: raw.url || '',
-    title: raw.title || '(untitled)',
+    title: hasTitle ? raw.title : (synthTitle || '(untitled)'),
     author: raw.author || undefined,
     published_at: raw.published_at ?? fetched_at,
     fetched_at,
@@ -7647,6 +7676,7 @@ function makeItem(raw, feed) {
   if (raw.content_path) rec.content_path = String(raw.content_path);
   if (raw.mime) rec.mime = String(raw.mime);
   if (raw.missing) rec.missing = true;
+  if (synthTitle) rec.title_synth = true;
   rec.search_text = deriveSearchText(rec);
   rec.expires_at = computeExpiry(rec, feed);
   return rec;
@@ -8575,7 +8605,11 @@ class Store {
 
       const existing = this.items.get(id);
       if (existing) {
-        if (raw.title != null) existing.title = raw.title;
+        // Title-less items keep a body-derived title (microblogs etc.); re-derive
+        // it on update so already-stored "(untitled)" items heal as their content
+        // refreshes. A real title supersedes the synthesized one.
+        if (raw.title != null && String(raw.title).trim() !== '') { existing.title = raw.title; existing.title_synth = undefined; }
+        else if (raw.content != null) { const t = deriveTitle(raw.content); if (t) { existing.title = t; existing.title_synth = true; } }
         if (raw.url != null) existing.url = raw.url;
         if (raw.author !== undefined) existing.author = raw.author || undefined;
         if (raw.media !== undefined) existing.media = raw.media;
@@ -13618,10 +13652,10 @@ class App {
       const thumb = hasThumb ? `<img class="thumbimg" loading="lazy" src="${escapeHtml(it.media.thumbnail)}" alt="">` : '';
       const play = isVideo ? '<span class="playover">▶</span>' : '';
       const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
-      const excerpt = (!isVideo && it.excerpt) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
+      const excerpt = (!isVideo && it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
       body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${ddc}${meta}${views} ${tags}</div></div></div>`;
     } else {
-      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}</div>`;
+      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${(it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}</div>`;
     }
     const actions = `<div class="iactions">`
       + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
@@ -16559,7 +16593,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'b0a897a';          // short content hash of the bundle (build id)
+const COMMIT = 'b5de9a2';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

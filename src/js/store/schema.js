@@ -103,6 +103,30 @@ export function slugify(s) {
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'feed';
 }
 
+// Synthesize a title from the body for title-less items — microblogs (Bluesky,
+// Mastodon), link-blogs, status/note feeds all ship items with no <title>, and
+// "(untitled)" reads as broken. Take the leading text (newlines → spaces, common
+// entities decoded so "Tom &amp; Jerry" stays readable), capped at ~n chars on a
+// word boundary. Returns '' when there's no usable text (caller keeps the
+// "(untitled)" fallback). Distinct from deriveExcerpt: shorter, entity-decoded,
+// and meant to stand in as a heading.
+export function deriveTitle(htmlOrText, n = 140) {
+  if (!htmlOrText) return '';
+  const text = String(htmlOrText)
+    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(?:nbsp|#160);/gi, ' ')
+    .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&(?:quot|#34);/gi, '"').replace(/&(?:#0?39|apos);/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  if (text.length <= n) return text;
+  const cut = text.slice(0, n);
+  const sp = cut.lastIndexOf(' ');
+  return (sp > n * 0.6 ? cut.slice(0, sp) : cut).trimEnd() + '…';
+}
+
 // Strip tags + collapse whitespace, take the first ~n chars. For list previews.
 export function deriveExcerpt(htmlOrText, n = 300) {
   if (!htmlOrText) return '';
@@ -136,11 +160,16 @@ export function computeExpiry(rec, feed) {
 // — this record is what the in-memory index and per-feed shard hold.
 export function makeItem(raw, feed) {
   const fetched_at = raw.fetched_at ?? now();
+  // Title-less items (microblogs, note feeds) get a body-derived title rather
+  // than "(untitled)"; title_synth flags it so the UI doesn't then repeat the
+  // same text in the excerpt line below.
+  const hasTitle = raw.title != null && String(raw.title).trim() !== '';
+  const synthTitle = hasTitle ? '' : deriveTitle(raw.content || raw.text || '');
   const rec = {
     id: String(raw.id),
     feed_id: feed.id,
     url: raw.url || '',
-    title: raw.title || '(untitled)',
+    title: hasTitle ? raw.title : (synthTitle || '(untitled)'),
     author: raw.author || undefined,
     published_at: raw.published_at ?? fetched_at,
     fetched_at,
@@ -165,6 +194,7 @@ export function makeItem(raw, feed) {
   if (raw.content_path) rec.content_path = String(raw.content_path);
   if (raw.mime) rec.mime = String(raw.mime);
   if (raw.missing) rec.missing = true;
+  if (synthTitle) rec.title_synth = true;
   rec.search_text = deriveSearchText(rec);
   rec.expires_at = computeExpiry(rec, feed);
   return rec;
