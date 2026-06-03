@@ -12,7 +12,10 @@
 // tolerated — the file is treated as bodyless-frontmatter and re-stamped on next
 // write. External-edit two-way sync is a later stage; v1 is weir-authoritative.
 
-import { parse as yamlParse, emit as yamlEmit, scalar, mapNode, seqNode } from '../../vendor/yaml.js';
+// NB: import the REAL exported names (no aliasing) — the single-file build strips
+// imports and resolves these against the vendored globals BY NAME, so a renamed import
+// would be an undefined reference in the bundle (it works under node ESM but not built).
+import { parse, emit, scalar, mapNode, seqNode } from '../../vendor/yaml.js';
 import { deriveExcerpt, slugify, now } from './store/schema.js';
 
 const ROOT = '/stacks';
@@ -88,7 +91,7 @@ export class StacksStore {
       }
     }
     if (!entries.length) return '';
-    return yamlEmit(mapNode(entries));
+    return emit(mapNode(entries));
   }
   _nodeToJs(node) {
     if (!node) return null;
@@ -103,7 +106,7 @@ export class StacksStore {
     const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
     if (!m) return { data: {}, body: text };
     let data = {};
-    try { const ast = yamlParse(m[1] + '\n'); if (ast && ast.kind === 'map') data = this._nodeToJs(ast); }
+    try { const ast = parse(m[1] + '\n'); if (ast && ast.kind === 'map') data = this._nodeToJs(ast); }
     catch { data = {}; }   // unparseable (e.g. external unquoted YAML) → re-stamp on next write
     return { data: data || {}, body: text.slice(m[0].length) };
   }
