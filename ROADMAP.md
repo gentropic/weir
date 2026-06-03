@@ -354,6 +354,45 @@ the trigger/query layer on top.
   weir ingests via an adapter or a `BroadcastChannel`/file handoff. Keeps weir's
   "no authenticated scraping" boundary intact while still feeding everything in.
   Open decision: glean-as-sibling vs. a tightly-guarded weir capability.
+- **weir-as-gauge — derived event sources** *(vision / far)*. Lean into the name:
+  a weir isn't a pipe, it's a **gauge** — a structure in a flow that *measures and
+  controls* it. So far weir uses only the "stream" half of the metaphor (timestamped
+  items on a schedule); this is the "measurement" half — consuming *exotic* sources
+  (weirder APIs, sensor/transit/weather data) by **reducing raw flow to discrete
+  reviewable events.**
+  - **The fit test (the boundary that matters):** weir ingests **events, not
+    telemetry.** Discrete dated things you'd review-and-clear belong; continuous
+    state does not. Weather isn't a temperature stream (→ a dashboard, a *different*
+    tool) but *is* "frost expected tonight" + a daily digest. Belo Horizonte bus
+    data isn't live vehicle positions (→ a map) but *is* "line 9201 suspended,"
+    "new GTFS version," "my line is >10 min late right now." **weir must never become
+    a realtime dashboard** — its value is the layer *above* the firehose that emits
+    the handful of things worth a human glance.
+  - **The one unlocking primitive:** generalize the `scrape` adapter's stateful
+    hash-diff into a first-class source shape — `derive(raw, prevState) → {items,
+    newState}`. That `prevState` is the linchpin: stateless adapters can only say
+    "here's what's in the feed"; a source that sees its own prior state can do
+    **thresholds** (price < X), **change-detection** (pattern differs from
+    yesterday), **debounce** (don't re-alert the same quake), and **digests**
+    (accumulate all day → one 7am item). Plus a **generic JSON-API adapter** (a
+    `fetch` + a user-JS `derive`, mirroring the "routing is just JS" decision) and
+    an `alert`/`reading` item **type** or two. Everything else is already seeded
+    (pluggable adapters, JS routing, typed items, the cataloger).
+  - **Natural first citizens (geo/BH-flavored, several poetically on-theme):** USGS
+    earthquakes (already timestamped GeoJSON — nearly a feed today); **river /
+    reservoir levels** (ANA/CPRM — a literal weir measuring literal flow, alerting on
+    a threshold); INPE *queimadas* / air-quality; weather frost/rain alerts + morning
+    digest; BH transit service-changes; dataset portals (CKAN → "new dataset in X").
+  - **The "mixed up" / fusion end:** routing rules that *query other items* can emit
+    derived events across sources — "weather says rain **and** my line has reduced
+    service → leave early." weir editorializing its own stream. Latent in the storage
+    model already; far-future.
+  - **Resist (the healthy forcing function):** no sub-second anything, no live maps,
+    no raw-telemetry storage — never-delete + local storage would choke on raw
+    pings, which is *why* the design forces reduce-to-events-before-store. Polling
+    stays in minutes; if a source needs realtime, weir consumes its derived digest,
+    not its hose. Stays dead-on the GCU ethos: a zero-dep pinned tab wiring "BH bus
+    API → tells me when to leave," no server, no account, a few lines of JS.
 - **Durability / storage tiers.** ~~Full backup + restore~~ ✅ + ~~FSA "mount to
   a folder"~~ ✅ both shipped 2026-06-01 — the store runs on a user-picked
   directory (adopt-or-migrate, persisted handle, bulletproof IDB fallback,
