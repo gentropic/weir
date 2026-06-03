@@ -88,22 +88,22 @@ assert.equal(store.getItem('a1').saved, false, 'reversible');
 await assert.rejects(tools.setState({ id: 'a1' }), /at least one/, 'needs a field');
 await assert.rejects(tools.setState({ id: 'ghost', read: true }), /No item/);
 
-// ── mutations: tagItem (add/remove, llm provenance) ──
-const tg = await tools.tagItem({ id: 'a1', add: ['ml', 'geo'] });
-assert.ok(tg.tags.includes('ml') && tg.tags.includes('geo'), 'tagItem added tags');
+// ── tag (merged): single item by id (llm provenance) ──
+const tg = await tools.tag({ id: 'a1', add: ['ml', 'geo'] });
+assert.ok(tg.tags.includes('ml') && tg.tags.includes('geo'), 'tag(id) added tags');
 assert.equal(store.getItem('a1').tag_src.ml, 'llm', 'WebMCP tags stamped source:llm');
-await tools.tagItem({ id: 'a1', remove: ['geo'] });
-assert.ok(!store.getItem('a1').tags.includes('geo') && store.getItem('a1').tags.includes('ml'), 'tagItem removed only the named tag');
-await assert.rejects(tools.tagItem({ id: 'a1' }), /add and\/or remove/, 'needs add or remove');
-await assert.rejects(tools.tagItem({ id: 'ghost', add: ['x'] }), /No item/);
+await tools.tag({ id: 'a1', remove: ['geo'] });
+assert.ok(!store.getItem('a1').tags.includes('geo') && store.getItem('a1').tags.includes('ml'), 'tag(id) removed only the named tag');
+await assert.rejects(tools.tag({ id: 'a1' }), /add and\/or remove/, 'needs add or remove');
+await assert.rejects(tools.tag({ id: 'ghost', add: ['x'] }), /No item/);
 
-// ── bulk-tag a query (tagItems) — scopes like queryItems ──
-const bt = await tools.tagItems({ type: 'article', add: ['swept'] });
-assert.ok(bt.matched >= 1 && bt.changed >= 1, 'tagItems matched + changed the article');
+// ── tag (merged): bulk over a query — scopes like queryItems ──
+const bt = await tools.tag({ type: 'article', add: ['swept'] });
+assert.ok(bt.matched >= 1 && bt.changed >= 1, 'tag(query) matched + changed the article');
 assert.ok(store.getItem('a1').tags.includes('swept'), 'bulk tag landed on the matching item');
 assert.equal(store.getItem('a1').tag_src.swept, 'llm', 'bulk WebMCP tag stamped source:llm');
-assert.equal((await tools.tagItems({ q: 'no-such-text', add: ['x'] })).matched, 0, 'empty match → 0, no throw');
-await assert.rejects(tools.tagItems({ type: 'article' }), /add and\/or remove/, 'tagItems needs add or remove');
+assert.equal((await tools.tag({ q: 'no-such-text', add: ['x'] })).matched, 0, 'empty match → 0, no throw');
+await assert.rejects(tools.tag({ type: 'article' }), /add and\/or remove/, 'tag(query) needs add or remove');
 
 // ── catalog control (mock app) ──
 const calls = [];
