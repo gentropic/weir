@@ -165,6 +165,7 @@ async function boot() {
   // vault; only runs when enabled + a token is set.
   const telegram = new TelegramInflux(store, {
     getToken: () => getKey('telegram'),
+    fetchFile: gcuFetch,   // file-bytes download goes through the bridge (not CORS-readable directly)
     onLinks: (links) => app.importLinks(links, 'telegram'),
     onFile: async ({ name, bytes, mime }) => { await stacks.addFile({ name, bytes, mime, source: 'telegram' }); await store.flush(); app.renderStacks(); },
   });

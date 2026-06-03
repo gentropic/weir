@@ -15,9 +15,13 @@ const TG_API = 'https://api.telegram.org';
 const NOTES_STASH = '/telegram-notes.ndjson';
 
 export class TelegramInflux {
-  constructor(store, { fetch, getToken, onLinks, onFile, intervalMs = 18_000 } = {}) {
+  constructor(store, { fetch, fetchFile, getToken, onLinks, onFile, intervalMs = 18_000 } = {}) {
     this.store = store;
-    this.fetch = fetch || ((u, o) => globalThis.fetch(u, o));   // direct — CORS-ok, no bridge
+    this.fetch = fetch || ((u, o) => globalThis.fetch(u, o));   // direct — Bot API methods are CORS-ok, no bridge
+    // The file-BYTES endpoint (api.telegram.org/file/bot…) does NOT send CORS headers,
+    // so its download is routed through the bridge (gcuFetch). Needs api.telegram.org
+    // on the bridge allowlist; falls back to direct (and fails) without it.
+    this.fetchFile = fetchFile || this.fetch;
     this.getToken = getToken;
     this.onLinks = onLinks;        // (links[]) => Promise, usually app.importLinks
     this.onFile = onFile;          // ({name,bytes,mime}) => Promise, usually stacks.addFile (Bot API ≤20MB)
@@ -74,11 +78,11 @@ export class TelegramInflux {
       const r = await this.fetch(`${TG_API}/bot${this._token}/getFile?file_id=${encodeURIComponent(doc.file_id)}`);
       const j = JSON.parse(await r.text());
       if (!j || !j.ok || !j.result || !j.result.file_path) { this.status.error = (j && j.description) || 'getFile failed'; return; }
-      const dl = await this.fetch(`${TG_API}/file/bot${this._token}/${j.result.file_path}`);
+      const dl = await this.fetchFile(`${TG_API}/file/bot${this._token}/${j.result.file_path}`);   // bridge — file bytes aren't CORS-readable directly
       const bytes = new Uint8Array(await dl.arrayBuffer());
       await this.onFile({ name, bytes, mime, caption: (msg.caption || '').trim() });
       this.status.files++; this._react(msg, '👍');
-    } catch (e) { this.status.error = String((e && e.message) || e); }
+    } catch (e) { this.status.error = `file download failed (${(e && e.message) || e}) — if it persists, add api.telegram.org to the bridge allowlist`; }
   }
 
   // The runner calls this on its cadence (busy-guard + enabled() are the runner's
