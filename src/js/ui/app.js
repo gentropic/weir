@@ -100,7 +100,7 @@ export class App {
     });
     this.stream.addEventListener('click', (e) => this.onStreamClick(e));
     this.stream.addEventListener('auxclick', (e) => { if (e.button !== 1) return; const row = e.target.closest('.item'); if (!row) return; const it = this.store.getItem(row.dataset.id); if (it?.url) { e.preventDefault(); window.open(it.url, '_blank', 'noopener'); } });
-    this.stream.addEventListener('contextmenu', (e) => { const row = e.target.closest('.item'); if (!row) return; e.preventDefault(); this.select(row.dataset.id); this.itemMenu(row.dataset.id, e.clientX, e.clientY); });
+    this.stream.addEventListener('contextmenu', (e) => { const row = e.target.closest('.item'); if (!row) return; e.preventDefault(); this.select(row.dataset.id); const it = this.store.getItem(row.dataset.id); if (it && it.feed_id === 'stacks') this.stacksEntryMenu(row.dataset.id, e.clientX, e.clientY); else this.itemMenu(row.dataset.id, e.clientX, e.clientY); });
     this.sources.addEventListener('contextmenu', (e) => {
       const s = e.target.closest('.source'); const h = e.target.closest('.cat-head');
       if (s) { e.preventDefault(); this.feedMenu(s.dataset.feed, e.clientX, e.clientY); }
@@ -171,6 +171,10 @@ export class App {
       const f = e.target.closest('.stack-folder');
       if (f) { if (e.target.closest('.sf-tog')) this.toggleStackFolder(f.dataset.stackFolder); else this.setStackFolder(f.dataset.stackFolder); return; }
       const en = e.target.closest('.stack-entry'); if (en) this.selectStackEntry(en.dataset.stackId);
+    });
+    document.getElementById('stacks-tree')?.addEventListener('contextmenu', (e) => {
+      const en = e.target.closest('.stack-entry'); if (!en) return;
+      e.preventDefault(); e.stopPropagation(); this.stacksEntryMenu(en.dataset.stackId, e.clientX, e.clientY);
     });
     document.getElementById('se-save')?.addEventListener('click', () => this.saveNoteEditor());
     document.getElementById('se-close')?.addEventListener('click', () => this.closeNoteEditor());
@@ -1380,6 +1384,44 @@ export class App {
       it.feed_id === 'saved' && { label: '⧉ Fetch link metadata', onClick: () => this.enrichSavedItem(id) },
       it.url && { label: 'Copy link', onClick: () => navigator.clipboard?.writeText(it.url).catch(() => {}) },
     ].filter(Boolean));
+  }
+
+  // Context menu for a stacks entry (rail tree row + stream row). Notes get Edit;
+  // files get Download. Delete routes to trash (never-delete; recoverable + undo).
+  stacksEntryMenu(id, x, y) {
+    const it = this.store.getItem(id); if (!it) return;
+    const isNote = it.type === 'note';
+    showMenu(x, y, [
+      { label: 'Open', onClick: () => this.selectStackEntry(id) },
+      isNote && { label: '✎ Edit', onClick: () => this.openNoteEditor(id) },
+      !isNote && { label: '⬇ Download', onClick: () => this.downloadStacksFile(id) },
+      it.url && { label: 'Open original ↗', onClick: () => window.open(it.url, '_blank', 'noopener') },
+      { sep: true },
+      { label: 'Tag…', onClick: () => this.openTagEditor(id) },
+      { label: 'Move to folder…', onClick: () => this.moveStackPrompt(id) },
+      it.uid && { label: 'Copy [[link]]', onClick: () => { navigator.clipboard?.writeText(`[[${it.uid}]]`).catch(() => {}); const sub = document.getElementById('view-sub'); if (sub) sub.textContent = `copied [[${it.uid}]]`; } },
+      { label: it.glass_id ? 'Re-catalog with AI' : 'Catalog with AI', onClick: () => this.catalogItem(id) },
+      { sep: true },
+      { label: '⌦ Delete', onClick: () => this.trashStack(id) },
+    ].filter(Boolean));
+  }
+  async moveStackPrompt(id) {
+    const it = this.store.getItem(id); if (!it || !this.stacks) return;
+    const to = window.prompt('Move to folder (e.g. notes, papers/kriging):', this._stackFolderOf(it.path));
+    if (to == null) return;
+    await this.stacks.move(it, to.trim());
+    await this.store.flush(); this.renderStacks(); if (this.stackFilter) this.renderStream();
+  }
+  async trashStack(id) {
+    const it = this.store.getItem(id); if (!it || !this.stacks) return;
+    const title = it.title || it.path;
+    if (this.expandedId === id) this.expandedId = null;
+    const r = await this.stacks.trash(it);
+    await this.store.flush(); this.renderStacks(); this.renderStream();
+    this.showUndo(`Deleted “${title}” (in /stacks/.trash)`, async () => {
+      await this.stacks.restoreFromTrash(r.dest, r.trashed);
+      await this.store.flush(); this.renderStacks(); if (this.stackFilter) this.renderStream();
+    });
   }
 
   feedMenu(feedId, x, y) {

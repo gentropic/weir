@@ -212,6 +212,17 @@ assert.equal(lm.count, 2); assert.deepEqual(lm.models, ['m1', 'm2'], 'models lis
   assert.equal(s.getItem(w.id).read, true, 'read-state rode along the move');
   assert.equal(await s.vfs.exists('/stacks/specs/weir/idea.md'), false, 'old file gone');
 
+  // trash → never-delete (file survives in .trash, dropped from index) → restore
+  const tr = await st.stacksTrash({ path: 'archive/specs/idea.md' });
+  assert.ok(tr.ok && tr.dest.startsWith('.trash/'), 'trash moved to .trash');
+  assert.equal(s.getItem(w.id), null, 'entry dropped from index');
+  assert.equal(await s.vfs.exists('/stacks/archive/specs/idea.md'), false, 'file gone from its path');
+  assert.equal(await s.vfs.exists(`/stacks/${tr.dest}`), true, 'bytes survive in .trash (never really deleted)');
+  assert.equal((await st.stacksList({})).count, 0, 'list no longer shows it');
+  const restored = await stacks.restoreFromTrash(tr.dest, tr.trashed); await s.flush();
+  assert.ok(restored && restored.uid === w.uid, 'restore re-indexes with the same uid');
+  assert.equal((await st.stacksList({})).count, 1, 'back in the list after restore');
+
   // errors
   await assert.rejects(st.stacksRead({ path: 'nope.md' }), /No stacks entry/, 'missing path errors');
   await assert.rejects(st.stacksWrite({}), /markdown/, 'write needs a body');

@@ -445,7 +445,18 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...projStack(store.getItem(item.id)) };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, tagItems, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag };
+  async function stacksTrash(input = {}) {
+    const stacks = requireStacks();
+    const item = findStackByPath(input.path);
+    if (!item) throw new Error(`No stacks entry at "${input.path}".`);
+    const r = await stacks.trash(item);   // → /stacks/.trash (never-delete; recoverable)
+    await store.flush();
+    if (app.renderStacks) app.renderStacks();
+    if (app.stackFilter && app.renderStream) app.renderStream();
+    return { ok: true, ...r };
+  }
+
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, tagItems, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -666,6 +677,12 @@ const TOOLS = [
       }, required: ['path'],
     },
     annotations: { title: 'Tag a stacks entry' },
+  },
+  {
+    name: 'weir_stacksTrash', fn: 'stacksTrash',
+    description: 'Delete a stacks entry by `path` — but weir never really deletes: the file (+ sidecar) is moved into /stacks/.trash/ (a hidden folder the scanner ignores), so it disappears from weir while the bytes survive on disk, recoverable. Drops the index entry. Returns { ok, trashed, dest }.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Entry path to delete' } }, required: ['path'] },
+    annotations: { title: 'Delete a stacks entry', destructiveHint: true },
   },
 ];
 

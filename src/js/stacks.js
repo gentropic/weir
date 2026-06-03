@@ -16,7 +16,7 @@
 // imports and resolves these against the vendored globals BY NAME, so a renamed import
 // would be an undefined reference in the bundle (it works under node ESM but not built).
 import { parse, emit, scalar, mapNode, seqNode } from '../../vendor/yaml.js';
-import { deriveExcerpt, slugify, now } from './store/schema.js';
+import { deriveExcerpt, slugify, now, hash32 } from './store/schema.js';
 
 const ROOT = '/stacks';
 const INBOX = 'inbox';
@@ -300,6 +300,37 @@ export class StacksStore {
       data = { ...data, uid: item.uid || data.uid, title: item.title || data.title, tags: item.tags || [], mime: item.mime || data.mime, created: data.created || created };
       await this._writeText(scAbs, JSON.stringify(data, null, 2));
     }
+  }
+
+  // Delete an entry — but honor "never really delete": move the file (+ sidecar)
+  // into /stacks/.trash/ (a dotfolder the scanner ignores), so it vanishes from weir
+  // while the bytes survive on disk, recoverable. Drops the index entry. Returns
+  // { trashed, dest } so the caller can offer undo (restoreFromTrash).
+  async trash(item) {
+    const oldRel = item.path; const oldAbs = this._abs(oldRel);
+    const dest = `.trash/${item.uid || hash32(oldRel)}__${this._basename(oldRel)}`;
+    const destAbs = this._abs(dest);
+    await this.vfs.mkdir(this._dirname(destAbs), { recursive: true });
+    try { await this.vfs.rename(oldAbs, destAbs); }
+    catch { const b = await this.vfs.readFile(oldAbs); await this.vfs.writeFile(destAbs, b); await this.vfs.unlink(oldAbs).catch(() => {}); }
+    if (item.type === 'file') { try { await this.vfs.rename(`${oldAbs}.meta.json`, `${destAbs}.meta.json`); } catch { /* no sidecar */ } }
+    const id = `stacks:${item.uid}`;
+    this.store.items.delete(id); this.store._feedSet('stacks').delete(id);
+    this.store._markFeedDirty('stacks');
+    this.store.emit('items', { inserted: 0, updated: 0, skipped: 0, removed: 1 });
+    return { trashed: oldRel, dest };
+  }
+  // Undo a trash: move the file back and re-index it.
+  async restoreFromTrash(dest, toRel) {
+    const destAbs = this._abs(dest), toAbs = this._abs(toRel);
+    await this.vfs.mkdir(this._dirname(toAbs), { recursive: true });
+    try { await this.vfs.rename(destAbs, toAbs); }
+    catch { const b = await this.vfs.readFile(destAbs); await this.vfs.writeFile(toAbs, b); await this.vfs.unlink(destAbs).catch(() => {}); }
+    try { await this.vfs.rename(`${destAbs}.meta.json`, `${toAbs}.meta.json`); } catch { /* no sidecar */ }
+    const res = { stamped: 0 };
+    const entry = isNotePath(toRel) ? await this._scanNote(toAbs, toRel, res) : await this._scanFile(toAbs, toRel, res);
+    if (entry) { this.store.syncStacksEntry(entry); this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 }); }
+    return entry;
   }
 
   // The markdown body of a note (frontmatter stripped), for the reader/editor.

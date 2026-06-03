@@ -9364,6 +9364,37 @@ class StacksStore {
     }
   }
 
+  // Delete an entry — but honor "never really delete": move the file (+ sidecar)
+  // into /stacks/.trash/ (a dotfolder the scanner ignores), so it vanishes from weir
+  // while the bytes survive on disk, recoverable. Drops the index entry. Returns
+  // { trashed, dest } so the caller can offer undo (restoreFromTrash).
+  async trash(item) {
+    const oldRel = item.path; const oldAbs = this._abs(oldRel);
+    const dest = `.trash/${item.uid || hash32(oldRel)}__${this._basename(oldRel)}`;
+    const destAbs = this._abs(dest);
+    await this.vfs.mkdir(this._dirname(destAbs), { recursive: true });
+    try { await this.vfs.rename(oldAbs, destAbs); }
+    catch { const b = await this.vfs.readFile(oldAbs); await this.vfs.writeFile(destAbs, b); await this.vfs.unlink(oldAbs).catch(() => {}); }
+    if (item.type === 'file') { try { await this.vfs.rename(`${oldAbs}.meta.json`, `${destAbs}.meta.json`); } catch { /* no sidecar */ } }
+    const id = `stacks:${item.uid}`;
+    this.store.items.delete(id); this.store._feedSet('stacks').delete(id);
+    this.store._markFeedDirty('stacks');
+    this.store.emit('items', { inserted: 0, updated: 0, skipped: 0, removed: 1 });
+    return { trashed: oldRel, dest };
+  }
+  // Undo a trash: move the file back and re-index it.
+  async restoreFromTrash(dest, toRel) {
+    const destAbs = this._abs(dest), toAbs = this._abs(toRel);
+    await this.vfs.mkdir(this._dirname(toAbs), { recursive: true });
+    try { await this.vfs.rename(destAbs, toAbs); }
+    catch { const b = await this.vfs.readFile(destAbs); await this.vfs.writeFile(toAbs, b); await this.vfs.unlink(destAbs).catch(() => {}); }
+    try { await this.vfs.rename(`${destAbs}.meta.json`, `${toAbs}.meta.json`); } catch { /* no sidecar */ }
+    const res = { stamped: 0 };
+    const entry = isNotePath(toRel) ? await this._scanNote(toAbs, toRel, res) : await this._scanFile(toAbs, toRel, res);
+    if (entry) { this.store.syncStacksEntry(entry); this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 }); }
+    return entry;
+  }
+
   // The markdown body of a note (frontmatter stripped), for the reader/editor.
   async readNote(item) {
     const raw = await this.store.getContent(item.id);
@@ -12183,7 +12214,7 @@ class App {
     });
     this.stream.addEventListener('click', (e) => this.onStreamClick(e));
     this.stream.addEventListener('auxclick', (e) => { if (e.button !== 1) return; const row = e.target.closest('.item'); if (!row) return; const it = this.store.getItem(row.dataset.id); if (it?.url) { e.preventDefault(); window.open(it.url, '_blank', 'noopener'); } });
-    this.stream.addEventListener('contextmenu', (e) => { const row = e.target.closest('.item'); if (!row) return; e.preventDefault(); this.select(row.dataset.id); this.itemMenu(row.dataset.id, e.clientX, e.clientY); });
+    this.stream.addEventListener('contextmenu', (e) => { const row = e.target.closest('.item'); if (!row) return; e.preventDefault(); this.select(row.dataset.id); const it = this.store.getItem(row.dataset.id); if (it && it.feed_id === 'stacks') this.stacksEntryMenu(row.dataset.id, e.clientX, e.clientY); else this.itemMenu(row.dataset.id, e.clientX, e.clientY); });
     this.sources.addEventListener('contextmenu', (e) => {
       const s = e.target.closest('.source'); const h = e.target.closest('.cat-head');
       if (s) { e.preventDefault(); this.feedMenu(s.dataset.feed, e.clientX, e.clientY); }
@@ -12254,6 +12285,10 @@ class App {
       const f = e.target.closest('.stack-folder');
       if (f) { if (e.target.closest('.sf-tog')) this.toggleStackFolder(f.dataset.stackFolder); else this.setStackFolder(f.dataset.stackFolder); return; }
       const en = e.target.closest('.stack-entry'); if (en) this.selectStackEntry(en.dataset.stackId);
+    });
+    document.getElementById('stacks-tree')?.addEventListener('contextmenu', (e) => {
+      const en = e.target.closest('.stack-entry'); if (!en) return;
+      e.preventDefault(); e.stopPropagation(); this.stacksEntryMenu(en.dataset.stackId, e.clientX, e.clientY);
     });
     document.getElementById('se-save')?.addEventListener('click', () => this.saveNoteEditor());
     document.getElementById('se-close')?.addEventListener('click', () => this.closeNoteEditor());
@@ -13463,6 +13498,44 @@ class App {
       it.feed_id === 'saved' && { label: '⧉ Fetch link metadata', onClick: () => this.enrichSavedItem(id) },
       it.url && { label: 'Copy link', onClick: () => navigator.clipboard?.writeText(it.url).catch(() => {}) },
     ].filter(Boolean));
+  }
+
+  // Context menu for a stacks entry (rail tree row + stream row). Notes get Edit;
+  // files get Download. Delete routes to trash (never-delete; recoverable + undo).
+  stacksEntryMenu(id, x, y) {
+    const it = this.store.getItem(id); if (!it) return;
+    const isNote = it.type === 'note';
+    showMenu(x, y, [
+      { label: 'Open', onClick: () => this.selectStackEntry(id) },
+      isNote && { label: '✎ Edit', onClick: () => this.openNoteEditor(id) },
+      !isNote && { label: '⬇ Download', onClick: () => this.downloadStacksFile(id) },
+      it.url && { label: 'Open original ↗', onClick: () => window.open(it.url, '_blank', 'noopener') },
+      { sep: true },
+      { label: 'Tag…', onClick: () => this.openTagEditor(id) },
+      { label: 'Move to folder…', onClick: () => this.moveStackPrompt(id) },
+      it.uid && { label: 'Copy [[link]]', onClick: () => { navigator.clipboard?.writeText(`[[${it.uid}]]`).catch(() => {}); const sub = document.getElementById('view-sub'); if (sub) sub.textContent = `copied [[${it.uid}]]`; } },
+      { label: it.glass_id ? 'Re-catalog with AI' : 'Catalog with AI', onClick: () => this.catalogItem(id) },
+      { sep: true },
+      { label: '⌦ Delete', onClick: () => this.trashStack(id) },
+    ].filter(Boolean));
+  }
+  async moveStackPrompt(id) {
+    const it = this.store.getItem(id); if (!it || !this.stacks) return;
+    const to = window.prompt('Move to folder (e.g. notes, papers/kriging):', this._stackFolderOf(it.path));
+    if (to == null) return;
+    await this.stacks.move(it, to.trim());
+    await this.store.flush(); this.renderStacks(); if (this.stackFilter) this.renderStream();
+  }
+  async trashStack(id) {
+    const it = this.store.getItem(id); if (!it || !this.stacks) return;
+    const title = it.title || it.path;
+    if (this.expandedId === id) this.expandedId = null;
+    const r = await this.stacks.trash(it);
+    await this.store.flush(); this.renderStacks(); this.renderStream();
+    this.showUndo(`Deleted “${title}” (in /stacks/.trash)`, async () => {
+      await this.stacks.restoreFromTrash(r.dest, r.trashed);
+      await this.store.flush(); this.renderStacks(); if (this.stackFilter) this.renderStream();
+    });
   }
 
   feedMenu(feedId, x, y) {
@@ -15509,7 +15582,18 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...projStack(store.getItem(item.id)) };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, tagItems, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag };
+  async function stacksTrash(input = {}) {
+    const stacks = requireStacks();
+    const item = findStackByPath(input.path);
+    if (!item) throw new Error(`No stacks entry at "${input.path}".`);
+    const r = await stacks.trash(item);   // → /stacks/.trash (never-delete; recoverable)
+    await store.flush();
+    if (app.renderStacks) app.renderStacks();
+    if (app.stackFilter && app.renderStream) app.renderStream();
+    return { ok: true, ...r };
+  }
+
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, tagItems, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -15731,6 +15815,12 @@ const TOOLS = [
     },
     annotations: { title: 'Tag a stacks entry' },
   },
+  {
+    name: 'weir_stacksTrash', fn: 'stacksTrash',
+    description: 'Delete a stacks entry by `path` — but weir never really deletes: the file (+ sidecar) is moved into /stacks/.trash/ (a hidden folder the scanner ignores), so it disappears from weir while the bytes survive on disk, recoverable. Drops the index entry. Returns { ok, trashed, dest }.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Entry path to delete' } }, required: ['path'] },
+    annotations: { title: 'Delete a stacks entry', destructiveHint: true },
+  },
 ];
 
 // Register the tools on navigator.modelContext (polyfilled by the shim) and wire
@@ -15807,7 +15897,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '9801118';          // short content hash of the bundle (build id)
+const COMMIT = '46c451e';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
