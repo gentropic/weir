@@ -236,13 +236,26 @@ the trigger/query layer on top.
   destination) so dedup keys on the target; in-text titles (Google Discover
   "Title | Source &lt;url&gt;") are kept; ids are url-hash so re-import never resets
   read/saved. This folds in Holocene's backlog — **~1,500 unique links** across two
-  Telegram exports (2023→2026; see the weir-holocene-migration note). **Remaining:**
-  (a) the **ongoing Telegram bot adapter** — mint a *fresh weir bot*, poll Bot API
-  `getUpdates` via gcuFetch (allowlist `api.telegram.org`), token in the OPFS vault
-  like the LLM key, so new saves flow in live (rei retires as the consumer); (b)
-  recover the rei DB's per-link **Wayback snapshots** (`archive_url`/`archive_date`)
-  when it's back — dead-link insurance, ties to feed archaeology; (c) more import
-  formats (browser bookmarks HTML, `.bib`) = one parser each in `importers.js`.
+  Telegram exports (2023→2026; see the weir-holocene-migration note).
+  **Telegram live influxer — ✅ Phase 1 shipped 2026-06-03** (`telegram.js`
+  `TelegramInflux` + `importers.messageLinks`): a fresh weir-only bot, polled via
+  `getUpdates` (plain fetch — api.telegram.org is CORS-friendly, no bridge), token
+  in the OPFS vault, offset persisted, **owner allow-list** (auto-binds to your id),
+  bot-commands skipped. URL messages → Saved Links (resolved, idempotent vs the
+  export path); pure-text → **stashed to `/telegram-notes.ndjson`** for the notes
+  system. Captures confirmed by a 👍 (link) / ✍ (note) **reaction**.
+  **Phase 2 — the "laney" librarian reply.** Instead of just a reaction, **reply to
+  the message once the link has resolved + cataloged** with the enriched result —
+  the real og:title, its `domain` facet, and its glass call number (e.g. *"Saved ✓
+  Huffman coding · computer science · `CSC·HUF·A`"*). Needs deferred feedback: stash
+  `{chat_id, message_id}` with the saved item on capture, and when the resolver/
+  cataloger finishes that item, fire a `sendMessage` reply (or edit the reaction).
+  Makes the bot feel like a little librarian that tells you where it shelved things.
+  Optional: a feedback-mode setting (off / react / reply).
+  **Other remaining:** (a) recover the rei DB's per-link **Wayback snapshots**
+  (`archive_url`/`archive_date`) when it's back — dead-link insurance, ties to feed
+  archaeology; (b) more import formats (browser bookmarks HTML, `.bib`) = one parser
+  each in `importers.js`.
 - **Books & bibliographic holdings.** ✅ *LibraryThing import + biblio enricher +
   glass call numbers shipped 2026-06-02.* Drag a LibraryThing **JSON** export →
   `book` holdings (`importers.parseLibraryThing`, defensive field shapes, idempotent
