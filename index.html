@@ -4192,32 +4192,41 @@ async function viaBridge(url, opts = {}) {
       if (e.data?.type !== 'gcu-bridge-response' || e.data?.id !== id) return;
       clearTimeout(timer);
       window.removeEventListener('message', handler);
-      if (e.data.ok) {
-        // Three shapes the response body can take:
-        //   - string + bodyEncoding 'text' or undefined → pass to Response as-is
-        //   - ArrayBuffer (new CS path, structured-clone)  → pass to Response as-is
-        //   - string + bodyEncoding 'base64' (old CS path) → decode first
-        let resBody = e.data.body;
-        if (e.data.bodyEncoding === 'base64' && typeof resBody === 'string') {
-          resBody = arrayBufferFromBase64(resBody);
-        }
-        const res = new Response(resBody, {
-          status: e.data.status,
-          statusText: e.data.statusText,
-          headers: e.data.headers
-        });
-        // A manually-constructed Response has url === '' (the browser only sets
-        // it on real network responses). The service worker sends back the FINAL
-        // (post-redirect) url, so surface it — callers rely on response.url to
-        // resolve share-sheet/shortener redirects (an own data prop shadows the
-        // inherited Response.prototype.url getter).
-        if (e.data.url) {
-          try { Object.defineProperty(res, 'url', { value: e.data.url, configurable: true }); } catch { /* read-only env — leave '' */ }
-        }
-        resolve(res);
-      } else {
+      // Reject ONLY on a genuine bridge/relay error (origin denied, the SW's fetch
+      // threw, relay unavailable) — those carry an `error` string. Everything else is a
+      // real HTTP response and must be RESOLVED whatever the status: `e.data.ok` only
+      // reflects 2xx, but a 304/404/301 is a valid brokered response the caller has to
+      // act on (e.g. a conditional-GET poll treats 304 as "unchanged"). Rejecting on
+      // !ok turned every 304 into a spurious failure → consumers fell back to a
+      // CORS-doomed direct fetch.
+      if (e.data.error != null) {
         reject(new Error(e.data.error));
+        return;
       }
+      // Three shapes the response body can take:
+      //   - string + bodyEncoding 'text' or undefined → pass to Response as-is
+      //   - ArrayBuffer (new CS path, structured-clone)  → pass to Response as-is
+      //   - string + bodyEncoding 'base64' (old CS path) → decode first
+      let resBody = e.data.body;
+      if (e.data.bodyEncoding === 'base64' && typeof resBody === 'string') {
+        resBody = arrayBufferFromBase64(resBody);
+      }
+      // 204/205/304 are null-body statuses — the Response constructor throws on a
+      // non-null body for them, so force null defensively.
+      const nullBody = e.data.status === 204 || e.data.status === 205 || e.data.status === 304;
+      const res = new Response(nullBody ? null : resBody, {
+        status: e.data.status,
+        statusText: e.data.statusText,
+        headers: e.data.headers
+      });
+      // A manually-constructed Response has url === '' (the browser only sets it on
+      // real network responses). The SW sends back the FINAL (post-redirect) url, so
+      // surface it — callers rely on response.url to resolve redirects (an own data
+      // prop shadows the inherited Response.prototype.url getter).
+      if (e.data.url) {
+        try { Object.defineProperty(res, 'url', { value: e.data.url, configurable: true }); } catch { /* read-only env — leave '' */ }
+      }
+      resolve(res);
     }
     window.addEventListener('message', handler);
     window.postMessage({
@@ -16377,7 +16386,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '5db28a0';          // short content hash of the bundle (build id)
+const COMMIT = '4f9dcb5';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
