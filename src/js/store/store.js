@@ -673,6 +673,8 @@ export class Store {
 
   async getRouting() { return this._readText('/routing.js', ''); }
   async setRouting(src) { await this.vfs.writeFile('/routing.js', String(src)); this.emit('routing', {}); }
+  async getStacksRouting() { return this._readText('/stacks-routing.js', ''); }
+  async setStacksRouting(src) { await this.vfs.writeFile('/stacks-routing.js', String(src)); this.emit('routing', { target: 'stacks' }); }
 
   // ── persistence ──
   _markFeedDirty(feedId) { this._dirtyFeeds.add(feedId); this._scheduleFlush(); }

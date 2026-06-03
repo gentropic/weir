@@ -6,6 +6,7 @@ import { VFS } from '../vendor/vfs.js';
 import { Store } from '../src/js/store/store.js';
 import { StacksStore } from '../src/js/stacks.js';
 import { renderMarkdown } from '../src/js/ui/markdown.js';
+import { Router } from '../src/js/router.js';
 
 const fresh = async () => { const s = new Store(await VFS.create()); await s._hydrate(); return s; };
 
@@ -92,6 +93,27 @@ assert.equal((await store.vfs.readFile('/telegram-notes.ndjson', 'utf8')).trim()
 const tgNotes = stacks.entries().filter((e) => (e.tags || []).includes('telegram'));
 assert.equal(tgNotes.length, 2, 'both telegram notes are stacks entries');
 assert.ok(tgNotes.every((e) => e.path.startsWith('inbox/')), 'telegram notes land in inbox');
+
+// ── filing rules (Stage B): rule → folder; explicit wins; re-file inbox ──
+{
+  const router = new Router();
+  router.loadStacks(`export default [{ name: 'specs', when: (e) => /\\bspec\\b/i.test(e.title), then: { folder: 'specs', tag: ['spec'] } }]`);
+  store.router = router;
+  const filed = await stacks.writeNote({ title: 'Big Spec', markdown: 'x' });   // no folder → rule decides
+  assert.ok(filed.path.startsWith('specs/'), 'rule filed the note into specs/');
+  assert.ok(filed.tags.includes('spec'), 'rule tag merged onto the entry');
+  const plain = await stacks.writeNote({ title: 'a random thought', markdown: 'y' });
+  assert.ok(plain.path.startsWith('inbox/'), 'no rule match → inbox');
+  const pinned = await stacks.writeNote({ folder: 'notes', title: 'Spec but pinned', markdown: 'z' });
+  assert.ok(pinned.path.startsWith('notes/'), 'explicit folder beats the rule');
+  // re-file: a matching note forced into inbox is swept out by refileInbox
+  const late = await stacks.writeNote({ folder: 'inbox', title: 'Late Spec', markdown: 'q' });
+  assert.ok(late.path.startsWith('inbox/'), 'forced into inbox first');
+  const swept = await stacks.refileInbox();
+  assert.ok(swept.moved >= 1, 'refileInbox moved the matching inbox note');
+  assert.ok(store.getItem(late.id).path.startsWith('specs/'), 'late spec re-filed to specs/ (uid kept)');
+  store.router = null;   // don't affect the reload section below
+}
 
 // ── reload stability: uids + state survive a re-hydrate ──
 await store.flush();

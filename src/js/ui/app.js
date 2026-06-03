@@ -7,7 +7,7 @@ import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, fmtBytes, da
 import { parseOpml, buildOpml } from '../opml.js';
 import { detectImport, isWrappedUrl, isSkippedUrl } from '../importers.js';
 import { hash32 } from '../store/schema.js';
-import { DEFAULT_ROUTING } from '../router.js';
+import { DEFAULT_ROUTING, DEFAULT_STACKS_ROUTING } from '../router.js';
 import { parseWatchDigest } from '../affinity.js';
 import { showMenu } from './menu.js';
 import { showPalette } from './palette.js';
@@ -243,6 +243,7 @@ export class App {
     document.getElementById('rules-save')?.addEventListener('click', () => this.saveRules());
     document.getElementById('rules-rerun')?.addEventListener('click', () => this.uiRerunRules());
     document.getElementById('rules-close')?.addEventListener('click', () => this.closeRules());
+    document.querySelectorAll('[data-rulestab]').forEach((b) => b.addEventListener('click', () => this._loadRulesTab(b.dataset.rulestab)));
     this.store.on('notify', () => this.renderNotify());
 
     document.getElementById('set-density')?.addEventListener('change', (e) => this._setDensity(e.target.value));
@@ -1950,6 +1951,7 @@ export class App {
       { label: 'Manage tags…', kind: 'Command', run: () => this.openTagManager() },
       { label: 'New note / jot…', kind: 'Command', hint: 'stacks', run: () => this.openNoteEditor() },
       { label: 'Rescan stacks folder', kind: 'Command', run: () => this.rescanStacks() },
+      { label: 'Stacks filing rules…', kind: 'Command', run: () => this.openRules('stacks') },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
       { label: 'Re-fetch weak-title links', kind: 'Command', run: () => this.reEnrichWeak() },
       { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },
@@ -2472,7 +2474,7 @@ export class App {
     try {
       let rec;
       if (this._seEditing) { const it = this.store.getItem(this._seEditing); rec = await this.stacks.saveNote(it, md, { title, tags }); }
-      else { rec = await this.stacks.writeNote({ folder: 'inbox', title, markdown: md, tags }); }
+      else { rec = await this.stacks.writeNote({ title, markdown: md, tags }); }   // folder via stacks rules → inbox
       await this.store.flush();
       this._seEditing = rec.id; this._content.delete(rec.id);
       document.getElementById('se-path').textContent = rec.path;
@@ -2970,22 +2972,37 @@ export class App {
   }
 
   // ── routing rules editor ──
-  async openRules() {
-    const cur = await this.store.getRouting();
-    document.getElementById('rules-text').value = cur && cur.trim() ? cur : DEFAULT_ROUTING;
-    document.getElementById('rules-error').textContent = this.router?.error ? `error: ${this.router.error}` : '';
-    document.getElementById('rules-overlay').hidden = false;
-    document.getElementById('rules-text').focus();
+  // The rules overlay edits one of two rulesets (shared engine, separate lists —
+  // STACKS.md §4): 'feed' (triage feed items) or 'stacks' (file notes into folders).
+  async openRules(target = 'feed') { this.rulesTarget = null; await this._loadRulesTab(target); document.getElementById('rules-overlay').hidden = false; document.getElementById('rules-text').focus(); }
+  async _loadRulesTab(target) {
+    if (this.rulesTarget === target) return;
+    this.rulesTarget = target;
+    const stacks = target === 'stacks';
+    const cur = stacks ? await this.store.getStacksRouting() : await this.store.getRouting();
+    document.getElementById('rules-text').value = cur && cur.trim() ? cur : (stacks ? DEFAULT_STACKS_ROUTING : DEFAULT_ROUTING);
+    const err = stacks ? this.router?.stacksError : this.router?.error;
+    document.getElementById('rules-error').textContent = err ? `error: ${err}` : '';
+    document.querySelectorAll('[data-rulestab]').forEach((b) => b.classList.toggle('active', b.dataset.rulestab === target));
+    const rerun = document.getElementById('rules-rerun'); if (rerun) rerun.textContent = stacks ? 'Re-file inbox' : 'Re-run over history';
   }
   closeRules() { document.getElementById('rules-overlay').hidden = true; }
   async saveRules() {
     const text = document.getElementById('rules-text').value;
+    const stacks = this.rulesTarget === 'stacks';
+    if (stacks) { await this.store.setStacksRouting(text); const err = this.router.loadStacks(text); document.getElementById('rules-error').textContent = err ? `error: ${err}` : 'saved ✓ (files new drops)'; if (!err) setTimeout(() => this.closeRules(), 700); return; }
     await this.store.setRouting(text);
     const err = this.router.load(text);
     document.getElementById('rules-error').textContent = err ? `error: ${err}` : 'saved ✓ (applies to new items)';
     if (!err) setTimeout(() => this.closeRules(), 700);
   }
-  uiRerunRules() {
+  async uiRerunRules() {
+    if (this.rulesTarget === 'stacks') {
+      const r = this.stacks ? await this.stacks.refileInbox() : { moved: 0 };
+      await this.store.flush(); this.renderStacks(); if (this.stackFilter) this.renderStream();
+      document.getElementById('rules-error').textContent = `re-filed inbox — ${r.moved} entr${r.moved === 1 ? 'y' : 'ies'} moved`;
+      return;
+    }
     const r = this.store.rerunRules();
     document.getElementById('rules-error').textContent = `re-ran over history — ${r.matched} item${r.matched === 1 ? '' : 's'} matched`;
     this.renderAll();

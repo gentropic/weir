@@ -90,6 +90,7 @@ async function boot() {
 
   const router = new Router();
   router.load(await store.getRouting());
+  router.loadStacks(await store.getStacksRouting());   // stacks filing rules (STACKS.md §4)
   store.router = router;
 
   const adapters = [youtubeAdapter, githubAdapter, feedAdapter];   // specific before the `feed` fallback
@@ -165,7 +166,7 @@ async function boot() {
   const telegram = new TelegramInflux(store, {
     getToken: () => getKey('telegram'),
     onLinks: (links) => app.importLinks(links, 'telegram'),
-    onFile: async ({ name, bytes, mime }) => { await stacks.addFile({ folder: 'inbox', name, bytes, mime, source: 'telegram' }); await store.flush(); app.renderStacks(); },
+    onFile: async ({ name, bytes, mime }) => { await stacks.addFile({ name, bytes, mime, source: 'telegram' }); await store.flush(); app.renderStacks(); },
   });
   app.telegram = telegram;
   telegram.on((st) => app.renderTelegramStatus(st));

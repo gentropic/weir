@@ -68,18 +68,28 @@ Two entry kinds: **notes** (markdown, authored) and **files** (any dropped binar
   on (re)scan. External edits (you change frontmatter in Obsidian) sync on a **rescan**
   pass — see §9.
 
-## 4. Filing — "ready in the right place" **[designed]**
+## 4. Filing — "ready in the right place" **[shipped]**
 
 An arriving entry's subfolder is decided by, in order:
 
-1. **Explicit path / naming scheme.** Send `specs/weir/stacks.md` (or set frontmatter
-   `folder: specs/weir`) → it files straight to `/stacks/specs/weir/`. Zero config.
-   This is the path you described: write a spec in Claude web, name it sensibly, send
-   it, it lands filed.
-2. **Stacks routing rules.** The *same* `{ when, then }` engine as feed routing, but
-   `then` yields a **folder** (+ tags): `when: n => /\bspec\b/.test(n.title), then: {
-   folder: 'specs', tag: ['spec'] }`. Stored as JS, `eval`'d, applied at intake.
+1. **Explicit path / naming scheme.** Send `specs/weir/stacks.md` (or pass an explicit
+   `folder`) → it files straight to `/stacks/specs/weir/`. Zero config. Always wins.
+2. **Stacks routing rules.** A **separate rule list** from feed routing, sharing the
+   **same engine** (the two-list / shared-engine model — STACKS.md §4 decision). Rules
+   live in `/stacks-routing.js` (plain JS, like feed `/routing.js`); `Router.fileStacks(
+   entry)` runs them at intake, `then` yielding a **folder** (+ tags), first match wins.
+   `entry = { title, text, type, source, name }`. Edited in the **rules overlay's
+   "stacks filing" tab** (alongside "feed routing"); **intake-only** (a new rule doesn't
+   move old entries) with a **"Re-file inbox"** action to sweep the backlog.
 3. **Fallback → `/stacks/inbox/`** (unfiled), so nothing is ever lost waiting to be sorted.
+
+**Why split, not unified:** feeds and stacks are different inflows with different effect
+vocabularies (feeds: tag/route/retain/notify; stacks: folder/tag). One combined list
+would need a `feed_id==='stacks'` guard on nearly every rule and run stacks-only rules
+on every hot feed insert. So: split the *lists* (two files, two editor tabs), share the
+*machinery* (one `Router`, one engine). Rules are an annotation layer, not load-bearing —
+safe to redesign later. No MCP tool for rule-editing (eval'd JS + tool-bloat); the
+draft-in-chat-and-paste loop covers it, one general `weir_rules` tool if ever needed.
 
 ## 5. The Stacks view + editor **[designed]**
 
@@ -198,8 +208,10 @@ automatic (your notes aren't feed slop to auto-classify).
   + file preview/download. Telegram drops notes (stash ingest) **and files** (getFile
   download) into `/stacks/inbox/`. Palette "Stacks"/"New note", `n` to jot. Covered by
   `tools/smoke-stacks.mjs`. *(Remaining within A: swap the textarea for cm6.)*
-- **B — Filing.** Naming-scheme (path/frontmatter) + stacks routing rules → auto-subfolder.
-  *Ships: the "lands in the right place" magic.*
+- **B — Filing. ✅ SHIPPED.** Naming-scheme (explicit path/folder) + stacks routing rules
+  (`/stacks-routing.js`, `Router.fileStacks`, applied in `writeNote`/`addFile`/Telegram
+  intake) → auto-subfolder; rules editor "stacks filing" tab + "Re-file inbox" sweep.
+  Covered by `smoke-stacks.mjs`. *Ships: the "lands in the right place" magic.*
 - **C — Metadata + MCP. ✅ SHIPPED.** Frontmatter/sidecar tags + the `weir_stacks*` tools
   (`stacksList`/`stacksRead`/`stacksWrite`/`stacksMove`/`stacksTag` in `webmcp.js`) so
   Claude reads/writes/files/tags over the bridge; tag changes mirror to the file

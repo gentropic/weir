@@ -341,7 +341,13 @@
 <!-- Routing rules editor (SPEC §6) -->
 <div class="overlay" id="rules-overlay" hidden>
   <div class="panel">
-    <div class="panel-head"><span>routing.js</span><span class="rules-error" id="rules-error"></span></div>
+    <div class="panel-head">
+      <span class="se-modes">
+        <button class="btn-link se-mode active" id="rules-tab-feed" data-rulestab="feed" type="button" title="Rules that triage feed items as they arrive">⊞ feed routing</button>
+        <button class="btn-link se-mode" id="rules-tab-stacks" data-rulestab="stacks" type="button" title="Rules that file stacks notes/files into folders">❏ stacks filing</button>
+      </span>
+      <span class="rules-error" id="rules-error"></span>
+    </div>
     <textarea id="rules-text" class="rules-text" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
     <div class="panel-foot">
       <button class="btn" id="rules-save">Save</button>

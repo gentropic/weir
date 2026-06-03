@@ -27,6 +27,22 @@ export default [
 ];
 `;
 
+export const DEFAULT_STACKS_ROUTING = `// stacks-routing.js — rules run when a note/file ARRIVES without an explicit folder
+// (a Telegram drop, a quick note, a file). An explicit path always wins; no match → inbox.
+// Each rule: { name, when: (entry) => boolean, then: { folder, tag } | (entry) => actions }
+// entry: { title, text, type: 'note' | 'file', source, name }
+// Actions:
+//   folder: 'specs'   file into /stacks/<folder>/   (first match wins)
+//   tag: ['spec']     add tags
+// Applied at intake — use "Re-file inbox" to sweep existing inbox entries through them.
+
+export default [
+  // { name: 'specs',  when: (e) => /\\bspec\\b/i.test(e.title),            then: { folder: 'specs', tag: ['spec'] } },
+  // { name: 'papers', when: (e) => /arxiv\\.org|\\bdoi\\b/i.test(e.text),   then: { folder: 'papers' } },
+  // { name: 'tg drops', when: (e) => e.source === 'telegram' && e.type === 'file', then: { folder: 'drops' } },
+];
+`;
+
 // Compile the routing.js string into a rules array. Accepts `export default […]`,
 // a bare array expression, or an empty string. Throws on a syntax error.
 export function compileRules(src) {
@@ -39,7 +55,7 @@ export function compileRules(src) {
 }
 
 export class Router {
-  constructor() { this.rules = []; this.error = null; }
+  constructor() { this.rules = []; this.error = null; this.stacksRules = []; this.stacksError = null; }
 
   // Recompile from source. On error, keep no rules and record the message so the
   // editor can surface it — one broken file never silently drops the pipeline.
@@ -47,6 +63,31 @@ export class Router {
     try { this.rules = compileRules(src); this.error = null; }
     catch (e) { this.rules = []; this.error = e.message; }
     return this.error;
+  }
+
+  // The stacks filing ruleset — same engine, a separate list (different inflow +
+  // effect vocabulary; STACKS.md §4). Recompiled from /stacks-routing.js.
+  loadStacks(src) {
+    try { this.stacksRules = compileRules(src); this.stacksError = null; }
+    catch (e) { this.stacksRules = []; this.stacksError = e.message; }
+    return this.stacksError;
+  }
+
+  // Decide a stacks entry's folder (+ tags) from the stacks rules. First match wins
+  // for `folder`; tags accumulate. entry = { title, text, type, source, name }.
+  // Returns { folder?, tags: [] } — caller falls back to inbox when no folder.
+  fileStacks(entry) {
+    const out = { tags: [] };
+    for (const rule of (this.stacksRules || [])) {
+      if (!rule || rule.enabled === false || typeof rule.when !== 'function') continue;
+      let hit; try { hit = rule.when(entry); } catch (e) { console.warn(`stacks rule "${rule.name || '?'}" predicate error:`, e.message); continue; }
+      if (!hit) continue;
+      let action; try { action = typeof rule.then === 'function' ? rule.then(entry) : rule.then; } catch (e) { console.warn(`stacks rule "${rule.name || '?'}" action error:`, e.message); continue; }
+      if (!action) continue;
+      if (action.tag) for (const t of [].concat(action.tag)) if (t && !out.tags.includes(t)) out.tags.push(t);
+      if (action.folder && out.folder === undefined) out.folder = action.folder;
+    }
+    return out;
   }
 
   // Apply rules to one item: mutates item.tags / read / saved in place and

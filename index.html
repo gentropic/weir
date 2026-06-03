@@ -957,7 +957,13 @@ body {
 <!-- Routing rules editor (SPEC §6) -->
 <div class="overlay" id="rules-overlay" hidden>
   <div class="panel">
-    <div class="panel-head"><span>routing.js</span><span class="rules-error" id="rules-error"></span></div>
+    <div class="panel-head">
+      <span class="se-modes">
+        <button class="btn-link se-mode active" id="rules-tab-feed" data-rulestab="feed" type="button" title="Rules that triage feed items as they arrive">⊞ feed routing</button>
+        <button class="btn-link se-mode" id="rules-tab-stacks" data-rulestab="stacks" type="button" title="Rules that file stacks notes/files into folders">❏ stacks filing</button>
+      </span>
+      <span class="rules-error" id="rules-error"></span>
+    </div>
     <textarea id="rules-text" class="rules-text" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
     <div class="panel-foot">
       <button class="btn" id="rules-save">Save</button>
@@ -8810,6 +8816,8 @@ class Store {
 
   async getRouting() { return this._readText('/routing.js', ''); }
   async setRouting(src) { await this.vfs.writeFile('/routing.js', String(src)); this.emit('routing', {}); }
+  async getStacksRouting() { return this._readText('/stacks-routing.js', ''); }
+  async setStacksRouting(src) { await this.vfs.writeFile('/stacks-routing.js', String(src)); this.emit('routing', { target: 'stacks' }); }
 
   // ── persistence ──
   _markFeedDirty(feedId) { this._dirtyFeeds.add(feedId); this._scheduleFlush(); }
@@ -9291,17 +9299,31 @@ class StacksStore {
     return Number.isFinite(t) ? t : now();
   }
 
+  // ── filing (STACKS.md §4) ──
+  // Decide an arriving entry's folder: an explicit folder/path always wins; else the
+  // stacks routing rules; else inbox. Returns { folder, tags } (rule tags to merge).
+  _resolveFolder(probe, explicitFolder) {
+    if (explicitFolder != null && String(explicitFolder).trim() !== '') return { folder: String(explicitFolder).replace(/^\/+|\/+$/g, ''), tags: [] };
+    const r = this.store.router;
+    const fx = (r && typeof r.fileStacks === 'function') ? r.fileStacks(probe) : null;
+    if (fx && fx.folder) return { folder: String(fx.folder).replace(/^\/+|\/+$/g, ''), tags: fx.tags || [] };
+    return { folder: INBOX, tags: [] };
+  }
+  _mergeTags(...lists) { return [...new Set([].concat(...lists).map((t) => String(t).toLowerCase().trim()).filter(Boolean))]; }
+
   // ── authoring ──
-  // Create a note. Returns the stored Item record.
-  async writeNote({ folder = INBOX, name, title, markdown = '', tags = [], source, uid, created } = {}) {
+  // Create a note. `folder` explicit → filed there; omitted → stacks rules → inbox.
+  async writeNote({ folder, name, title, markdown = '', tags = [], source, uid, created } = {}) {
     uid = uid || this._uid();
     created = created || now();
     title = title || this._titleFromBody(markdown, name || '');
+    const resolved = this._resolveFolder({ title, text: String(markdown), type: 'note', source: source || '', name: name || '' }, folder);
+    const allTags = this._mergeTags(tags, resolved.tags);
     const base = this._safeName(name || slugify(title) || 'note', '.md');
-    const rel = await this._uniqueRel(this._join(folder, base));
-    const fm = this._fmEmit({ uid, title, tags, created: new Date(created).toISOString(), source });
+    const rel = await this._uniqueRel(this._join(resolved.folder, base));
+    const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source });
     await this._writeText(this._abs(rel), `---\n${fm}---\n\n${String(markdown).trim()}\n`);
-    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags, created, source, excerpt: deriveExcerpt(markdown, 300) });
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, excerpt: deriveExcerpt(markdown, 300) });
     this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
     return rec;
   }
@@ -9326,20 +9348,40 @@ class StacksStore {
   }
 
   // Drop a binary file into the stacks (bytes = Uint8Array/ArrayBuffer).
-  async addFile({ folder = INBOX, name, bytes, mime, tags = [], source, created } = {}) {
+  async addFile({ folder, name, bytes, mime, tags = [], source, created } = {}) {
     const uid = this._uid();
     created = created || now();
     const base = this._safeName(name || 'file');
-    const rel = await this._uniqueRel(this._join(folder, base));
+    const resolved = this._resolveFolder({ title: base, text: '', type: 'file', source: source || '', name: base }, folder);
+    const allTags = this._mergeTags(tags, resolved.tags);
+    const rel = await this._uniqueRel(this._join(resolved.folder, base));
     const abs = this._abs(rel);
     const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
     await this.vfs.mkdir(this._dirname(abs), { recursive: true });
     await this.vfs.writeFile(abs, data);
-    const meta = { uid, title: base, tags, created: new Date(created).toISOString(), mime: mime || mimeFor(base), source };
+    const meta = { uid, title: base, tags: allTags, created: new Date(created).toISOString(), mime: mime || mimeFor(base), source };
     await this._writeText(`${abs}.meta.json`, JSON.stringify(meta, null, 2));
-    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'file', title: base, tags, created, source, mime: meta.mime, excerpt: base });
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'file', title: base, tags: allTags, created, source, mime: meta.mime, excerpt: base });
     this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
     return rec;
+  }
+
+  // Sweep existing inbox entries through the stacks rules (the "Re-file inbox"
+  // action — rules are intake-only, so this applies a newly-added rule to the
+  // backlog). Moves matches out of inbox + merges rule tags. Returns { moved }.
+  async refileInbox() {
+    const r = this.store.router;
+    if (!r || typeof r.fileStacks !== 'function') return { moved: 0 };
+    let moved = 0;
+    for (const e of this.entries()) {
+      if (e.missing || this._dirname(e.path) !== INBOX) continue;
+      const fx = r.fileStacks({ title: e.title, text: e.excerpt || '', type: e.type, source: '', name: this._basename(e.path) });
+      if (!fx || !fx.folder || fx.folder === INBOX) continue;
+      await this.move(e, fx.folder);
+      if (fx.tags && fx.tags.length) { for (const t of fx.tags) this.store.addTag(e.id, t, 'rule'); await this.syncTagsToFile(this.store.getItem(e.id)); }
+      moved++;
+    }
+    return { moved };
   }
 
   // Move/refile an entry to another folder — keeps the uid (so state + links ride
@@ -9428,7 +9470,7 @@ class StacksStore {
       const md = String(j.text || '').trim();
       if (!md) continue;
       const title = (md.split('\n')[0] || 'note').slice(0, 80);
-      await this.writeNote({ folder: INBOX, title, markdown: md, tags: ['telegram'], source: 'telegram', created: j.at });
+      await this.writeNote({ title, markdown: md, tags: ['telegram'], source: 'telegram', created: j.at });   // folder via rules → inbox
       n++;
     }
     try { await this.vfs.writeFile(STACKS_STASH, ''); } catch { /* best effort */ }   // consumed
@@ -10913,6 +10955,22 @@ const DEFAULT_ROUTING = `// routing.js — rules run on each NEW item at insert 
 ];
 `;
 
+const DEFAULT_STACKS_ROUTING = `// stacks-routing.js — rules run when a note/file ARRIVES without an explicit folder
+// (a Telegram drop, a quick note, a file). An explicit path always wins; no match → inbox.
+// Each rule: { name, when: (entry) => boolean, then: { folder, tag } | (entry) => actions }
+// entry: { title, text, type: 'note' | 'file', source, name }
+// Actions:
+//   folder: 'specs'   file into /stacks/<folder>/   (first match wins)
+//   tag: ['spec']     add tags
+// Applied at intake — use "Re-file inbox" to sweep existing inbox entries through them.
+
+
+  // { name: 'specs',  when: (e) => /\\bspec\\b/i.test(e.title),            then: { folder: 'specs', tag: ['spec'] } },
+  // { name: 'papers', when: (e) => /arxiv\\.org|\\bdoi\\b/i.test(e.text),   then: { folder: 'papers' } },
+  // { name: 'tg drops', when: (e) => e.source === 'telegram' && e.type === 'file', then: { folder: 'drops' } },
+];
+`;
+
 // Compile the routing.js string into a rules array. Accepts `export default […]`,
 // a bare array expression, or an empty string. Throws on a syntax error.
 function compileRules(src) {
@@ -10925,7 +10983,7 @@ function compileRules(src) {
 }
 
 class Router {
-  constructor() { this.rules = []; this.error = null; }
+  constructor() { this.rules = []; this.error = null; this.stacksRules = []; this.stacksError = null; }
 
   // Recompile from source. On error, keep no rules and record the message so the
   // editor can surface it — one broken file never silently drops the pipeline.
@@ -10933,6 +10991,31 @@ class Router {
     try { this.rules = compileRules(src); this.error = null; }
     catch (e) { this.rules = []; this.error = e.message; }
     return this.error;
+  }
+
+  // The stacks filing ruleset — same engine, a separate list (different inflow +
+  // effect vocabulary; STACKS.md §4). Recompiled from /stacks-routing.js.
+  loadStacks(src) {
+    try { this.stacksRules = compileRules(src); this.stacksError = null; }
+    catch (e) { this.stacksRules = []; this.stacksError = e.message; }
+    return this.stacksError;
+  }
+
+  // Decide a stacks entry's folder (+ tags) from the stacks rules. First match wins
+  // for `folder`; tags accumulate. entry = { title, text, type, source, name }.
+  // Returns { folder?, tags: [] } — caller falls back to inbox when no folder.
+  fileStacks(entry) {
+    const out = { tags: [] };
+    for (const rule of (this.stacksRules || [])) {
+      if (!rule || rule.enabled === false || typeof rule.when !== 'function') continue;
+      let hit; try { hit = rule.when(entry); } catch (e) { console.warn(`stacks rule "${rule.name || '?'}" predicate error:`, e.message); continue; }
+      if (!hit) continue;
+      let action; try { action = typeof rule.then === 'function' ? rule.then(entry) : rule.then; } catch (e) { console.warn(`stacks rule "${rule.name || '?'}" action error:`, e.message); continue; }
+      if (!action) continue;
+      if (action.tag) for (const t of [].concat(action.tag)) if (t && !out.tags.includes(t)) out.tags.push(t);
+      if (action.folder && out.folder === undefined) out.folder = action.folder;
+    }
+    return out;
   }
 
   // Apply rules to one item: mutates item.tags / read / saved in place and
@@ -12370,6 +12453,7 @@ class App {
     document.getElementById('rules-save')?.addEventListener('click', () => this.saveRules());
     document.getElementById('rules-rerun')?.addEventListener('click', () => this.uiRerunRules());
     document.getElementById('rules-close')?.addEventListener('click', () => this.closeRules());
+    document.querySelectorAll('[data-rulestab]').forEach((b) => b.addEventListener('click', () => this._loadRulesTab(b.dataset.rulestab)));
     this.store.on('notify', () => this.renderNotify());
 
     document.getElementById('set-density')?.addEventListener('change', (e) => this._setDensity(e.target.value));
@@ -14077,6 +14161,7 @@ class App {
       { label: 'Manage tags…', kind: 'Command', run: () => this.openTagManager() },
       { label: 'New note / jot…', kind: 'Command', hint: 'stacks', run: () => this.openNoteEditor() },
       { label: 'Rescan stacks folder', kind: 'Command', run: () => this.rescanStacks() },
+      { label: 'Stacks filing rules…', kind: 'Command', run: () => this.openRules('stacks') },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
       { label: 'Re-fetch weak-title links', kind: 'Command', run: () => this.reEnrichWeak() },
       { label: 'Remove non-content links', kind: 'Command', run: () => this.cleanSavedLinks() },
@@ -14599,7 +14684,7 @@ class App {
     try {
       let rec;
       if (this._seEditing) { const it = this.store.getItem(this._seEditing); rec = await this.stacks.saveNote(it, md, { title, tags }); }
-      else { rec = await this.stacks.writeNote({ folder: 'inbox', title, markdown: md, tags }); }
+      else { rec = await this.stacks.writeNote({ title, markdown: md, tags }); }   // folder via stacks rules → inbox
       await this.store.flush();
       this._seEditing = rec.id; this._content.delete(rec.id);
       document.getElementById('se-path').textContent = rec.path;
@@ -15097,22 +15182,37 @@ class App {
   }
 
   // ── routing rules editor ──
-  async openRules() {
-    const cur = await this.store.getRouting();
-    document.getElementById('rules-text').value = cur && cur.trim() ? cur : DEFAULT_ROUTING;
-    document.getElementById('rules-error').textContent = this.router?.error ? `error: ${this.router.error}` : '';
-    document.getElementById('rules-overlay').hidden = false;
-    document.getElementById('rules-text').focus();
+  // The rules overlay edits one of two rulesets (shared engine, separate lists —
+  // STACKS.md §4): 'feed' (triage feed items) or 'stacks' (file notes into folders).
+  async openRules(target = 'feed') { this.rulesTarget = null; await this._loadRulesTab(target); document.getElementById('rules-overlay').hidden = false; document.getElementById('rules-text').focus(); }
+  async _loadRulesTab(target) {
+    if (this.rulesTarget === target) return;
+    this.rulesTarget = target;
+    const stacks = target === 'stacks';
+    const cur = stacks ? await this.store.getStacksRouting() : await this.store.getRouting();
+    document.getElementById('rules-text').value = cur && cur.trim() ? cur : (stacks ? DEFAULT_STACKS_ROUTING : DEFAULT_ROUTING);
+    const err = stacks ? this.router?.stacksError : this.router?.error;
+    document.getElementById('rules-error').textContent = err ? `error: ${err}` : '';
+    document.querySelectorAll('[data-rulestab]').forEach((b) => b.classList.toggle('active', b.dataset.rulestab === target));
+    const rerun = document.getElementById('rules-rerun'); if (rerun) rerun.textContent = stacks ? 'Re-file inbox' : 'Re-run over history';
   }
   closeRules() { document.getElementById('rules-overlay').hidden = true; }
   async saveRules() {
     const text = document.getElementById('rules-text').value;
+    const stacks = this.rulesTarget === 'stacks';
+    if (stacks) { await this.store.setStacksRouting(text); const err = this.router.loadStacks(text); document.getElementById('rules-error').textContent = err ? `error: ${err}` : 'saved ✓ (files new drops)'; if (!err) setTimeout(() => this.closeRules(), 700); return; }
     await this.store.setRouting(text);
     const err = this.router.load(text);
     document.getElementById('rules-error').textContent = err ? `error: ${err}` : 'saved ✓ (applies to new items)';
     if (!err) setTimeout(() => this.closeRules(), 700);
   }
-  uiRerunRules() {
+  async uiRerunRules() {
+    if (this.rulesTarget === 'stacks') {
+      const r = this.stacks ? await this.stacks.refileInbox() : { moved: 0 };
+      await this.store.flush(); this.renderStacks(); if (this.stackFilter) this.renderStream();
+      document.getElementById('rules-error').textContent = `re-filed inbox — ${r.moved} entr${r.moved === 1 ? 'y' : 'ies'} moved`;
+      return;
+    }
     const r = this.store.rerunRules();
     document.getElementById('rules-error').textContent = `re-ran over history — ${r.matched} item${r.matched === 1 ? '' : 's'} matched`;
     this.renderAll();
@@ -15910,7 +16010,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'e11db62';          // short content hash of the bundle (build id)
+const COMMIT = '8a71bf1';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -15973,6 +16073,7 @@ async function boot() {
 
   const router = new Router();
   router.load(await store.getRouting());
+  router.loadStacks(await store.getStacksRouting());   // stacks filing rules (STACKS.md §4)
   store.router = router;
 
   const adapters = [youtubeAdapter, githubAdapter, feedAdapter];   // specific before the `feed` fallback
@@ -16048,7 +16149,7 @@ async function boot() {
   const telegram = new TelegramInflux(store, {
     getToken: () => getKey('telegram'),
     onLinks: (links) => app.importLinks(links, 'telegram'),
-    onFile: async ({ name, bytes, mime }) => { await stacks.addFile({ folder: 'inbox', name, bytes, mime, source: 'telegram' }); await store.flush(); app.renderStacks(); },
+    onFile: async ({ name, bytes, mime }) => { await stacks.addFile({ name, bytes, mime, source: 'telegram' }); await store.flush(); app.renderStacks(); },
   });
   app.telegram = telegram;
   telegram.on((st) => app.renderTelegramStatus(st));

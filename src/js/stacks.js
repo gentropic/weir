@@ -218,17 +218,31 @@ export class StacksStore {
     return Number.isFinite(t) ? t : now();
   }
 
+  // ── filing (STACKS.md §4) ──
+  // Decide an arriving entry's folder: an explicit folder/path always wins; else the
+  // stacks routing rules; else inbox. Returns { folder, tags } (rule tags to merge).
+  _resolveFolder(probe, explicitFolder) {
+    if (explicitFolder != null && String(explicitFolder).trim() !== '') return { folder: String(explicitFolder).replace(/^\/+|\/+$/g, ''), tags: [] };
+    const r = this.store.router;
+    const fx = (r && typeof r.fileStacks === 'function') ? r.fileStacks(probe) : null;
+    if (fx && fx.folder) return { folder: String(fx.folder).replace(/^\/+|\/+$/g, ''), tags: fx.tags || [] };
+    return { folder: INBOX, tags: [] };
+  }
+  _mergeTags(...lists) { return [...new Set([].concat(...lists).map((t) => String(t).toLowerCase().trim()).filter(Boolean))]; }
+
   // ── authoring ──
-  // Create a note. Returns the stored Item record.
-  async writeNote({ folder = INBOX, name, title, markdown = '', tags = [], source, uid, created } = {}) {
+  // Create a note. `folder` explicit → filed there; omitted → stacks rules → inbox.
+  async writeNote({ folder, name, title, markdown = '', tags = [], source, uid, created } = {}) {
     uid = uid || this._uid();
     created = created || now();
     title = title || this._titleFromBody(markdown, name || '');
+    const resolved = this._resolveFolder({ title, text: String(markdown), type: 'note', source: source || '', name: name || '' }, folder);
+    const allTags = this._mergeTags(tags, resolved.tags);
     const base = this._safeName(name || slugify(title) || 'note', '.md');
-    const rel = await this._uniqueRel(this._join(folder, base));
-    const fm = this._fmEmit({ uid, title, tags, created: new Date(created).toISOString(), source });
+    const rel = await this._uniqueRel(this._join(resolved.folder, base));
+    const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source });
     await this._writeText(this._abs(rel), `---\n${fm}---\n\n${String(markdown).trim()}\n`);
-    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags, created, source, excerpt: deriveExcerpt(markdown, 300) });
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, excerpt: deriveExcerpt(markdown, 300) });
     this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
     return rec;
   }
@@ -253,20 +267,40 @@ export class StacksStore {
   }
 
   // Drop a binary file into the stacks (bytes = Uint8Array/ArrayBuffer).
-  async addFile({ folder = INBOX, name, bytes, mime, tags = [], source, created } = {}) {
+  async addFile({ folder, name, bytes, mime, tags = [], source, created } = {}) {
     const uid = this._uid();
     created = created || now();
     const base = this._safeName(name || 'file');
-    const rel = await this._uniqueRel(this._join(folder, base));
+    const resolved = this._resolveFolder({ title: base, text: '', type: 'file', source: source || '', name: base }, folder);
+    const allTags = this._mergeTags(tags, resolved.tags);
+    const rel = await this._uniqueRel(this._join(resolved.folder, base));
     const abs = this._abs(rel);
     const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
     await this.vfs.mkdir(this._dirname(abs), { recursive: true });
     await this.vfs.writeFile(abs, data);
-    const meta = { uid, title: base, tags, created: new Date(created).toISOString(), mime: mime || mimeFor(base), source };
+    const meta = { uid, title: base, tags: allTags, created: new Date(created).toISOString(), mime: mime || mimeFor(base), source };
     await this._writeText(`${abs}.meta.json`, JSON.stringify(meta, null, 2));
-    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'file', title: base, tags, created, source, mime: meta.mime, excerpt: base });
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'file', title: base, tags: allTags, created, source, mime: meta.mime, excerpt: base });
     this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
     return rec;
+  }
+
+  // Sweep existing inbox entries through the stacks rules (the "Re-file inbox"
+  // action — rules are intake-only, so this applies a newly-added rule to the
+  // backlog). Moves matches out of inbox + merges rule tags. Returns { moved }.
+  async refileInbox() {
+    const r = this.store.router;
+    if (!r || typeof r.fileStacks !== 'function') return { moved: 0 };
+    let moved = 0;
+    for (const e of this.entries()) {
+      if (e.missing || this._dirname(e.path) !== INBOX) continue;
+      const fx = r.fileStacks({ title: e.title, text: e.excerpt || '', type: e.type, source: '', name: this._basename(e.path) });
+      if (!fx || !fx.folder || fx.folder === INBOX) continue;
+      await this.move(e, fx.folder);
+      if (fx.tags && fx.tags.length) { for (const t of fx.tags) this.store.addTag(e.id, t, 'rule'); await this.syncTagsToFile(this.store.getItem(e.id)); }
+      moved++;
+    }
+    return { moved };
   }
 
   // Move/refile an entry to another folder — keeps the uid (so state + links ride
@@ -355,7 +389,7 @@ export class StacksStore {
       const md = String(j.text || '').trim();
       if (!md) continue;
       const title = (md.split('\n')[0] || 'note').slice(0, 80);
-      await this.writeNote({ folder: INBOX, title, markdown: md, tags: ['telegram'], source: 'telegram', created: j.at });
+      await this.writeNote({ title, markdown: md, tags: ['telegram'], source: 'telegram', created: j.at });   // folder via rules → inbox
       n++;
     }
     try { await this.vfs.writeFile(STACKS_STASH, ''); } catch { /* best effort */ }   // consumed
