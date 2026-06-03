@@ -335,7 +335,11 @@ body {
 .help-row kbd { background: var(--sw-bg-bright); border: 1px solid var(--au-rule); border-radius: 3px; padding: 1px 6px; font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-muted); }
 .help-row.hint { display: block; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--au-border); color: var(--au-fg-soft); font-size: 12px; line-height: 1.5; }
 #update-toast { bottom: 80px; }
-.rules-text { flex: 1; resize: none; border: none; outline: none; background: var(--sw-bg-deep); color: var(--au-fg); font-family: var(--au-font-mono); font-size: 12.5px; line-height: 1.55; padding: 14px 16px; tab-size: 2; }
+/* CM6 host for the routing-rules editor (was a textarea; theme set in app.js). */
+.rules-text { flex: 1; min-height: 0; overflow: hidden; background: var(--sw-bg-deep); }
+.rules-text .cm-editor { height: 100%; }
+.rules-text .cm-editor.cm-focused { outline: none; }
+.rules-text .cm-scroller { overflow: auto; }
 .panel-foot { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--au-border); }
 
 /* settings form */

@@ -479,7 +479,11 @@ body {
 .help-row kbd { background: var(--sw-bg-bright); border: 1px solid var(--au-rule); border-radius: 3px; padding: 1px 6px; font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-muted); }
 .help-row.hint { display: block; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--au-border); color: var(--au-fg-soft); font-size: 12px; line-height: 1.5; }
 #update-toast { bottom: 80px; }
-.rules-text { flex: 1; resize: none; border: none; outline: none; background: var(--sw-bg-deep); color: var(--au-fg); font-family: var(--au-font-mono); font-size: 12.5px; line-height: 1.55; padding: 14px 16px; tab-size: 2; }
+/* CM6 host for the routing-rules editor (was a textarea; theme set in app.js). */
+.rules-text { flex: 1; min-height: 0; overflow: hidden; background: var(--sw-bg-deep); }
+.rules-text .cm-editor { height: 100%; }
+.rules-text .cm-editor.cm-focused { outline: none; }
+.rules-text .cm-scroller { overflow: auto; }
 .panel-foot { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--au-border); }
 
 /* settings form */
@@ -964,7 +968,7 @@ body {
       </span>
       <span class="rules-error" id="rules-error"></span>
     </div>
-    <textarea id="rules-text" class="rules-text" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+    <div id="rules-text" class="rules-text"></div>
     <div class="panel-foot">
       <button class="btn" id="rules-save">Save</button>
       <button class="btn" id="rules-rerun">Re-run over history</button>
@@ -14192,6 +14196,7 @@ class App {
     // Cmd/Ctrl-S saves the open note editor, from anywhere within it.
     const seOpen = !document.getElementById('stacks-editor-overlay')?.hidden;
     if (seOpen && (e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); this.saveNoteEditor(); return; }
+    if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S') && !document.getElementById('rules-overlay')?.hidden) { e.preventDefault(); this.saveRules(); return; }
     // Esc closes any open overlay first, from anywhere (incl. from a field in it).
     if (e.key === 'Escape') {
       if (seOpen) { e.preventDefault(); this.closeNoteEditor(); if (e.target.blur) e.target.blur(); return; }
@@ -14599,48 +14604,47 @@ class App {
     const sub = document.getElementById('view-sub'); if (sub && n) sub.textContent = `forgot ${n} missing stack entr${n === 1 ? 'y' : 'ies'}`;
   }
 
-  // ── note editor (CodeMirror 6; edit / split / preview toggle) ──
-  // Lazily build the editor in #se-edit. CM6 when the bundle is present; a plain
-  // textarea fallback if it somehow didn't load — both behind one {get,set,focus}
-  // shim so the rest of the editor code is widget-agnostic.
-  _seEnsureEditor() {
-    if (this._seEditor) return this._seEditor;
-    const host = document.getElementById('se-edit'); if (!host) return null;
-    const sync = () => { clearTimeout(this._sePvTimer); this._sePvTimer = setTimeout(() => this._seSyncPreview(), 150); };
+  // Mount a CodeMirror 6 editor into `host` (or a styled textarea fallback if the
+  // CM6 bundle didn't load). `language` is a CM6 language extension (markdown()/
+  // javascript()) or null; `onChange()` fires on every doc change. Returns a
+  // widget-agnostic { get, set, focus, measure } shim. Shared by the note editor +
+  // the routing-rules editor — cm6 is already bundled, so reusing it is free.
+  _mountCm(host, language, onChange) {
     const CM = window.CM6;
     if (!CM || !CM.EditorView) {   // fallback: a textarea, styled to fill the host
       const ta = document.createElement('textarea');
       ta.style.cssText = 'width:100%;height:100%;resize:none;border:none;outline:none;background:transparent;color:var(--au-fg);font-family:var(--au-font-mono);font-size:13px;line-height:1.6;padding:14px 16px;box-sizing:border-box;';
-      ta.spellcheck = false; ta.addEventListener('input', sync); host.appendChild(ta);
-      this._seEditor = { get: () => ta.value, set: (t) => { ta.value = t; }, focus: () => ta.focus(), measure: () => {} };
-      return this._seEditor;
+      ta.spellcheck = false; ta.autocapitalize = 'off'; if (onChange) ta.addEventListener('input', onChange); host.appendChild(ta);
+      return { get: () => ta.value, set: (t) => { ta.value = t; }, focus: () => ta.focus(), measure: () => {} };
     }
-    const view = new CM.EditorView({
-      parent: host,
-      state: CM.EditorState.create({
-        doc: '',
-        extensions: [
-          CM.minimalSetup,
-          CM.markdown ? CM.markdown() : [],
-          CM.EditorView.lineWrapping,
-          // NB: no Mod-s binding here — the document-level onKey handles Cmd/Ctrl-S
-          // (the keydown bubbles up from CM6), so binding it here too would double-fire
-          // saveNoteEditor and create two notes on a first save.
-          CM.indentWithTab ? CM.keymap.of([CM.indentWithTab]) : [],
-          CM.EditorView.updateListener.of((u) => { if (u.docChanged) sync(); }),
-          CM.EditorView.theme({
-            '&': { color: 'var(--au-fg)', backgroundColor: 'transparent', height: '100%', fontSize: '13px' },
-            '.cm-content': { fontFamily: 'var(--au-font-mono)', padding: '14px 16px', caretColor: 'var(--au-fg)' },
-            '.cm-scroller': { lineHeight: '1.6' },
-            '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--au-fg)' },
-            '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': { backgroundColor: 'var(--sw-bg-bright)' },
-            '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: 'var(--au-fg-soft)' },
-            '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'transparent' },
-          }, { dark: true }),
-        ],
-      }),
-    });
-    this._seEditor = { get: () => view.state.doc.toString(), set: (t) => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: String(t || '') } }), focus: () => view.focus(), measure: () => view.requestMeasure() };
+    // NB: no Mod-s binding here — the document-level onKey handles Cmd/Ctrl-S (the
+    // keydown bubbles up from CM6); binding it here too would double-fire the save.
+    const exts = [
+      CM.minimalSetup,
+      language || [],
+      CM.EditorView.lineWrapping,
+      CM.indentWithTab ? CM.keymap.of([CM.indentWithTab]) : [],
+      CM.EditorView.theme({
+        '&': { color: 'var(--au-fg)', backgroundColor: 'transparent', height: '100%', fontSize: '13px' },
+        '.cm-content': { fontFamily: 'var(--au-font-mono)', padding: '14px 16px', caretColor: 'var(--au-fg)' },
+        '.cm-scroller': { lineHeight: '1.6' },
+        '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--au-fg)' },
+        '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': { backgroundColor: 'var(--sw-bg-bright)' },
+        '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: 'var(--au-fg-soft)' },
+        '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'transparent' },
+      }, { dark: true }),
+    ];
+    if (onChange) exts.push(CM.EditorView.updateListener.of((u) => { if (u.docChanged) onChange(); }));
+    const view = new CM.EditorView({ parent: host, state: CM.EditorState.create({ doc: '', extensions: exts }) });
+    return { get: () => view.state.doc.toString(), set: (t) => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: String(t || '') } }), focus: () => view.focus(), measure: () => view.requestMeasure() };
+  }
+
+  // ── note editor (CodeMirror 6; edit / split / preview toggle) ──
+  _seEnsureEditor() {
+    if (this._seEditor) return this._seEditor;
+    const host = document.getElementById('se-edit'); if (!host) return null;
+    const sync = () => { clearTimeout(this._sePvTimer); this._sePvTimer = setTimeout(() => this._seSyncPreview(), 150); };
+    this._seEditor = this._mountCm(host, (window.CM6 && window.CM6.markdown) ? window.CM6.markdown() : null, sync);
     return this._seEditor;
   }
   _seGetValue() { return this._seEditor ? this._seEditor.get() : ''; }
@@ -15184,13 +15188,19 @@ class App {
   // ── routing rules editor ──
   // The rules overlay edits one of two rulesets (shared engine, separate lists —
   // STACKS.md §4): 'feed' (triage feed items) or 'stacks' (file notes into folders).
-  async openRules(target = 'feed') { this.rulesTarget = null; await this._loadRulesTab(target); document.getElementById('rules-overlay').hidden = false; document.getElementById('rules-text').focus(); }
+  _rulesEnsureEditor() {
+    if (this._rulesEditor) return this._rulesEditor;
+    const host = document.getElementById('rules-text'); if (!host) return null;
+    this._rulesEditor = this._mountCm(host, (window.CM6 && window.CM6.javascript) ? window.CM6.javascript() : null, null);   // JS highlighting for the rule predicates
+    return this._rulesEditor;
+  }
+  async openRules(target = 'feed') { this._rulesEnsureEditor(); this.rulesTarget = null; await this._loadRulesTab(target); document.getElementById('rules-overlay').hidden = false; this._rulesEditor?.measure(); this._rulesEditor?.focus(); }
   async _loadRulesTab(target) {
     if (this.rulesTarget === target) return;
     this.rulesTarget = target;
     const stacks = target === 'stacks';
     const cur = stacks ? await this.store.getStacksRouting() : await this.store.getRouting();
-    document.getElementById('rules-text').value = cur && cur.trim() ? cur : (stacks ? DEFAULT_STACKS_ROUTING : DEFAULT_ROUTING);
+    this._rulesEnsureEditor()?.set(cur && cur.trim() ? cur : (stacks ? DEFAULT_STACKS_ROUTING : DEFAULT_ROUTING));
     const err = stacks ? this.router?.stacksError : this.router?.error;
     document.getElementById('rules-error').textContent = err ? `error: ${err}` : '';
     document.querySelectorAll('[data-rulestab]').forEach((b) => b.classList.toggle('active', b.dataset.rulestab === target));
@@ -15198,7 +15208,7 @@ class App {
   }
   closeRules() { document.getElementById('rules-overlay').hidden = true; }
   async saveRules() {
-    const text = document.getElementById('rules-text').value;
+    const text = this._rulesEditor ? this._rulesEditor.get() : '';
     const stacks = this.rulesTarget === 'stacks';
     if (stacks) { await this.store.setStacksRouting(text); const err = this.router.loadStacks(text); document.getElementById('rules-error').textContent = err ? `error: ${err}` : 'saved ✓ (files new drops)'; if (!err) setTimeout(() => this.closeRules(), 700); return; }
     await this.store.setRouting(text);
@@ -16010,7 +16020,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '8a71bf1';          // short content hash of the bundle (build id)
+const COMMIT = 'f521b98';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
