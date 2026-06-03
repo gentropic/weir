@@ -209,6 +209,28 @@ await assert.rejects(tools.recover({ id: 'f' }), /only available/, 'recover need
   await store.removeFeed('dead-a'); await store.removeFeed('dead-b');   // restore baseline
 }
 
+// ── mergeFacetTerm: thesaurus normalization (single + batch) ──
+{
+  await store.writeCard({ glass: { document_ref: 'm1', cataloged: '2026-06-01' }, facets: { entity: ['ai'], spatial: ['usa'] }, dublin_core: {} });
+  await store.writeCard({ glass: { document_ref: 'm2', cataloged: '2026-06-01' }, facets: { entity: ['artificial intelligence', 'ai'], spatial: ['uk'] }, dublin_core: {} });
+  const mTools = buildWeirTools({ store });
+  // single merge
+  const one = await mTools.mergeFacetTerm({ facet: 'entity', from: 'ai', to: 'artificial intelligence' });
+  assert.equal(one.cardsChanged, 2, 'single merge touched both cards');
+  // batch merge (atomic)
+  const batch = await mTools.mergeFacetTerm({ merges: [
+    { facet: 'spatial', from: 'usa', to: 'united states' },
+    { facet: 'spatial', from: 'uk', to: 'united kingdom' },
+  ] });
+  assert.equal(batch.merges.length, 2, 'batch ran both merges');
+  assert.equal(batch.cardsChanged, 2, 'one card each');
+  // validation
+  await assert.rejects(mTools.mergeFacetTerm({}), /facet, from/, 'needs a merge spec');
+  await assert.rejects(mTools.mergeFacetTerm({ merges: [{ from: 'x' }] }), /facet and a from/, 'each merge needs facet+from');
+  // cleanup the test cards
+  for (const c of [...store.cards.values()]) { if (['m1', 'm2'].includes(c.glass.document_ref)) { store.cards.delete(c.glass.glass_id); } }
+}
+
 // ── catalog control (mock app) ──
 const calls = [];
 const mockApp = {

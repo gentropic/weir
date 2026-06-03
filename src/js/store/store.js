@@ -938,6 +938,46 @@ export class Store {
   }
   async catalogCount() { return this.cards.size; }
 
+  // Controlled-vocabulary normalization (the thesaurus primitive): rewrite a term
+  // across EVERY catalog card within one facet — `from` → `to`, de-duplicated,
+  // order preserved. This is the term-level analog of markCardReviewed's per-card
+  // edit: a single vocabulary decision applied catalog-wide, so facet-browsing
+  // stops silently splitting one concept across spelling/synonym variants
+  // (`usa` vs `united states`). `to` empty/null DROPS the term with no replacement
+  // (collapse a junk/singleton term). Match on `from` is case-insensitive (terms
+  // are stored lowercased). Returns the number of cards changed. Pure card edit —
+  // items/content/reading state untouched; reversible by merging back.
+  mergeFacetTerm(facet, from, to) {
+    facet = String(facet || '').trim();
+    const fromT = String(from == null ? '' : from).toLowerCase().trim();
+    const toT = String(to == null ? '' : to).toLowerCase().trim();
+    if (!facet || !fromT) throw new Error('mergeFacetTerm needs a facet and a from-term');
+    if (fromT === toT) return 0;
+    let changed = 0;
+    for (const card of this.cards.values()) {
+      const arr = card.facets && card.facets[facet];
+      if (!Array.isArray(arr) || !arr.length) continue;
+      let hit = false;
+      const seen = new Set();
+      const out = [];
+      for (const t of arr) {
+        const isFrom = String(t).toLowerCase() === fromT;
+        if (isFrom) hit = true;
+        const term = isFrom ? toT : String(t);
+        if (!term) continue;                       // dropped (to === '')
+        const key = term.toLowerCase();
+        if (seen.has(key)) continue;               // dedup (to-term already present)
+        seen.add(key); out.push(term);
+      }
+      if (!hit) continue;
+      card.facets[facet] = out;
+      this._markCardDirty(card.glass.glass_id);
+      changed++;
+    }
+    if (changed) this.emit('catalog', { merged: facet });
+    return changed;
+  }
+
   // Discard the cards for every item in a scope (feed / folder / type) so they
   // re-queue for cataloging — the engine of a SCOPED RE-CATALOG ("re-do the books",
   // "re-facet the geostatistics domain"). Mirrors catalogScope's candidate set.

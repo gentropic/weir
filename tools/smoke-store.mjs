@@ -310,4 +310,36 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.ok(!s.items.get('micro:1').title_synth, 'synth flag cleared when a real title arrives');
 }
 
+// ── mergeFacetTerm: thesaurus normalization across catalog cards ──
+{
+  const v = await VFS.create();
+  const s = new Store(v); await s._hydrate();
+  await s.writeCard({ glass: { document_ref: 'x1', cataloged: '2026-06-01' }, facets: { entity: ['ai', 'python'], spatial: ['usa'] }, dublin_core: {} });
+  await s.writeCard({ glass: { document_ref: 'x2', cataloged: '2026-06-01' }, facets: { entity: ['artificial intelligence', 'ai'], spatial: ['united states'] }, dublin_core: {} });
+  await s.writeCard({ glass: { document_ref: 'x3', cataloged: '2026-06-01' }, facets: { entity: ['ml'] }, dublin_core: {} });
+  const cards = [...s.cards.values()];
+  const ref = (r) => cards.find((c) => c.glass.document_ref === r);
+
+  // merge ai → artificial intelligence
+  assert.equal(s.mergeFacetTerm('entity', 'ai', 'artificial intelligence'), 2, 'two cards carried "ai"');
+  assert.deepEqual(ref('x1').facets.entity, ['artificial intelligence', 'python'], 'x1 rewritten, order preserved');
+  assert.deepEqual(ref('x2').facets.entity, ['artificial intelligence'], 'x2 dedups the now-duplicate term');
+  // spatial usa → united states (one card has usa; the other already canonical)
+  assert.equal(s.mergeFacetTerm('spatial', 'usa', 'united states'), 1, 'one card had usa');
+  assert.deepEqual(ref('x1').facets.spatial, ['united states'], 'usa → united states');
+  // drop a junk term (empty `to`)
+  assert.equal(s.mergeFacetTerm('entity', 'ml', ''), 1, 'ml dropped from one card');
+  assert.deepEqual(ref('x3').facets.entity, [], 'ml removed with no replacement');
+  // no-ops + guards
+  assert.equal(s.mergeFacetTerm('entity', 'nonexistent', 'x'), 0, 'unknown term → 0 cards');
+  assert.equal(s.mergeFacetTerm('entity', 'python', 'python'), 0, 'from===to → no-op');
+  assert.throws(() => s.mergeFacetTerm('', 'a', 'b'), /needs a facet/, 'empty facet rejected');
+  // survives reload (persisted to card shards)
+  await s.flush();
+  const s2 = new Store(v); await s2._hydrate();
+  const x1b = [...s2.cards.values()].find((c) => c.glass.document_ref === 'x1');
+  assert.deepEqual(x1b.facets.entity, ['artificial intelligence', 'python'], 'merge survives reload');
+  assert.deepEqual(x1b.facets.spatial, ['united states'], 'spatial merge survives reload');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

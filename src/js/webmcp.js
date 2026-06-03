@@ -323,6 +323,31 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { glass_id: it.glass_id, reviewed: true, facets: card.facets };
   }
 
+  // Thesaurus normalization: rewrite a facet term across the WHOLE catalog —
+  // `from` → `to` within one facet (de-duped). The vocabulary-level edit that
+  // makes facet-browsing coherent (merge `usa`→`united states`, `ai`→`artificial
+  // intelligence`; an empty/omitted `to` DROPS the term — collapse a junk
+  // singleton). Accepts one {facet, from, to} or a {merges:[…]} batch applied in
+  // one atomic flush. Use weir_listFacets to spot variants first. Returns each
+  // merge's card-change count.
+  async function mergeFacetTerm(input = {}) {
+    const list = Array.isArray(input.merges) ? input.merges
+      : (input.facet != null && input.from != null) ? [{ facet: input.facet, from: input.from, to: input.to }]
+        : null;
+    if (!list || !list.length) throw new Error('pass {facet, from, to} (to omitted/empty = drop the term) or {merges:[…]}');
+    const results = [];
+    let cardsChanged = 0;
+    for (const m of list) {
+      if (m == null || m.facet == null || m.from == null) throw new Error('each merge needs a facet and a from-term');
+      const cards = store.mergeFacetTerm(String(m.facet), String(m.from), m.to == null ? '' : String(m.to));
+      results.push({ facet: String(m.facet), from: String(m.from), to: m.to == null ? '' : String(m.to), cards });
+      cardsChanged += cards;
+    }
+    if (cardsChanged) await store.flush();
+    if (app && app.renderAll) app.renderAll();
+    return { merges: results, cardsChanged };
+  }
+
   // List the catalog provider's available models (so Claude can pick one). Named
   // distinctly from the imported llm `listModels` — a local `listModels` would
   // shadow it (and the build strips import aliases, so it can't be aliased).
@@ -662,7 +687,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -903,6 +928,19 @@ const TOOLS = [
       }, required: ['id'],
     },
     annotations: { title: 'Confirm/correct a card' },
+  },
+  {
+    name: 'weir_mergeFacetTerm', fn: 'mergeFacetTerm',
+    description: 'Thesaurus normalization: rewrite a facet term across the WHOLE catalog (from → to within one facet, de-duped) so facet-browsing stops splitting one concept across spelling/synonym variants — e.g. spatial usa→united states, entity ai→artificial intelligence. An empty/omitted `to` DROPS the term (collapse a junk singleton). Use weir_listFacets to spot the variants first. Pass one {facet, from, to} or a {merges:[…]} batch (applied in one atomic flush). Pure card edit — items/reading state untouched, reversible by merging back. Returns each merge\'s card-change count.',
+    inputSchema: {
+      type: 'object', properties: {
+        facet: { type: 'string', description: 'Facet to edit (domain|entity|process|method|scale|spatial|stance|temporal|form|provenance)' },
+        from: { type: 'string', description: 'Existing term to rewrite' },
+        to: { type: 'string', description: 'Replacement term (empty/omitted = drop the from-term)' },
+        merges: { type: 'array', items: { type: 'object', properties: { facet: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' } } }, description: 'Batch of {facet, from, to} merges applied atomically' },
+      },
+    },
+    annotations: { title: 'Merge a facet term (thesaurus)' },
   },
   {
     name: 'weir_listFacets', fn: 'listFacets',
