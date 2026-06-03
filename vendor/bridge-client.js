@@ -217,12 +217,25 @@ function rejectUnsupportedBody(body) {
   }
 }
 
+// Opt-in diagnostics: set `window.__gcuDiag = []` and every gcuFetch records which
+// path it took and why (detection result, bridge errors, final outcome). Zero cost
+// when the array isn't present. Drains old entries past 500 so it can't grow unbounded.
+function diagPush(entry) {
+  try {
+    const d = (typeof window !== 'undefined') && window.__gcuDiag;
+    if (Array.isArray(d)) { d.push({ t: Date.now(), ...entry }); if (d.length > 500) d.splice(0, d.length - 500); }
+  } catch { /* ignore */ }
+}
+
 export async function gcuFetch(url, opts = {}) {
   rejectUnsupportedBody(opts.body);
-  if (await detectBridge()) {
+  const detected = await detectBridge();
+  if (detected) {
     try {
-      return await viaBridge(url, opts);
-    } catch (_e) {
+      const r = await viaBridge(url, opts);
+      diagPush({ url, detected, path: 'bridge', status: r.status });
+      return r;
+    } catch (e1) {
       // A cold MV3 service worker can drop the first relayed request(s) while it
       // wakes — the content script's chrome.runtime.sendMessage throws and the relay
       // returns "bridge unavailable", so viaBridge rejects fast. This is common on a
@@ -230,11 +243,16 @@ export async function gcuFetch(url, opts = {}) {
       // so retry once before giving up to a (CORS-doomed) direct fetch.
       try {
         await new Promise((r) => setTimeout(r, 250));
-        return await viaBridge(url, opts);
-      } catch (_e2) {
+        const r = await viaBridge(url, opts);
+        diagPush({ url, detected, path: 'bridge-retry', status: r.status });
+        return r;
+      } catch (e2) {
+        diagPush({ url, detected, path: 'direct', e1: String(e1?.message ?? e1), e2: String(e2?.message ?? e2) });
         // Both bridge attempts failed — fall through to direct fetch.
       }
     }
+  } else {
+    diagPush({ url, detected, path: 'direct-undetected' });
   }
   try {
     return await fetch(url, opts);
