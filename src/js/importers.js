@@ -126,6 +126,68 @@ export function parseUrlList(text) {
   return links;
 }
 
+// ── LibraryThing JSON export → book holdings ──────────────────────────────────
+// LibraryThing has no bulk-collection API, so the workflow is export-and-drop (fits
+// weir: no server, no key, no live dependency). The export is an object keyed by
+// book id; field shapes vary by export, so parse defensively. Re-importing a fuller
+// export is idempotent (stable id from books_id/ISBN), so it UPDATES, never dupes.
+function ltStr(v) { return v == null ? '' : String(v).trim(); }
+function ltAuthor(b) {
+  const a = b.authors || b.author || b.primaryauthor;
+  const first = Array.isArray(a) ? a[0] : a;
+  if (!first) return '';
+  return ltStr(typeof first === 'string' ? first : (first.fl || first.lf || first.name));
+}
+function ltIsbn(b) {
+  const c = b.ISBNs || b.isbns || b.ISBN || b.isbn || b.originalisbn;
+  for (const v of (Array.isArray(c) ? c : (c ? [c] : []))) {
+    const d = String(v).replace(/[^0-9xX]/gi, '');
+    if (d.length === 10 || d.length === 13) return d;
+  }
+  return null;
+}
+function ltCode(v) {   // ddc / lcc may be {code:[…]} | {code:"…"} | "…"
+  if (!v) return null;
+  if (typeof v === 'string') return v.trim() || null;
+  const c = v.code;
+  return (Array.isArray(c) ? c[0] : c) ? String(Array.isArray(c) ? c[0] : c).trim() : null;
+}
+function ltTags(b) {
+  const t = b.tags;
+  if (Array.isArray(t)) return t.map(ltStr).filter(Boolean);
+  if (t && typeof t === 'object') return Object.keys(t).map(ltStr).filter(Boolean);
+  if (typeof t === 'string') return t.split(',').map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+function ltDate(b) {
+  const d = ltStr(b.date || b.publication_date || b.publicationdate || b.originalpublicationdate);
+  const y = d.match(/\b(1[4-9]\d\d|20\d\d)\b/);
+  if (y) return Date.UTC(Number(y[1]), 0, 1);
+  const p = Date.parse(d); return Number.isFinite(p) ? p : undefined;
+}
+function ltIsBookish(v) { return v && typeof v === 'object' && (v.books_id || v.book_id || v.ISBNs || v.ddc || v.lcc || (v.title && (v.authors || v.tags || v.ISBN || v.isbn))); }
+
+export function parseLibraryThing(json) {
+  let data; try { data = typeof json === 'string' ? JSON.parse(json) : json; } catch { return []; }
+  const entries = Array.isArray(data) ? data : Object.values(data || {});
+  const books = []; const seen = new Set();
+  for (const b of entries) {
+    if (!b || typeof b !== 'object') continue;
+    const title = ltStr(b.title);
+    const ltId = ltStr(b.books_id || b.book_id || b.id || b.workcode);
+    const isbn = ltIsbn(b);
+    if (!title && !isbn && !ltId) continue;
+    const key = ltId || isbn || title.toLowerCase();
+    if (seen.has(key)) continue; seen.add(key);
+    books.push({
+      lt_id: ltId || null, isbn, title: title || '(untitled)', author: ltAuthor(b),
+      tags: ltTags(b), ddc: ltCode(b.ddc), lcc: ltCode(b.lcc),
+      date: ltDate(b), excerpt: ltStr(b.comment || b.review || b.summary).slice(0, 400),
+    });
+  }
+  return books;
+}
+
 // Sniff a file's content → { format, links? }. OPML returns no links (the caller
 // routes it to the existing feed-import flow); link formats return parsed records.
 export function detectImport(text) {
@@ -134,6 +196,14 @@ export function detectImport(text) {
     try {
       const j = JSON.parse(text);
       if (j && Array.isArray(j.messages)) return { format: 'telegram', links: parseTelegramExport(j) };
+      // LibraryThing export — an object keyed by book id whose entries look bookish.
+      if (j && typeof j === 'object' && !Array.isArray(j)) {
+        const vals = Object.values(j);
+        if (vals.length && vals.some(ltIsBookish)) { const books = parseLibraryThing(j); if (books.length) return { format: 'librarything', books }; }
+      }
+      if (Array.isArray(j) && j.length && j.some(ltIsBookish) && !j.every((x) => x && typeof x.url === 'string')) {
+        const books = parseLibraryThing(j); if (books.length) return { format: 'librarything', books };
+      }
       if (Array.isArray(j) && j.length && j.every((x) => x && typeof x.url === 'string')) {
         return {
           format: 'json-links',

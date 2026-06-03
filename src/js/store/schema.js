@@ -4,7 +4,7 @@
 export const SCHEMA_VERSION = 1;
 
 export const ITEM_TYPES = [
-  'article', 'video', 'release', 'paper', 'status', 'track', 'podcast', 'commit', 'issue',
+  'article', 'video', 'release', 'paper', 'status', 'track', 'podcast', 'commit', 'issue', 'book',
 ];
 
 // Retention TTLs in days, or 'forever'. Per-feed `retention` overrides these

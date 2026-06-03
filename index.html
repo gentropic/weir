@@ -314,6 +314,7 @@ body {
 .pill.video, .pill.status { background: var(--au-info-soft); color: var(--au-info); }
 .pill.release, .pill.commit { background: var(--au-success-soft); color: var(--au-success); }
 .pill.paper { background: var(--au-selected-soft); color: var(--au-selected); }
+.pill.book { background: var(--au-success-soft, rgba(120,180,120,0.15)); color: var(--au-success); }
 .pill.track, .pill.issue { background: var(--au-error-soft); color: var(--au-error); }
 .pill.podcast { background: var(--au-warn-soft); color: var(--au-warn); }
 
@@ -362,6 +363,7 @@ body {
 .tagrow .tagdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; vertical-align: middle; margin-right: 3px; flex-shrink: 0; }
 .callno { font-family: var(--au-font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.03em; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; margin-right: 7px; cursor: pointer; white-space: nowrap; }
 .callno:hover { border-color: var(--au-action); }
+.ddc { font-family: var(--au-font-mono); font-size: 9px; color: var(--au-fg-soft); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 4px; margin-right: 7px; white-space: nowrap; }
 
 /* ── Tag editor (keyboard `t`) ── */
 .tag-editor { width: min(460px, 92vw); background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg); box-shadow: 0 18px 60px rgba(0,0,0,0.55); padding: 14px; }
@@ -631,7 +633,7 @@ body {
         <button id="btn-layout" class="btn-link" type="button" title="Gallery view">▦</button>
         <button id="btn-flightdeck" class="btn-link" type="button" title="Pop out a flight-deck (progress + latest, always on top — keeps long catalog runs from throttling)">⮬ deck</button>
         <button id="btn-recover" class="btn-link" type="button" hidden title="Recover this feed's lost history from the Internet Archive">⏪ recover</button>
-        <button id="btn-import" class="btn-link" type="button" title="Import feeds (OPML) or saved links (Telegram export / URL list / JSON)">import</button>
+        <button id="btn-import" class="btn-link" type="button" title="Import feeds (OPML), saved links (Telegram export / URL list / JSON), or books (LibraryThing export)">import</button>
         <button id="btn-export" class="btn-link" type="button" title="Export OPML">export</button>
         <input id="opml-file" type="file" accept=".opml,.xml,.json,.txt,text/xml,application/xml,application/json,text/plain" multiple hidden>
         <span class="topbar-sep"></span>
@@ -5698,7 +5700,7 @@ return Librarian;
 const SCHEMA_VERSION = 1;
 
 const ITEM_TYPES = [
-  'article', 'video', 'release', 'paper', 'status', 'track', 'podcast', 'commit', 'issue',
+  'article', 'video', 'release', 'paper', 'status', 'track', 'podcast', 'commit', 'issue', 'book',
 ];
 
 // Retention TTLs in days, or 'forever'. Per-feed `retention` overrides these
@@ -8077,6 +8079,68 @@ function parseUrlList(text) {
   return links;
 }
 
+// ── LibraryThing JSON export → book holdings ──────────────────────────────────
+// LibraryThing has no bulk-collection API, so the workflow is export-and-drop (fits
+// weir: no server, no key, no live dependency). The export is an object keyed by
+// book id; field shapes vary by export, so parse defensively. Re-importing a fuller
+// export is idempotent (stable id from books_id/ISBN), so it UPDATES, never dupes.
+function ltStr(v) { return v == null ? '' : String(v).trim(); }
+function ltAuthor(b) {
+  const a = b.authors || b.author || b.primaryauthor;
+  const first = Array.isArray(a) ? a[0] : a;
+  if (!first) return '';
+  return ltStr(typeof first === 'string' ? first : (first.fl || first.lf || first.name));
+}
+function ltIsbn(b) {
+  const c = b.ISBNs || b.isbns || b.ISBN || b.isbn || b.originalisbn;
+  for (const v of (Array.isArray(c) ? c : (c ? [c] : []))) {
+    const d = String(v).replace(/[^0-9xX]/gi, '');
+    if (d.length === 10 || d.length === 13) return d;
+  }
+  return null;
+}
+function ltCode(v) {   // ddc / lcc may be {code:[…]} | {code:"…"} | "…"
+  if (!v) return null;
+  if (typeof v === 'string') return v.trim() || null;
+  const c = v.code;
+  return (Array.isArray(c) ? c[0] : c) ? String(Array.isArray(c) ? c[0] : c).trim() : null;
+}
+function ltTags(b) {
+  const t = b.tags;
+  if (Array.isArray(t)) return t.map(ltStr).filter(Boolean);
+  if (t && typeof t === 'object') return Object.keys(t).map(ltStr).filter(Boolean);
+  if (typeof t === 'string') return t.split(',').map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+function ltDate(b) {
+  const d = ltStr(b.date || b.publication_date || b.publicationdate || b.originalpublicationdate);
+  const y = d.match(/\b(1[4-9]\d\d|20\d\d)\b/);
+  if (y) return Date.UTC(Number(y[1]), 0, 1);
+  const p = Date.parse(d); return Number.isFinite(p) ? p : undefined;
+}
+function ltIsBookish(v) { return v && typeof v === 'object' && (v.books_id || v.book_id || v.ISBNs || v.ddc || v.lcc || (v.title && (v.authors || v.tags || v.ISBN || v.isbn))); }
+
+function parseLibraryThing(json) {
+  let data; try { data = typeof json === 'string' ? JSON.parse(json) : json; } catch { return []; }
+  const entries = Array.isArray(data) ? data : Object.values(data || {});
+  const books = []; const seen = new Set();
+  for (const b of entries) {
+    if (!b || typeof b !== 'object') continue;
+    const title = ltStr(b.title);
+    const ltId = ltStr(b.books_id || b.book_id || b.id || b.workcode);
+    const isbn = ltIsbn(b);
+    if (!title && !isbn && !ltId) continue;
+    const key = ltId || isbn || title.toLowerCase();
+    if (seen.has(key)) continue; seen.add(key);
+    books.push({
+      lt_id: ltId || null, isbn, title: title || '(untitled)', author: ltAuthor(b),
+      tags: ltTags(b), ddc: ltCode(b.ddc), lcc: ltCode(b.lcc),
+      date: ltDate(b), excerpt: ltStr(b.comment || b.review || b.summary).slice(0, 400),
+    });
+  }
+  return books;
+}
+
 // Sniff a file's content → { format, links? }. OPML returns no links (the caller
 // routes it to the existing feed-import flow); link formats return parsed records.
 function detectImport(text) {
@@ -8085,6 +8149,14 @@ function detectImport(text) {
     try {
       const j = JSON.parse(text);
       if (j && Array.isArray(j.messages)) return { format: 'telegram', links: parseTelegramExport(j) };
+      // LibraryThing export — an object keyed by book id whose entries look bookish.
+      if (j && typeof j === 'object' && !Array.isArray(j)) {
+        const vals = Object.values(j);
+        if (vals.length && vals.some(ltIsBookish)) { const books = parseLibraryThing(j); if (books.length) return { format: 'librarything', books }; }
+      }
+      if (Array.isArray(j) && j.length && j.some(ltIsBookish) && !j.every((x) => x && typeof x.url === 'string')) {
+        const books = parseLibraryThing(j); if (books.length) return { format: 'librarything', books };
+      }
       if (Array.isArray(j) && j.length && j.every((x) => x && typeof x.url === 'string')) {
         return {
           format: 'json-links',
@@ -9684,6 +9756,7 @@ class App {
         const text = await f.text();
         const d = detectImport(text);
         if (!d || d.format === 'opml') { opmlTexts.push(text); continue; }   // feeds → existing flow
+        if (d.format === 'librarything') { await this.importBooks(d.books, d.format); continue; }   // books → holdings
         await this.importLinks(d.links, d.format);                            // saved links → new flow
       }
       if (opmlTexts.length) this.importOpmlFiles(opmlTexts);
@@ -10627,6 +10700,7 @@ class App {
     const saved = it.saved ? '<span class="flag">★</span>' : '';
     const cn = this.catalog ? this._callNumber(it) : null;
     const callno = cn ? `<span class="callno" data-callno="${escapeHtml(renderCoded(cn))}" title="${escapeHtml(renderReadable(cn))} — click to copy the call number">${escapeHtml(renderCoded(cn))}</span>` : '';
+    const ddc = (this.catalog && it.structured && it.structured.ddc) ? `<span class="ddc" title="Dewey — display metadata from your record (not the organizing system)">DDC ${escapeHtml(it.structured.ddc)}</span>` : '';
 
     let body;
     const isVideo = it.type === 'video';
@@ -10641,9 +10715,9 @@ class App {
       const play = isVideo ? '<span class="playover">▶</span>' : '';
       const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
       const excerpt = (!isVideo && it.excerpt) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
-      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${meta}${views} ${tags}</div></div></div>`;
+      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${ddc}${meta}${views} ${tags}</div></div></div>`;
     } else {
-      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${meta} ${tags}</div>`;
+      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}</div>`;
     }
     const actions = `<div class="iactions">`
       + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
@@ -11480,6 +11554,41 @@ class App {
     const cur = this.store.getFeed('saved');
     if (cur && cur.retention && cur.retention.unread_days === 'forever') return;
     await this.store.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever', read_days: 'forever' } });
+  }
+
+  async _ensureBooksSource() {
+    const cur = this.store.getFeed('books');
+    if (cur && cur.retention && cur.retention.unread_days === 'forever') return;
+    await this.store.putFeed({ id: 'books', name: 'Books', adapter: 'books', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever', read_days: 'forever' } });
+  }
+
+  // Import a LibraryThing export → book holdings. Idempotent: the id is the stable
+  // LibraryThing book id (or an ISBN/title hash), so re-importing a fuller export
+  // UPDATES rather than dupes, and never clobbers reading state or weir tags. ISBN
+  // rides in the url (→ the biblio enricher fills gaps from Open Library), and
+  // DDC/LCC/ISBN ride in `structured` as display metadata. Your LibraryThing tags
+  // come in stamped as yours.
+  async importBooks(books, format = 'librarything') {
+    const sub = document.getElementById('view-sub');
+    if (!books || !books.length) { if (sub) sub.textContent = `no books found in that ${format} file`; return { inserted: 0, updated: 0 }; }
+    await this._ensureBooksSource();
+    const raws = books.map((b) => {
+      const id = `book:${b.lt_id || `h${hash32(String(b.isbn || b.title || '').toLowerCase())}`}`;
+      const url = b.isbn ? `https://openlibrary.org/isbn/${b.isbn}` : (b.lt_id ? `https://www.librarything.com/work/${b.lt_id}` : '');
+      const structured = (b.ddc || b.lcc || b.isbn) ? { ddc: b.ddc || undefined, lcc: b.lcc || undefined, isbn: b.isbn || undefined } : undefined;
+      const tags = b.tags || [];
+      return {
+        id, feed_id: 'books', type: 'book', url,
+        title: b.title, author: b.author || undefined,
+        published_at: b.date || undefined, excerpt: b.excerpt || undefined,
+        tags, tag_src: tags.reduce((o, t) => { o[t] = 'human'; return o; }, {}), structured,
+      };
+    });
+    const res = await this.store.upsertItems(raws);
+    await this.store.flush();
+    this.renderRail(); this.renderStream();
+    if (sub) sub.textContent = `imported ${res.inserted} new${res.updated ? `, updated ${res.updated}` : ''} book${res.inserted === 1 ? '' : 's'} from ${format} → Books`;
+    return res;
   }
 
   // Kick the background resolver to process pending wrapped/unenriched links now
@@ -12665,7 +12774,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '7c28569';          // short content hash of the bundle (build id)
+const COMMIT = 'b15e454';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

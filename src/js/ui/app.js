@@ -117,6 +117,7 @@ export class App {
         const text = await f.text();
         const d = detectImport(text);
         if (!d || d.format === 'opml') { opmlTexts.push(text); continue; }   // feeds → existing flow
+        if (d.format === 'librarything') { await this.importBooks(d.books, d.format); continue; }   // books → holdings
         await this.importLinks(d.links, d.format);                            // saved links → new flow
       }
       if (opmlTexts.length) this.importOpmlFiles(opmlTexts);
@@ -1060,6 +1061,7 @@ export class App {
     const saved = it.saved ? '<span class="flag">★</span>' : '';
     const cn = this.catalog ? this._callNumber(it) : null;
     const callno = cn ? `<span class="callno" data-callno="${escapeHtml(renderCoded(cn))}" title="${escapeHtml(renderReadable(cn))} — click to copy the call number">${escapeHtml(renderCoded(cn))}</span>` : '';
+    const ddc = (this.catalog && it.structured && it.structured.ddc) ? `<span class="ddc" title="Dewey — display metadata from your record (not the organizing system)">DDC ${escapeHtml(it.structured.ddc)}</span>` : '';
 
     let body;
     const isVideo = it.type === 'video';
@@ -1074,9 +1076,9 @@ export class App {
       const play = isVideo ? '<span class="playover">▶</span>' : '';
       const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
       const excerpt = (!isVideo && it.excerpt) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
-      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${meta}${views} ${tags}</div></div></div>`;
+      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${ddc}${meta}${views} ${tags}</div></div></div>`;
     } else {
-      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${meta} ${tags}</div>`;
+      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${it.excerpt ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}</div>`;
     }
     const actions = `<div class="iactions">`
       + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
@@ -1913,6 +1915,41 @@ export class App {
     const cur = this.store.getFeed('saved');
     if (cur && cur.retention && cur.retention.unread_days === 'forever') return;
     await this.store.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever', read_days: 'forever' } });
+  }
+
+  async _ensureBooksSource() {
+    const cur = this.store.getFeed('books');
+    if (cur && cur.retention && cur.retention.unread_days === 'forever') return;
+    await this.store.putFeed({ id: 'books', name: 'Books', adapter: 'books', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever', read_days: 'forever' } });
+  }
+
+  // Import a LibraryThing export → book holdings. Idempotent: the id is the stable
+  // LibraryThing book id (or an ISBN/title hash), so re-importing a fuller export
+  // UPDATES rather than dupes, and never clobbers reading state or weir tags. ISBN
+  // rides in the url (→ the biblio enricher fills gaps from Open Library), and
+  // DDC/LCC/ISBN ride in `structured` as display metadata. Your LibraryThing tags
+  // come in stamped as yours.
+  async importBooks(books, format = 'librarything') {
+    const sub = document.getElementById('view-sub');
+    if (!books || !books.length) { if (sub) sub.textContent = `no books found in that ${format} file`; return { inserted: 0, updated: 0 }; }
+    await this._ensureBooksSource();
+    const raws = books.map((b) => {
+      const id = `book:${b.lt_id || `h${hash32(String(b.isbn || b.title || '').toLowerCase())}`}`;
+      const url = b.isbn ? `https://openlibrary.org/isbn/${b.isbn}` : (b.lt_id ? `https://www.librarything.com/work/${b.lt_id}` : '');
+      const structured = (b.ddc || b.lcc || b.isbn) ? { ddc: b.ddc || undefined, lcc: b.lcc || undefined, isbn: b.isbn || undefined } : undefined;
+      const tags = b.tags || [];
+      return {
+        id, feed_id: 'books', type: 'book', url,
+        title: b.title, author: b.author || undefined,
+        published_at: b.date || undefined, excerpt: b.excerpt || undefined,
+        tags, tag_src: tags.reduce((o, t) => { o[t] = 'human'; return o; }, {}), structured,
+      };
+    });
+    const res = await this.store.upsertItems(raws);
+    await this.store.flush();
+    this.renderRail(); this.renderStream();
+    if (sub) sub.textContent = `imported ${res.inserted} new${res.updated ? `, updated ${res.updated}` : ''} book${res.inserted === 1 ? '' : 's'} from ${format} → Books`;
+    return res;
   }
 
   // Kick the background resolver to process pending wrapped/unenriched links now
