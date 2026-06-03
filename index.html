@@ -7186,6 +7186,28 @@ class Store {
   }
   async catalogCount() { return this.cards.size; }
 
+  // Discard the cards for every item in a scope (feed / folder / type) so they
+  // re-queue for cataloging — the engine of a SCOPED RE-CATALOG ("re-do the books",
+  // "re-facet the geostatistics domain"). Mirrors catalogScope's candidate set.
+  // Items/content/reading state untouched; reversible by re-cataloging. Returns count.
+  async uncatalogScope({ feed_id, category, type } = {}) {
+    const inCat = category != null ? new Set(this.listFeeds().filter((f) => (f.category || '') === category).map((f) => f.id)) : null;
+    let n = 0; const feeds = new Set();
+    for (const it of this.items.values()) {
+      if (!it.glass_id) continue;
+      if (feed_id != null && it.feed_id !== feed_id) continue;
+      if (inCat && !inCat.has(it.feed_id)) continue;
+      if (type != null && it.type !== type) continue;
+      const gid = it.glass_id;
+      if (this.cards.has(gid)) { this.cards.delete(gid); this._markCardDirty(gid); }
+      delete it.glass_id;
+      feeds.add(it.feed_id); n++;
+    }
+    for (const fid of feeds) this._markFeedDirty(fid);
+    if (n) this.emit('catalog', { uncataloged: n });
+    return n;
+  }
+
   // Discard one cataloger card (reject from the review queue): drop the card +
   // un-stamp the item so it's uncataloged again (re-cataloguable, or left out).
   // Mirrors clearCatalog for a single item; items/content/reading state untouched.
@@ -10376,6 +10398,22 @@ class App {
     return { running: true, todo: todo.length, deferred };
   }
 
+  // Scoped RE-catalog: discard the scope's cards (so they re-queue), then catalog
+  // it. For correcting a batch cataloged under an old rule (e.g. the books that got
+  // form:article before the book-form fix). The biblio enricher re-runs, so cards
+  // get fresh facets + descriptions. (Item excerpts are separate — a re-import
+  // clears those.)
+  async recatalogScope(scope = {}) {
+    if (this._cataloging) { this._catStatus('a catalog run is already going — stop it first'); return { running: true, already: true }; }
+    const cleared = await this.store.uncatalogScope(scope);
+    if (this._cardFacets) for (const id of [...this._cardFacets.keys()]) if (!this.store.getItem(id)?.glass_id) this._cardFacets.delete(id);
+    await this.store.flush();
+    const r = this.catalogScope(scope);
+    this._catStatus(`re-cataloging ${r.todo || 0} item${(r.todo || 0) === 1 ? '' : 's'} (discarded ${cleared} card${cleared === 1 ? '' : 's'})…`);
+    if (this.catalog) this.renderAll();
+    return { cleared, ...r };
+  }
+
   stopCatalog() { if (this._cataloging) { this._cataloging.cancel = true; return true; } return false; }
   catalogStatus() { return { running: !!this._cataloging, progress: this._catalogProgress || null }; }
 
@@ -11144,6 +11182,7 @@ class App {
       { sep: true },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
       { label: '✦ Catalog this feed', onClick: () => this.catalogScope({ feed_id: feedId }) },
+      { label: '↻ Re-catalog this feed', onClick: () => { if (confirm('Discard this feed’s catalog cards and re-catalog from scratch? (items + reading state kept)')) this.recatalogScope({ feed_id: feedId }); } },
       { label: 'Edit feed…', onClick: () => this.openFeedEdit(feedId) },
       { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: () => this.store.updateFeed(feedId, { images_allowed: !feed.images_allowed }) },
       { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: () => this.store.updateFeed(feedId, { fetch_full_content: !feed.fetch_full_content }) },
@@ -12671,6 +12710,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       if (input.category !== undefined) scope.category = String(input.category);
       if (input.type) scope.type = String(input.type);
       const scoped = scope.feed_id || scope.category !== undefined || scope.type;
+      if (input.recatalog && scoped && app.recatalogScope) return app.recatalogScope(scope);   // discard the scope's cards first, then re-catalog
       return scoped && app.catalogScope ? app.catalogScope(scope) : app.catalogAll();
     }
     if (action === 'stop') return { stopped: app.stopCatalog() };
@@ -12945,6 +12985,7 @@ const TOOLS = [
       feed: { type: 'string', description: 'start scope: a source by id OR display name (e.g. "Saved Links")' },
       category: { type: 'string', description: 'start scope: a folder name ("" = ungrouped)' },
       type: { type: 'string', description: 'start scope: item type (article|video|paper|…)' },
+      recatalog: { type: 'boolean', description: 'with action:start + a scope: DISCARD that scope\'s existing cards first, then re-catalog from scratch (re-do a batch cataloged under an old rule)' },
     } },
     annotations: { title: 'Control cataloging', destructiveHint: true },
   },
@@ -13052,7 +13093,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '078f66d';          // short content hash of the bundle (build id)
+const COMMIT = 'eeb0620';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

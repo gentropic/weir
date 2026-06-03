@@ -754,6 +754,28 @@ export class Store {
   }
   async catalogCount() { return this.cards.size; }
 
+  // Discard the cards for every item in a scope (feed / folder / type) so they
+  // re-queue for cataloging — the engine of a SCOPED RE-CATALOG ("re-do the books",
+  // "re-facet the geostatistics domain"). Mirrors catalogScope's candidate set.
+  // Items/content/reading state untouched; reversible by re-cataloging. Returns count.
+  async uncatalogScope({ feed_id, category, type } = {}) {
+    const inCat = category != null ? new Set(this.listFeeds().filter((f) => (f.category || '') === category).map((f) => f.id)) : null;
+    let n = 0; const feeds = new Set();
+    for (const it of this.items.values()) {
+      if (!it.glass_id) continue;
+      if (feed_id != null && it.feed_id !== feed_id) continue;
+      if (inCat && !inCat.has(it.feed_id)) continue;
+      if (type != null && it.type !== type) continue;
+      const gid = it.glass_id;
+      if (this.cards.has(gid)) { this.cards.delete(gid); this._markCardDirty(gid); }
+      delete it.glass_id;
+      feeds.add(it.feed_id); n++;
+    }
+    for (const fid of feeds) this._markFeedDirty(fid);
+    if (n) this.emit('catalog', { uncataloged: n });
+    return n;
+  }
+
   // Discard one cataloger card (reject from the review queue): drop the card +
   // un-stamp the item so it's uncataloged again (re-cataloguable, or left out).
   // Mirrors clearCatalog for a single item; items/content/reading state untouched.

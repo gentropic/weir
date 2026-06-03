@@ -232,6 +232,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       if (input.category !== undefined) scope.category = String(input.category);
       if (input.type) scope.type = String(input.type);
       const scoped = scope.feed_id || scope.category !== undefined || scope.type;
+      if (input.recatalog && scoped && app.recatalogScope) return app.recatalogScope(scope);   // discard the scope's cards first, then re-catalog
       return scoped && app.catalogScope ? app.catalogScope(scope) : app.catalogAll();
     }
     if (action === 'stop') return { stopped: app.stopCatalog() };
@@ -506,6 +507,7 @@ const TOOLS = [
       feed: { type: 'string', description: 'start scope: a source by id OR display name (e.g. "Saved Links")' },
       category: { type: 'string', description: 'start scope: a folder name ("" = ungrouped)' },
       type: { type: 'string', description: 'start scope: item type (article|video|paper|…)' },
+      recatalog: { type: 'boolean', description: 'with action:start + a scope: DISCARD that scope\'s existing cards first, then re-catalog from scratch (re-do a batch cataloged under an old rule)' },
     } },
     annotations: { title: 'Control cataloging', destructiveHint: true },
   },

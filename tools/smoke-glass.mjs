@@ -78,4 +78,23 @@ assert.equal(store.getItem('v1').glass_id, undefined, 'item un-stamped after dis
 assert.equal(await store.catalogCount(), before - 1, 'one card removed');
 assert.equal(await store.uncatalogItem('v1'), null, 'discarding an uncataloged item is a no-op');
 
+// ── uncatalogScope: discard a scope's cards so they re-queue (scoped re-catalog) ──
+{
+  const s3 = new Store(await VFS.create()); await s3._hydrate();
+  await s3.putFeed({ id: 'books', name: 'Books', adapter: 'books', url: '' });
+  await s3.putFeed({ id: 'arx', name: 'arXiv', adapter: 'feed', url: '' });
+  await s3.upsertItems([
+    { id: 'bk1', feed_id: 'books', type: 'book', title: 'A book' },
+    { id: 'bk2', feed_id: 'books', type: 'book', title: 'Another' },
+    { id: 'ar1', feed_id: 'arx', type: 'paper', title: 'A paper' },
+  ]);
+  await s3.buildCatalog({ cataloged: '2026-06-03' });
+  assert.equal(await s3.catalogCount(), 3, 'all three cataloged');
+  const n = await s3.uncatalogScope({ feed_id: 'books' });
+  assert.equal(n, 2, 'uncatalogScope cleared just the two books');
+  assert.equal(s3.getItem('bk1').glass_id, undefined, 'book un-stamped (re-queues)');
+  assert.ok(s3.getItem('ar1').glass_id, 'out-of-scope paper untouched');
+  assert.equal(await s3.catalogCount(), 1, 'only the paper card remains');
+}
+
 console.log('glass smoke ok:', JSON.stringify({ created: r1.created, cards: await store.catalogCount() }));

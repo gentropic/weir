@@ -541,6 +541,22 @@ export class App {
     return { running: true, todo: todo.length, deferred };
   }
 
+  // Scoped RE-catalog: discard the scope's cards (so they re-queue), then catalog
+  // it. For correcting a batch cataloged under an old rule (e.g. the books that got
+  // form:article before the book-form fix). The biblio enricher re-runs, so cards
+  // get fresh facets + descriptions. (Item excerpts are separate — a re-import
+  // clears those.)
+  async recatalogScope(scope = {}) {
+    if (this._cataloging) { this._catStatus('a catalog run is already going — stop it first'); return { running: true, already: true }; }
+    const cleared = await this.store.uncatalogScope(scope);
+    if (this._cardFacets) for (const id of [...this._cardFacets.keys()]) if (!this.store.getItem(id)?.glass_id) this._cardFacets.delete(id);
+    await this.store.flush();
+    const r = this.catalogScope(scope);
+    this._catStatus(`re-cataloging ${r.todo || 0} item${(r.todo || 0) === 1 ? '' : 's'} (discarded ${cleared} card${cleared === 1 ? '' : 's'})…`);
+    if (this.catalog) this.renderAll();
+    return { cleared, ...r };
+  }
+
   stopCatalog() { if (this._cataloging) { this._cataloging.cancel = true; return true; } return false; }
   catalogStatus() { return { running: !!this._cataloging, progress: this._catalogProgress || null }; }
 
@@ -1309,6 +1325,7 @@ export class App {
       { sep: true },
       { label: 'Mark all read', onClick: () => this.store.markAllRead({ feed_id: feedId }) },
       { label: '✦ Catalog this feed', onClick: () => this.catalogScope({ feed_id: feedId }) },
+      { label: '↻ Re-catalog this feed', onClick: () => { if (confirm('Discard this feed’s catalog cards and re-catalog from scratch? (items + reading state kept)')) this.recatalogScope({ feed_id: feedId }); } },
       { label: 'Edit feed…', onClick: () => this.openFeedEdit(feedId) },
       { label: feed.images_allowed ? 'Block images' : 'Always load images', onClick: () => this.store.updateFeed(feedId, { images_allowed: !feed.images_allowed }) },
       { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: () => this.store.updateFeed(feedId, { fetch_full_content: !feed.fetch_full_content }) },
