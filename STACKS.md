@@ -200,8 +200,13 @@ automatic (your notes aren't feed slop to auto-classify).
   `tools/smoke-stacks.mjs`. *(Remaining within A: swap the textarea for cm6.)*
 - **B — Filing.** Naming-scheme (path/frontmatter) + stacks routing rules → auto-subfolder.
   *Ships: the "lands in the right place" magic.*
-- **C — Metadata + MCP.** Frontmatter/sidecar tags + the `weir_stacks*` tools (so Claude
-  reads/writes/files/tags). Opt-in cataloging of stacks entries. *Ships: co-curation.*
+- **C — Metadata + MCP. ✅ SHIPPED.** Frontmatter/sidecar tags + the `weir_stacks*` tools
+  (`stacksList`/`stacksRead`/`stacksWrite`/`stacksMove`/`stacksTag` in `webmcp.js`) so
+  Claude reads/writes/files/tags over the bridge; tag changes mirror to the file
+  (frontmatter/sidecar). Each tool result carries the item `id` (`stacks:<uid>`) so the
+  existing item tools (`getItem`/`catalogItem`/`setState`) compose — opt-in cataloging of
+  a note is just `weir_catalogItem({id})`. Covered by `tools/smoke-webmcp.mjs`.
+  *(Stage B — auto-filing by naming-scheme + routing rules — is the remaining stage.)*
 
 Later: drag-to-move UI, external-edit rescan/sync, PDF text-extraction → catalog,
 **wiki-link rendering** (autocomplete + a "what links here" backlink panel — the `[[uid]]`

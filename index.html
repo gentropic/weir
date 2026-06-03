@@ -9345,6 +9345,25 @@ class StacksStore {
     return rec;
   }
 
+  // Mirror an entry's current tags (and identity fields) back into its file —
+  // note frontmatter or file .meta.json sidecar — so an external tag change (e.g.
+  // via the MCP tools) stays portable/Obsidian-readable. Shard stays source of truth.
+  async syncTagsToFile(item) {
+    const abs = this._abs(item.path);
+    const created = new Date(item.published_at || now()).toISOString();
+    if (item.type === 'note') {
+      const raw = await this._readText(abs); if (raw == null) return;
+      const { data, body } = this._splitFm(raw);
+      const fm = this._fmEmit({ ...data, uid: item.uid || data.uid, title: item.title || data.title, tags: item.tags || [], created: data.created || created });
+      await this._writeText(abs, `---\n${fm}---\n\n${body.replace(/^\n+/, '')}`);
+    } else {
+      const scAbs = `${abs}.meta.json`;
+      let data = {}; const sc = await this._readText(scAbs); if (sc) { try { data = JSON.parse(sc) || {}; } catch { data = {}; } }
+      data = { ...data, uid: item.uid || data.uid, title: item.title || data.title, tags: item.tags || [], mime: item.mime || data.mime, created: data.created || created };
+      await this._writeText(scAbs, JSON.stringify(data, null, 2));
+    }
+  }
+
   // The markdown body of a note (frontmatter stripped), for the reader/editor.
   async readNote(item) {
     const raw = await this.store.getContent(item.id);
@@ -15408,7 +15427,89 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { queued, pending: r.status().pending };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, tagItems, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog };
+  // ── stacks (STACKS.md §6): co-curate the notes/files vault ──
+  // Path-addressed (human-friendly); each result also carries the item `id`
+  // (stacks:<uid>) so the item-level tools (getItem/catalogItem/setState) compose.
+  const stkFolderOf = (p) => { const i = String(p || '').lastIndexOf('/'); return i < 0 ? '' : p.slice(0, i); };
+  function requireStacks() { if (!app || !app.stacks) throw new Error('the stacks are only available in the running app'); return app.stacks; }
+  function findStackByPath(path) {
+    if (path == null) return null;
+    const want = String(path).replace(/^\/+/, '');
+    for (const id of store._feedSet('stacks')) { const r = store.getItem(id); if (r && r.path === want) return r; }
+    return null;
+  }
+  const projStack = (e) => ({ id: e.id, path: e.path, uid: e.uid, type: e.type, title: e.title || e.path, tags: (e.tags && e.tags.length) ? e.tags : undefined, missing: e.missing || undefined, glass_id: e.glass_id || undefined });
+
+  async function stacksList(input = {}) {
+    const stacks = requireStacks();
+    const prefix = input.path != null ? String(input.path).replace(/^\/+|\/+$/g, '') : null;
+    let entries = stacks.entries();
+    if (prefix) entries = entries.filter((e) => { const f = stkFolderOf(e.path); return f === prefix || f.startsWith(prefix + '/'); });
+    const folders = new Set();
+    for (const e of entries) { const f = stkFolderOf(e.path); if (f) folders.add(f); }
+    const limit = Math.min(Math.max(1, Number(input.limit) || 200), 500);
+    return { count: entries.length, folders: [...folders].sort(), entries: entries.slice(0, limit).map(projStack) };
+  }
+
+  async function stacksRead(input = {}) {
+    requireStacks();
+    const item = findStackByPath(input.path);
+    if (!item) throw new Error(`No stacks entry at "${input.path}". Use weir_stacksList to see paths.`);
+    const o = projStack(item);
+    if (item.type === 'note') { const body = await app.stacks.readNote(item); o.markdown = body.length > 16000 ? body.slice(0, 16000) + '…' : body; }
+    else o.mime = item.mime || undefined;
+    return o;
+  }
+
+  async function stacksWrite(input = {}) {
+    const stacks = requireStacks();
+    if (input.markdown == null) throw new Error('provide `markdown` (the note body).');
+    const tags = [].concat(input.tags || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
+    const path = input.path ? String(input.path).replace(/^\/+/, '') : null;
+    const existing = path ? findStackByPath(path) : null;
+    let rec;
+    if (existing && existing.type === 'note') {
+      rec = await stacks.saveNote(existing, String(input.markdown), { title: input.title, tags: tags.length ? tags : undefined });
+    } else {
+      let folder = input.folder, name = input.name;
+      if (path) { const i = path.lastIndexOf('/'); if (folder == null) folder = i >= 0 ? path.slice(0, i) : 'inbox'; if (name == null) name = i >= 0 ? path.slice(i + 1) : path; }
+      rec = await stacks.writeNote({ folder: folder || 'inbox', name, title: input.title, markdown: String(input.markdown), tags, source: 'claude' });
+    }
+    await store.flush();
+    if (app.renderStacks) app.renderStacks();
+    if (app.stackFilter && app.renderStream) app.renderStream();
+    return { ok: true, ...projStack(rec) };
+  }
+
+  async function stacksMove(input = {}) {
+    const stacks = requireStacks();
+    const item = findStackByPath(input.path);
+    if (!item) throw new Error(`No stacks entry at "${input.path}".`);
+    if (input.toFolder == null) throw new Error('provide `toFolder`.');
+    const from = item.path;
+    const rec = await stacks.move(item, String(input.toFolder).replace(/^\/+|\/+$/g, ''));
+    await store.flush();
+    if (app.renderStacks) app.renderStacks();
+    if (app.stackFilter && app.renderStream) app.renderStream();
+    return { ok: true, movedFrom: from, ...projStack(rec) };
+  }
+
+  async function stacksTag(input = {}) {
+    const stacks = requireStacks();
+    const item = findStackByPath(input.path);
+    if (!item) throw new Error(`No stacks entry at "${input.path}".`);
+    const add = [].concat(input.add || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
+    const remove = [].concat(input.remove || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
+    if (!add.length && !remove.length) throw new Error('provide tags to add and/or remove.');
+    for (const t of add) store.addTag(item.id, t, 'llm');
+    for (const t of remove) store.removeTag(item.id, t);
+    await stacks.syncTagsToFile(item);   // mirror to the note frontmatter / file sidecar
+    await store.flush();
+    if (app.renderStacks) app.renderStacks();
+    return { ok: true, ...projStack(store.getItem(item.id)) };
+  }
+
+  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tagItem, tagItems, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -15585,6 +15686,51 @@ const TOOLS = [
     },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'List weir facets' },
   },
+  {
+    name: 'weir_stacksList', fn: 'stacksList',
+    description: 'List the STACKS — weir’s notes/files vault (authored markdown notes + dropped files, living as real files under /stacks/). Optional `path` scopes to a folder (recursively). Returns { count, folders:[…], entries:[{ id, path, uid, type:note|file, title, tags, missing, glass_id }] }. The `id` is a normal item id (stacks:<uid>) — pass it to weir_getItem/weir_catalogItem/weir_setState. Stacks entries are also queryable via weir_queryItems({ feed: "Stacks" }).',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Scope to a folder (recursive), e.g. "specs/weir"' }, limit: { type: 'integer', description: 'Max entries (default 200, cap 500)' } } },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'List the stacks' },
+  },
+  {
+    name: 'weir_stacksRead', fn: 'stacksRead',
+    description: 'Read one stacks entry by `path` (from weir_stacksList). For a note: returns its markdown body (capped 16k) + tags + metadata. For a file: metadata only (mime, no bytes). Returns { id, path, uid, type, title, tags, glass_id, markdown? , mime? }.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Entry path, e.g. "inbox/huffman.md"' } }, required: ['path'] },
+    annotations: { readOnlyHint: true, title: 'Read a stacks entry' },
+  },
+  {
+    name: 'weir_stacksWrite', fn: 'stacksWrite',
+    description: 'Create OR update a stacks NOTE — "draft a note straight into the stacks". If `path` names an existing note, its body is updated (uid/created preserved); otherwise a new note is created. Address it with `path` (e.g. "specs/weir/idea.md") OR `folder`+`name`; bare folder defaults to inbox. `markdown` is the body (required); `title` and `tags` optional (tags stamped as yours-via-Claude). Link other holdings with [[uid]]. Returns { ok, id, path, uid, title, tags }. Files are dropped via Telegram or the app, not here.',
+    inputSchema: {
+      type: 'object', properties: {
+        path: { type: 'string', description: 'Target path, e.g. "specs/weir/idea.md" (folder + filename)' },
+        folder: { type: 'string', description: 'Folder (alternative to a full path); defaults to "inbox"' },
+        name: { type: 'string', description: 'Filename (alternative to a full path)' },
+        title: { type: 'string', description: 'Note title (defaults to the first heading / filename)' },
+        markdown: { type: 'string', description: 'The note body (markdown)' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Tags to set' },
+      }, required: ['markdown'],
+    },
+    annotations: { title: 'Write a stacks note' },
+  },
+  {
+    name: 'weir_stacksMove', fn: 'stacksMove',
+    description: 'Move/refile a stacks entry to another folder. Identity (uid) is preserved, so its tags, read-state, catalog card and inbound [[uid]] links ride along. Returns { ok, movedFrom, id, path, uid, title }.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Current entry path' }, toFolder: { type: 'string', description: 'Destination folder, e.g. "papers/kriging"' } }, required: ['path', 'toFolder'] },
+    annotations: { title: 'Move a stacks entry' },
+  },
+  {
+    name: 'weir_stacksTag', fn: 'stacksTag',
+    description: "Add/remove tags on a stacks entry by `path`. Tags are stamped source:'llm' and mirrored into the note’s frontmatter / the file’s .meta.json sidecar (portable, Obsidian-readable). Returns the updated entry.",
+    inputSchema: {
+      type: 'object', properties: {
+        path: { type: 'string', description: 'Entry path' },
+        add: { type: 'array', items: { type: 'string' }, description: 'Tags to add' },
+        remove: { type: 'array', items: { type: 'string' }, description: 'Tags to remove' },
+      }, required: ['path'],
+    },
+    annotations: { title: 'Tag a stacks entry' },
+  },
 ];
 
 // Register the tools on navigator.modelContext (polyfilled by the shim) and wire
@@ -15661,7 +15807,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '5bcb098';          // short content hash of the bundle (build id)
+const COMMIT = '9801118';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

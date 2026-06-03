@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { VFS } from '../vendor/vfs.js';
 import { Store } from '../src/js/store/store.js';
 import { buildWeirTools } from '../src/js/webmcp.js';
+import { StacksStore } from '../src/js/stacks.js';
 
 const store = new Store(await VFS.create()); await store._hydrate();
 await store.putFeed({ id: 'f', name: 'Boing Boing', adapter: 'feed', url: 'http://b/f' });
@@ -170,5 +171,51 @@ const lmApp = { poller: { fetch: async () => ({ ok: true, async json() { return 
 const lmTools = buildWeirTools({ store, app: lmApp });
 const lm = await lmTools.listProviderModels({ provider: 'nanogpt' });
 assert.equal(lm.count, 2); assert.deepEqual(lm.models, ['m1', 'm2'], 'models listed');
+
+// ── stacks tools (STACKS.md §6): co-curation over a real StacksStore ──
+{
+  const s = new Store(await VFS.create()); await s._hydrate();
+  const stacks = new StacksStore(s); await stacks.ensure();
+  const stApp = { stacks, renderStacks() {}, renderStream() {}, stackFilter: false };
+  const st = buildWeirTools({ store: s, app: stApp });
+
+  // write (create) → list → read
+  const w = await st.stacksWrite({ path: 'specs/weir/idea.md', markdown: '# Idea\n\nA [[abc]] link.', tags: ['Spec', 'weir'] });
+  assert.ok(w.ok && w.path === 'specs/weir/idea.md', 'stacksWrite created at the given path');
+  assert.equal(w.id, `stacks:${w.uid}`, 'returns the composing item id');
+  assert.deepEqual(w.tags, ['spec', 'weir'], 'tags lowercased + set');
+  const list = await st.stacksList({});
+  assert.equal(list.count, 1, 'one entry'); assert.ok(list.folders.includes('specs/weir'), 'folder surfaced');
+  assert.equal((await st.stacksList({ path: 'specs' })).count, 1, 'folder scope (recursive) matches');
+  assert.equal((await st.stacksList({ path: 'other' })).count, 0, 'out-of-scope folder excluded');
+  const rd = await st.stacksRead({ path: 'specs/weir/idea.md' });
+  assert.match(rd.markdown, /# Idea/, 'read returns the note body'); assert.ok(!rd.markdown.includes('uid'), 'body has no frontmatter');
+
+  // write (update) preserves uid + identity
+  const w2 = await st.stacksWrite({ path: 'specs/weir/idea.md', markdown: '# Idea v2\n\nupdated.' });
+  assert.equal(w2.uid, w.uid, 'update kept the uid (no dupe)');
+  assert.match((await st.stacksRead({ path: 'specs/weir/idea.md' })).markdown, /v2/, 'body updated in place');
+
+  // tag → mirrored to frontmatter on disk
+  await st.stacksTag({ path: 'specs/weir/idea.md', add: ['Reviewed'], remove: ['weir'] });
+  const tagged = s.getItem(w.id);
+  assert.ok(tagged.tags.includes('reviewed') && !tagged.tags.includes('weir'), 'tags add/remove applied');
+  assert.equal(tagged.tag_src.reviewed, 'llm', 'MCP stacks tag stamped llm');
+  const fileRaw = await s.vfs.readFile('/stacks/specs/weir/idea.md', 'utf8');
+  assert.ok(fileRaw.includes('reviewed') && !/\bweir\b/.test(fileRaw.split('---')[1] || ''), 'frontmatter mirrors the tag change');
+
+  // move keeps identity + state
+  s.setState(w.id, { read: true });
+  const mv = await st.stacksMove({ path: 'specs/weir/idea.md', toFolder: 'archive/specs' });
+  assert.equal(mv.movedFrom, 'specs/weir/idea.md'); assert.equal(mv.path, 'archive/specs/idea.md', 'moved');
+  assert.equal(mv.uid, w.uid, 'uid preserved across move');
+  assert.equal(s.getItem(w.id).read, true, 'read-state rode along the move');
+  assert.equal(await s.vfs.exists('/stacks/specs/weir/idea.md'), false, 'old file gone');
+
+  // errors
+  await assert.rejects(st.stacksRead({ path: 'nope.md' }), /No stacks entry/, 'missing path errors');
+  await assert.rejects(st.stacksWrite({}), /markdown/, 'write needs a body');
+  await assert.rejects(buildWeirTools({ store: s }).stacksList({}), /only available in the running app/, 'no app.stacks → guarded');
+}
 
 console.log('webmcp tools smoke ok:', JSON.stringify({ items: all.count, facets: Object.keys(f).length, mutations: calls.length }));

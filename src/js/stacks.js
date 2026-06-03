@@ -283,6 +283,25 @@ export class StacksStore {
     return rec;
   }
 
+  // Mirror an entry's current tags (and identity fields) back into its file —
+  // note frontmatter or file .meta.json sidecar — so an external tag change (e.g.
+  // via the MCP tools) stays portable/Obsidian-readable. Shard stays source of truth.
+  async syncTagsToFile(item) {
+    const abs = this._abs(item.path);
+    const created = new Date(item.published_at || now()).toISOString();
+    if (item.type === 'note') {
+      const raw = await this._readText(abs); if (raw == null) return;
+      const { data, body } = this._splitFm(raw);
+      const fm = this._fmEmit({ ...data, uid: item.uid || data.uid, title: item.title || data.title, tags: item.tags || [], created: data.created || created });
+      await this._writeText(abs, `---\n${fm}---\n\n${body.replace(/^\n+/, '')}`);
+    } else {
+      const scAbs = `${abs}.meta.json`;
+      let data = {}; const sc = await this._readText(scAbs); if (sc) { try { data = JSON.parse(sc) || {}; } catch { data = {}; } }
+      data = { ...data, uid: item.uid || data.uid, title: item.title || data.title, tags: item.tags || [], mime: item.mime || data.mime, created: data.created || created };
+      await this._writeText(scAbs, JSON.stringify(data, null, 2));
+    }
+  }
+
   // The markdown body of a note (frontmatter stripped), for the reader/editor.
   async readNote(item) {
     const raw = await this.store.getContent(item.id);
