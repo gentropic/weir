@@ -1399,6 +1399,7 @@ export class App {
       { label: 'Open', onClick: () => this.selectStackEntry(id) },
       isNote && { label: '✎ Edit', onClick: () => this.openNoteEditor(id) },
       !isNote && { label: '⬇ Download', onClick: () => this.downloadStacksFile(id) },
+      (!isNote && (/^text\//.test(it.mime || '') || /\.(md|markdown|mdown|txt|csv|json|log|ya?ml)$/i.test(it.path || ''))) && { label: '✎ Convert to note', onClick: () => this.convertStackToNote(id) },
       it.url && { label: 'Open original ↗', onClick: () => window.open(it.url, '_blank', 'noopener') },
       { sep: true },
       { label: 'Tag…', onClick: () => this.openTagEditor(id) },
@@ -1408,6 +1409,12 @@ export class App {
       { sep: true },
       { label: '⌦ Delete', onClick: () => this.trashStack(id) },
     ].filter(Boolean));
+  }
+  async convertStackToNote(id) {
+    const it = this.store.getItem(id); if (!it || !this.stacks) return;
+    const rec = await this.stacks.convertToNote(it);
+    await this.store.flush(); this.renderStacks();
+    if (this.stackFilter) { this.selectStackEntry(rec.id); } else { this.renderStream(); }   // open it as a note
   }
   async moveStackPrompt(id) {
     const it = this.store.getItem(id); if (!it || !this.stacks) return;

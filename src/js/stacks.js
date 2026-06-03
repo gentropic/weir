@@ -377,6 +377,31 @@ export class StacksStore {
     return entry;
   }
 
+  // Convert a (text) file entry into a real note, IN PLACE — same uid, so tags /
+  // read-state / inbound links ride along. The bytes become the body; we prepend
+  // frontmatter and drop the .meta.json sidecar. The path gets a note extension
+  // (.md) if it didn't have one, so a rescan treats it as a note (not a file again).
+  async convertToNote(item) {
+    if (!item || item.type !== 'file') return item;
+    const oldRel = item.path, oldAbs = this._abs(oldRel);
+    const text = (await this._readText(oldAbs)) || '';   // utf8 — consistent across backends (only text files convert)
+    const { body } = this._splitFm(text);   // tolerate a file that already had frontmatter
+    const uid = item.uid || this._uid();
+    const created = item.published_at || now();
+    const title = this._titleFromBody(body, oldRel) || this._basename(oldRel);
+    const tags = item.tags || [];
+    let rel = isNotePath(oldRel) ? oldRel : (oldRel.replace(/\.[^./]+$/, '') + '.md');
+    if (rel !== oldRel && await this._exists(this._abs(rel))) rel = await this._uniqueRel(rel);
+    const newAbs = this._abs(rel);
+    const fm = this._fmEmit({ uid, title, tags, created: new Date(created).toISOString(), source: item.source });
+    await this._writeText(newAbs, `---\n${fm}---\n\n${body.trim()}\n`);
+    if (newAbs !== oldAbs) { try { await this.vfs.unlink(oldAbs); } catch { /* gone */ } }
+    try { await this.vfs.unlink(`${oldAbs}.meta.json`); } catch { /* no sidecar */ }
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags, created, source: item.source, excerpt: deriveExcerpt(body, 300), links: this._wikiRefs(body) }, { replaceTags: true });
+    this.store.emit('items', { inserted: 0, updated: 1, skipped: 0 });
+    return rec;
+  }
+
   // The markdown body of a note (frontmatter stripped), for the reader/editor.
   async readNote(item) {
     const raw = await this.store.getContent(item.id);

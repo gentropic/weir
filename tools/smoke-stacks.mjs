@@ -74,6 +74,27 @@ assert.equal(await store.vfs.exists('/stacks/inbox/paper.pdf.meta.json'), true, 
 const bytes = await stacks.readBytes(fileRec);
 assert.ok(bytes && bytes.length === 4, 'file bytes read back');
 
+// ── convert a text file → note, in place, uid preserved ──
+{
+  const enc = new TextEncoder();
+  const f = await stacks.addFile({ name: 'readme.md', bytes: enc.encode('# Readme\n\nhello with a [[abc]] link'), tags: ['ref'] });
+  assert.equal(f.type, 'file', 'starts as a file');
+  store.setState(f.id, { read: true });
+  const note = await stacks.convertToNote(f);
+  assert.equal(note.id, f.id, 'convert preserves the item id (uid)');
+  assert.equal(note.type, 'note', 'now a note');
+  assert.equal(store.getItem(f.id).read, true, 'read-state preserved');
+  assert.deepEqual(note.links, ['abc'], 'links extracted from the converted body');
+  assert.equal(await store.vfs.exists('/stacks/inbox/readme.md.meta.json'), false, 'sidecar dropped');
+  const body = await stacks.readNote(store.getItem(f.id));
+  assert.ok(body.startsWith('# Readme') && !body.includes('uid'), 'reads back as a frontmatter-stripped note');
+  // extension swap: a .csv text file → .md on convert
+  const c = await stacks.addFile({ name: 'data.csv', bytes: enc.encode('a,b\n1,2') });
+  const cn = await stacks.convertToNote(c);
+  assert.ok(cn.path.endsWith('.md'), 'non-note extension swapped to .md so a rescan keeps it a note');
+  assert.equal(await store.vfs.exists('/stacks/inbox/data.csv'), false, 'old .csv removed after ext swap');
+}
+
 // ── missing → forget (never auto-delete) ──
 await store.vfs.unlink('/stacks/papers/raw.md');
 const r3 = await stacks.scan();
