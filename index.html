@@ -15514,6 +15514,24 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return out;
   }
 
+  // Resolve a [[ref]] (a stacks uid, a glass-id, or a full item id) to an item.
+  function resolveRef(ref) {
+    const r = String(ref || '').trim(); if (!r) return null;
+    const direct = store.getItem(r); if (direct) return direct;
+    for (const it of store.items.values()) if (it.uid === r || it.glass_id === r) return it;
+    return null;
+  }
+  // Items whose body links to `item` (via its uid/glass_id/id) — the backlink set.
+  function backlinksOf(item) {
+    const refs = new Set([item.uid, item.glass_id, item.id].filter(Boolean));
+    const out = [];
+    for (const other of store.items.values()) {
+      if (other.id === item.id || !other.links || !other.links.length) continue;
+      if (other.links.some((l) => refs.has(String(l).trim()))) out.push({ id: other.id, title: other.title || other.path || other.id });
+    }
+    return out;
+  }
+
   async function getItem(input = {}) {
     const id = input && input.id;
     const it = id != null && store.getItem(String(id));
@@ -15528,6 +15546,12 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (input.content && it.has_content) {
       try { const html = await store.getContent(it.id); if (html) o.content_text = stripToText(html).slice(0, 8000); } catch { /* content unreadable */ }
     }
+    // Knowledge graph: what this item links to ([[ref]] → resolved target) + what links to it.
+    if (Array.isArray(it.links) && it.links.length) {
+      o.links = it.links.map((ref) => { const t = resolveRef(ref); return t ? { ref, id: t.id, title: t.title || t.id } : { ref, unresolved: true }; });
+    }
+    const back = backlinksOf(it);
+    if (back.length) o.backlinks = back;
     return o;
   }
 
@@ -15563,17 +15587,31 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
 
   // ── mutations (the user opted into wide access for their own local data) ──
 
-  // Set item flags. All reversible — weir's "archived" archives, never deletes.
+  // Set item flags — on ONE item (`id`) or every item matching a query (the bulk
+  // path, same `scope via params` pattern as `tag`). All reversible — weir's
+  // "archived" archives, never deletes; unarchiveAll reverses an over-eager sweep.
   async function setState(input = {}) {
-    const it = input.id != null && store.getItem(String(input.id));
-    if (!it) throw new Error(`No item with id "${input.id}".`);
     const patch = {};
     if (input.read !== undefined) patch.read = !!input.read;
     if (input.saved !== undefined) patch.saved = !!input.saved;
     if (input.archived !== undefined) patch.archived = !!input.archived;
     if (!Object.keys(patch).length) throw new Error('Provide at least one of: read, saved, archived.');
-    store.setState(it.id, patch);
-    return projItem(store, store.getItem(it.id), true);
+    if (input.id != null) {
+      const it = store.getItem(String(input.id));
+      if (!it) throw new Error(`No item with id "${input.id}".`);
+      store.setState(it.id, patch);
+      if (app && app.renderStream) app.renderStream();
+      return projItem(store, store.getItem(it.id), true);
+    }
+    // bulk over a query — require a scoping filter so a whole-corpus mutation is never
+    // accidental. `saved` here is the ACTION, not a scope, so drop it from the query.
+    const scope = buildQuery(input); delete scope.saved;
+    if (!Object.keys(scope).length) throw new Error('Provide `id`, or query filters (q/feed/category/type/view/unread) to scope a bulk change.');
+    const ids = store.query(scope).map((r) => r.id);
+    for (const id of ids) store.setState(id, patch);
+    await store.flush();
+    if (app && app.renderAll) app.renderAll();
+    return { matched: ids.length, patch };
   }
 
   // One tagging verb, two scopes (the "scope via params, not a second tool" pattern):
@@ -15724,17 +15762,89 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   async function listSources(input = {}) {
     const stats = store.counts();   // { byFeed: { feed_id: inboxCount }, … }
     const onlyCat = input.category !== undefined ? String(input.category) : null;
+    // Health: prefer the app's computed status (hijack/drift/stale/failing); fall back
+    // to the stored feed.state. Surfaces prune candidates ("which feeds are dead?").
+    const fhealth = (f) => {
+      const h = app && app._health && app._health.get(f.id);   // only non-ok feeds are cached
+      const o = {};
+      const state = h ? h.status : (f.state || 'healthy');
+      if (state && state !== 'healthy') o.state = state;
+      if (h && h.reasons && h.reasons.length) o.reasons = h.reasons;
+      if (f.last_polled_at) o.lastPolled = new Date(f.last_polled_at).toISOString();
+      const fh = f.feed_health || {};
+      if (fh.consecutive_failures) o.fails = fh.consecutive_failures;
+      if (fh.last_error) o.lastError = fh.last_error;
+      if (fh.avg_items_per_week != null) o.perWeek = fh.avg_items_per_week;
+      return o;
+    };
     const folders = new Map();
+    const tally = { failing: 0, stale: 0, suspect: 0, slow: 0 };
     for (const f of store.listFeeds()) {
       const cat = f.category || '';
       if (onlyCat != null && cat !== onlyCat) continue;
       if (!folders.has(cat)) folders.set(cat, []);
-      folders.get(cat).push({ id: f.id, name: f.name, adapter: f.adapter, inbox: stats.byFeed[f.id] || 0 });
+      const h = fhealth(f);
+      if (h.state && tally[h.state] !== undefined) tally[h.state]++;
+      folders.get(cat).push({ id: f.id, name: f.name, adapter: f.adapter, inbox: stats.byFeed[f.id] || 0, ...h });
     }
     const sources = [...folders.entries()]
       .map(([category, feeds]) => ({ category: category || '(ungrouped)', feeds: feeds.sort((a, b) => b.inbox - a.inbox || a.name.localeCompare(b.name)) }))
       .sort((a, b) => a.category.localeCompare(b.category));
-    return { folders: sources.length, feedCount: store.listFeeds().length, sources };
+    const health = {}; for (const k in tally) if (tally[k]) health[k] = tally[k];
+    return { folders: sources.length, feedCount: store.listFeeds().length, ...(Object.keys(health).length ? { health } : {}), sources };
+  }
+
+  // Ranked full-text search via the librarian index when ready (vs queryItems's
+  // substring `q`) — better "most relevant about X" on a big corpus. Optional scope
+  // filters (feed/type/category/view) narrow it; falls back to substring if no index.
+  async function search(input = {}) {
+    const q = String(input.q || input.text || '').trim();
+    if (!q) throw new Error('provide `q` (the search query)');
+    const limit = Math.min(Math.max(1, Number(input.limit) || 20), 100);
+    const idx = app && app.searchIndex;
+    const scoped = input.feed || input.type || input.view || input.category !== undefined || input.unread !== undefined || input.saved !== undefined;
+    if (idx && idx.ready) {
+      let filter;
+      if (scoped) { const allowed = new Set(store.query(buildQuery(input)).map((r) => r.id)); filter = (id) => allowed.has(id); }
+      const hits = idx.search(q, { limit, filter }) || [];
+      return { ranked: true, count: hits.length, items: hits.map((h) => { const it = store.getItem(h.id); return it ? { ...projItem(store, it, false), score: h.score } : null; }).filter(Boolean) };
+    }
+    const rows = store.query({ ...buildQuery(input), text: q }).slice(0, limit);
+    return { ranked: false, count: rows.length, items: rows.map((r) => projItem(store, r, false)) };
+  }
+
+  // Subscribe to a feed (adapter auto-detected; an initial poll fires in the app).
+  async function addFeed(input = {}) {
+    if (!app) throw new Error('adding feeds is only available in the running app');
+    const url = String(input.url || '').trim();
+    if (!url) throw new Error('provide `url`');
+    const matched = (app.adapters || []).find((a) => { try { return a.match(url); } catch { return false; } });
+    const adapter = (matched && matched.name) || 'feed';
+    const resolved = (matched && matched.resolveUrl && matched.resolveUrl(url)) || url;
+    let host = url; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep raw */ }
+    const name = input.name || (matched && matched.titleFor && matched.titleFor(url)) || host;
+    const feed = await store.putFeed({ url: resolved, name, adapter, category: input.category || undefined });
+    if (app.poller) app.poller.pollFeed(feed).then(() => app.renderAll && app.renderAll()).catch(() => {});
+    if (app.renderRail) app.renderRail();
+    return { id: feed.id, name: feed.name, adapter: feed.adapter, url: feed.url, category: feed.category || undefined };
+  }
+
+  // Update a feed's curation fields (rename, recategorize, retention, poll interval,
+  // image/full-text policy). Not destructive — no unsubscribe here (that lives in the UI).
+  async function updateFeed(input = {}) {
+    const f = input.id != null && store.getFeed(String(input.id));
+    if (!f) throw new Error(`No feed "${input.id}". Use weir_listSources for ids.`);
+    const patch = {};
+    if (input.name != null) patch.name = String(input.name);
+    if (input.category !== undefined) patch.category = String(input.category) || undefined;
+    if (input.poll_interval_minutes != null) patch.poll_interval_minutes = Math.max(5, Number(input.poll_interval_minutes) || 180);
+    if (input.images_allowed !== undefined) patch.images_allowed = !!input.images_allowed;
+    if (input.fetch_full_content !== undefined) patch.fetch_full_content = !!input.fetch_full_content;
+    if (input.retention !== undefined) patch.retention = (input.retention === 'forever' || input.retention == null) ? { unread_days: 'forever', read_days: 'forever' } : { unread_days: Math.max(1, Number(input.retention) || 0) };
+    if (!Object.keys(patch).length) throw new Error('nothing to update — pass name/category/retention/poll_interval_minutes/images_allowed/fetch_full_content');
+    await store.updateFeed(f.id, patch);
+    if (app && app.renderRail) app.renderRail();
+    return { id: f.id, ...patch };
   }
 
   // Kick the background link resolver — resolve wrapped saved links (share.google
@@ -15860,7 +15970,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, listFacets, listSources, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -15887,9 +15997,37 @@ const TOOLS = [
   },
   {
     name: 'weir_listSources', fn: 'listSources',
-    description: 'List weir’s sources (feeds) grouped by folder, each with its inbox item count — the source tree, so you can see what exists and then drill in with weir_queryItems({ feed }). Optional `category` scopes to one folder. Returns { folders, feedCount, sources: [{ category, feeds: [{ id, name, adapter, inbox }] }] }.',
+    description: 'List weir’s sources (feeds) grouped by folder, each with its inbox count AND health — `state` (stale/failing/suspect/slow; absent = healthy), `lastPolled`, `fails`, `lastError`, `perWeek` (avg items/week) — so you can spot prune candidates (dead/stale feeds) and help curate. A top-level `health` tallies the troubled ones. Optional `category` scopes to one folder. Pair with weir_updateFeed to recategorize/adjust, weir_queryItems({feed}) to drill in.',
     inputSchema: { type: 'object', properties: { category: { type: 'string', description: 'Only this folder ("" = ungrouped)' } } },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'List weir sources' },
+  },
+  {
+    name: 'weir_addFeed', fn: 'addFeed',
+    description: 'Subscribe to a feed by URL — adapter auto-detected (RSS/Atom/JSON Feed, YouTube channel, GitHub repo); an initial poll fires in the app. Optional `name` + `category` (folder). Returns the created feed { id, name, adapter, url, category }.',
+    inputSchema: {
+      type: 'object', properties: {
+        url: { type: 'string', description: 'Feed or page URL to subscribe to' },
+        name: { type: 'string', description: 'Display name (default: derived from the URL/adapter)' },
+        category: { type: 'string', description: 'Folder to file it under' },
+      }, required: ['url'],
+    },
+    annotations: { title: 'Add a feed' },
+  },
+  {
+    name: 'weir_updateFeed', fn: 'updateFeed',
+    description: 'Curate a feed: rename, recategorize (folder), set retention ("forever" or a day count), poll interval (minutes), image policy, or full-text auto-fetch. Identify it by `id` (from weir_listSources). Not destructive — no unsubscribe here (that lives in the UI). Returns the applied patch.',
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'Feed id (from weir_listSources)' },
+        name: { type: 'string', description: 'Rename the feed' },
+        category: { type: 'string', description: 'Move to a folder ("" = ungrouped)' },
+        retention: { description: '"forever", or a number of days to keep before archiving' },
+        poll_interval_minutes: { type: 'integer', description: 'How often to poll (min 5)' },
+        images_allowed: { type: 'boolean', description: 'Always load images for this feed' },
+        fetch_full_content: { type: 'boolean', description: 'Auto-fetch full article text' },
+      }, required: ['id'],
+    },
+    annotations: { title: 'Update a feed' },
   },
   {
     name: 'weir_resolveLinks', fn: 'resolveLinks',
@@ -15911,7 +16049,7 @@ const TOOLS = [
   },
   {
     name: 'weir_getItem', fn: 'getItem',
-    description: "Get one weir item by id, including its glass catalog facets + description if cataloged. Pass content:true to include the extracted article text (capped at 8k chars).",
+    description: "Get one weir item by id: glass facets + description (if cataloged), plus its knowledge-graph edges — `links` (what its body links to via [[ref]], resolved to {ref,id,title}) and `backlinks` (items whose body links to it). Pass content:true to include the extracted article/note text (capped 8k).",
     inputSchema: {
       type: 'object', properties: {
         id: { type: 'string', description: 'Item id (from weir_queryItems)' },
@@ -15921,15 +16059,38 @@ const TOOLS = [
     annotations: { readOnlyHint: true, title: 'Get a weir item' },
   },
   {
-    name: 'weir_setState', fn: 'setState',
-    description: "Mutate an item: set read / saved / archived (each a boolean; pass only the ones to change). All reversible — weir's archive never deletes. Returns the updated item.",
+    name: 'weir_search', fn: 'search',
+    description: 'RANKED full-text search (the librarian BM25 index) — relevance-ordered, better than weir_queryItems\'s substring `q` for "most relevant about X" on a large corpus. Optional scope filters (feed/type/category/view/unread/saved) narrow it like queryItems. Returns { ranked, count, items:[…,score] } (ranked:false = index not ready, fell back to substring). Use queryItems to LIST a whole feed/folder; use search to FIND by relevance.',
     inputSchema: {
       type: 'object', properties: {
-        id: { type: 'string', description: 'Item id (from weir_queryItems)' },
+        q: { type: 'string', description: 'The search query' },
+        feed: { type: 'string', description: 'Scope to a source (id or display name)' },
+        category: { type: 'string', description: 'Scope to a folder ("" = ungrouped)' },
+        type: { type: 'string', description: 'Scope to an item type' },
+        view: { type: 'string', enum: ['inbox', 'saved', 'archived'], description: 'Scope to a view' },
+        unread: { type: 'boolean', description: 'Only unread' },
+        saved: { type: 'boolean', description: 'Only saved' },
+        limit: { type: 'integer', description: 'Max hits (default 20, cap 100)' },
+      }, required: ['q'],
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'Ranked search' },
+  },
+  {
+    name: 'weir_setState', fn: 'setState',
+    description: "Set read / saved / archived (each a boolean; pass only the ones to change) — on ONE item (`id`) or every item matching a query (pass q/feed/category/type/view/unread/saved — e.g. archive a dead feed, mark a folder read). A bulk call REQUIRES a scoping filter (no accidental whole-corpus change). All reversible — archive never deletes (weir_unarchiveAll reverses a sweep). Returns the item (id mode) or { matched, patch } (query mode).",
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'A single item id; omit to bulk over a query' },
         read: { type: 'boolean', description: 'Mark read/unread' },
         saved: { type: 'boolean', description: 'Save/unsave (star)' },
         archived: { type: 'boolean', description: 'Archive/unarchive (non-destructive)' },
-      }, required: ['id'],
+        q: { type: 'string', description: 'Bulk scope: substring over title/excerpt/text' },
+        feed: { type: 'string', description: 'Bulk scope: a source by id or name' },
+        category: { type: 'string', description: 'Bulk scope: a folder ("" = ungrouped)' },
+        type: { type: 'string', description: 'Bulk scope: item type' },
+        view: { type: 'string', enum: ['inbox', 'saved', 'archived'], description: 'Bulk scope: a view (use view:"saved" to scope to saved items)' },
+        unread: { type: 'boolean', description: 'Bulk scope: only unread' },
+      },
     },
     annotations: { title: 'Set item state' },
   },
@@ -16153,7 +16314,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'acb0ef4';          // short content hash of the bundle (build id)
+const COMMIT = 'af8f3b0';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

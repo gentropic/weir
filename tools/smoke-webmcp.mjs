@@ -105,6 +105,31 @@ assert.equal(store.getItem('a1').tag_src.swept, 'llm', 'bulk WebMCP tag stamped 
 assert.equal((await tools.tag({ q: 'no-such-text', add: ['x'] })).matched, 0, 'empty match → 0, no throw');
 await assert.rejects(tools.tag({ type: 'article' }), /add and\/or remove/, 'tag(query) needs add or remove');
 
+// ── setState: bulk over a query + scope guard + action guard ──
+store.setState('a1', { read: false });
+const bulkRead = await tools.setState({ type: 'article', read: true });
+assert.equal(bulkRead.matched, 1, 'bulk setState matched the article');
+assert.equal(store.getItem('a1').read, true, 'bulk read applied');
+await assert.rejects(tools.setState({ saved: true }), /scope a bulk change/, 'bulk needs a scoping filter (no whole-corpus)');
+await assert.rejects(tools.setState({ feed: 'f' }), /at least one of: read/, 'needs an action');
+
+// ── search: substring fallback when no app/index ──
+const sf = await tools.search({ q: 'whiskey' });
+assert.equal(sf.ranked, false, 'no index → substring fallback');
+assert.ok(sf.items.some((i) => i.id === 'a1'), 'search found a1');
+await assert.rejects(tools.search({}), /provide ..?q/, 'search needs a query');
+
+// ── feed mgmt: addFeed needs app; updateFeed curates; listSources surfaces health ──
+await assert.rejects(tools.addFeed({ url: 'http://x/f' }), /only available/, 'addFeed needs the running app');
+const uf = await tools.updateFeed({ id: 'f', category: 'news', name: 'BB' });
+assert.equal(uf.category, 'news'); assert.equal(store.getFeed('f').name, 'BB', 'feed renamed');
+await assert.rejects(tools.updateFeed({ id: 'nope', name: 'x' }), /No feed/, 'unknown feed errors');
+store.getFeed('f').feed_health = { consecutive_failures: 3, last_error: 'HTTP 500' };
+const ls2 = await tools.listSources();
+const ff = ls2.sources.flatMap((c) => c.feeds).find((x) => x.id === 'f');
+assert.equal(ff.fails, 3, 'listSources surfaces consecutive failures');
+assert.equal(ff.lastError, 'HTTP 500', 'and the last error');
+
 // ── catalog control (mock app) ──
 const calls = [];
 const mockApp = {
@@ -231,6 +256,19 @@ assert.equal(lm.count, 2); assert.deepEqual(lm.models, ['m1', 'm2'], 'models lis
   await assert.rejects(st.stacksRead({ path: 'nope.md' }), /No stacks entry/, 'missing path errors');
   await assert.rejects(st.stacksWrite({}), /markdown/, 'write needs a body');
   await assert.rejects(buildWeirTools({ store: s }).stacksList({}), /only available in the running app/, 'no app.stacks → guarded');
+}
+
+// ── getItem link graph (links + backlinks) ──
+{
+  const s2 = new Store(await VFS.create()); await s2._hydrate();
+  const k = new StacksStore(s2); await k.ensure();
+  const t2 = buildWeirTools({ store: s2, app: { stacks: k, renderStacks() {}, renderStream() {} } });
+  const a = await t2.stacksWrite({ path: 'a.md', markdown: '# A' });
+  const b = await t2.stacksWrite({ path: 'b.md', markdown: `links to [[${a.uid}]]` });
+  const gia = await t2.getItem({ id: a.id });
+  assert.ok((gia.backlinks || []).some((x) => x.id === b.id), 'getItem: backlinks lists the linking note');
+  const gib = await t2.getItem({ id: b.id });
+  assert.ok((gib.links || []).some((l) => l.ref === a.uid && l.id === a.id), 'getItem: links resolve [[ref]] → target');
 }
 
 console.log('webmcp tools smoke ok:', JSON.stringify({ items: all.count, facets: Object.keys(f).length, mutations: calls.length }));
