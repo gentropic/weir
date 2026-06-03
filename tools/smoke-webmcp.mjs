@@ -168,6 +168,18 @@ await assert.rejects(tools.renameFeed({ id: 'arne-androidarts' }), /newId/, 'mis
 await assert.rejects(tools.renameFeed({ id: 'arne-androidarts', newId: 'f' }), /already exists/, 'collision rejected');
 await store.removeFeed('arne-androidarts');   // restore the shared store's baseline counts
 
+// ── repoll: force-refresh a feed (guard + forwards force:true to the poller) ──
+await assert.rejects(tools.repoll({ id: 'f' }), /only available/, 'repoll needs the running app');
+{
+  let forced = null;
+  const rpApp = { poller: { pollFeed: async (feed, opts) => { forced = { id: feed.id, opts }; return { inserted: 0, updated: 3, skipped: 0 }; } }, renderAll() {} };
+  const rpTools = buildWeirTools({ store, app: rpApp });
+  const rr = await rpTools.repoll({ id: 'f' });
+  assert.equal(rr.updated, 3, 'returns the poll result');
+  assert.deepEqual(forced.opts, { force: true }, 'forwards force:true to pollFeed');
+  await assert.rejects(rpTools.repoll({ id: 'nope' }), /No feed/, 'unknown feed errors');
+}
+
 // ── catalog control (mock app) ──
 const calls = [];
 const mockApp = {

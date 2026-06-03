@@ -118,6 +118,32 @@ assert.equal(cgStats.fetches, 3, 'three fetches');
 assert.equal(cgStats.unchanged, 2, 'two confirmed-unchanged');
 assert.ok(Math.abs(cgStats.ratio - 2 / 3) < 1e-9, 'ratio = unchanged/fetches');
 
+// ── force poll: skip conditional GET + ignore cache "fresh" → re-parse the body ──
+// (powers weir_repoll — re-derives titles even when the server/bridge says
+// unchanged). The scenario that defeats a normal poll: a bridge cache hit that
+// STILL carries the body. force must bypass the short-circuit and re-parse it,
+// without sending conditional headers or losing the stored validators.
+{
+  await store.putFeed({ id: 'fp', name: 'FP', adapter: 'feed', url: 'http://x/feed', next_poll_at: NOW - 1000 });
+  const hdrs = [];
+  // Always a cache HIT that still carries the body (the bridge masks 304 as
+  // 200 + x-gcu-bridge-cache: hit, body included).
+  const fpFetch = async (url, opts = {}) => { hdrs.push(opts.headers || {}); return mkRes({ status: 200, body: RSS, headers: { 'x-gcu-bridge-cache': 'hit', etag: 'W/"keep"' } }); };
+  const fp = new Poller(store, { adapters: [feedAdapter], fetch: fpFetch });
+  // Seed items (first poll has no stored items → hasItems false → it parses).
+  const s0 = await fp.pollFeed(store.getFeed('fp'));
+  assert.equal(s0.inserted, 2, 'seed poll inserts');
+  // NORMAL poll now short-circuits on the cache hit (hasItems true).
+  const n0 = await fp.pollFeed(store.getFeed('fp'));
+  assert.equal(n0.unchanged, true, 'normal poll on a cache hit short-circuits (no re-parse)');
+  // FORCE bypasses it and re-parses the same body → items updated.
+  const f0 = await fp.pollFeed(store.getFeed('fp'), { force: true });
+  assert.equal(f0.unchanged, undefined, 'force does NOT short-circuit on a cache hit');
+  assert.equal(f0.updated, 2, 'force re-parses the body → items updated (re-derives titles)');
+  assert.deepEqual(hdrs[2], {}, 'force sends no conditional headers');
+  assert.equal(store.getFeed('fp').etag, 'W/"keep"', 'force preserves the stored etag');
+}
+
 // ── setKeepAlive: flight-deck-driven poll tick on an injected (PiP) window ──
 {
   const ka = new Poller(store, { adapters: [feedAdapter], fetch: async () => mkRes({ status: 304 }) });

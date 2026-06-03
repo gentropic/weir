@@ -108,7 +108,12 @@ export class Poller {
 
   // Poll a single feed: fetch → (autodiscover if the body is a web page) →
   // parse → upsert → record health. Never throws; failures land in feed_health.
-  async pollFeed(feed) {
+  // `force` skips conditional GET for this one fetch (and ignores a cache "fresh"
+  // hit), so the full body re-parses even when nothing changed — re-deriving
+  // titles, picking up edits. It does NOT clear the stored validators; they're
+  // re-captured from the fresh 200, so the next normal poll still benefits from
+  // conditional GET. (Cleaner than changing the URL to force a refresh.)
+  async pollFeed(feed, { force = false } = {}) {
     if (this._running.has(feed.id)) return null;
     this._running.add(feed.id);
     const adapter = this.pickAdapter(feed);
@@ -117,8 +122,8 @@ export class Poller {
     // keeps the browser's HTTP cache out of it on the direct-fetch path, so our
     // own validators are authoritative (mirrors how the bridge fetches).
     const headers = {};
-    if (feed.etag) headers['If-None-Match'] = feed.etag;
-    if (feed.last_modified) headers['If-Modified-Since'] = feed.last_modified;
+    if (!force && feed.etag) headers['If-None-Match'] = feed.etag;
+    if (!force && feed.last_modified) headers['If-Modified-Since'] = feed.last_modified;
     const opts = { cache: 'no-store' };
     if (Object.keys(headers).length) opts.headers = headers;
     try {
@@ -131,7 +136,7 @@ export class Poller {
       // "fresh" hit could mask an empty store, e.g. after a data reset).
       const cacheTag = res.headers?.get?.('x-gcu-bridge-cache');
       const hasItems = (this.store.byFeed?.get(feed.id)?.size || 0) > 0;
-      if (hasItems && (res.status === 304 || cacheTag === 'hit' || cacheTag === 'fresh')) {
+      if (!force && hasItems && (res.status === 304 || cacheTag === 'hit' || cacheTag === 'fresh')) {
         this._stats.unchanged++;
         this._markHealthy(feed);
         await this.store.putFeed(feed);

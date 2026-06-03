@@ -497,6 +497,21 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return r;
   }
 
+  // Force a fresh poll of one feed NOW, bypassing conditional-GET so the full body
+  // re-parses even when nothing changed — re-deriving titles, picking up edits.
+  // The clean replacement for "change the URL to itself" as a refresh trick: it
+  // does NOT reset the feed's validators or schedule. For nudging a specific feed
+  // during a curation sweep (e.g. healing a microblog feed's titles). Returns the
+  // poll result { inserted, updated, skipped } (or { error } on a fetch failure).
+  async function repoll(input = {}) {
+    if (!app || !app.poller) throw new Error('repoll is only available in the running app');
+    const f = input.id != null && store.getFeed(String(input.id));
+    if (!f) throw new Error(`No feed "${input.id}". Use weir_listSources for ids.`);
+    const result = await app.poller.pollFeed(f, { force: true });
+    if (app.renderAll) app.renderAll();
+    return { id: f.id, ...(result || { skipped: 'already polling' }) };
+  }
+
   // Kick the background link resolver — resolve wrapped saved links (share.google
   // etc.) to their real url + fetch thumbnail/title metadata, gently over time.
   async function resolveLinks() {
@@ -620,7 +635,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, renameFeed, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -696,6 +711,12 @@ const TOOLS = [
       }, required: ['id', 'newId'],
     },
     annotations: { title: 'Rename a feed id' },
+  },
+  {
+    name: 'weir_repoll', fn: 'repoll',
+    description: 'Force a fresh poll of one feed right now, bypassing conditional-GET so the full body re-parses even if nothing changed — re-derives titles, picks up edits. The clean way to refresh a feed (does NOT reset validators or schedule, unlike changing the URL). Use it to heal a microblog feed reading as "(untitled)", or to pull a feed immediately. Returns { id, inserted, updated, skipped } or { error }.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Feed id (from weir_listSources)' } }, required: ['id'] },
+    annotations: { title: 'Force-refresh a feed' },
   },
   {
     name: 'weir_resolveLinks', fn: 'resolveLinks',

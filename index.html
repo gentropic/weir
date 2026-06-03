@@ -12334,7 +12334,12 @@ class Poller {
 
   // Poll a single feed: fetch → (autodiscover if the body is a web page) →
   // parse → upsert → record health. Never throws; failures land in feed_health.
-  async pollFeed(feed) {
+  // `force` skips conditional GET for this one fetch (and ignores a cache "fresh"
+  // hit), so the full body re-parses even when nothing changed — re-deriving
+  // titles, picking up edits. It does NOT clear the stored validators; they're
+  // re-captured from the fresh 200, so the next normal poll still benefits from
+  // conditional GET. (Cleaner than changing the URL to force a refresh.)
+  async pollFeed(feed, { force = false } = {}) {
     if (this._running.has(feed.id)) return null;
     this._running.add(feed.id);
     const adapter = this.pickAdapter(feed);
@@ -12343,8 +12348,8 @@ class Poller {
     // keeps the browser's HTTP cache out of it on the direct-fetch path, so our
     // own validators are authoritative (mirrors how the bridge fetches).
     const headers = {};
-    if (feed.etag) headers['If-None-Match'] = feed.etag;
-    if (feed.last_modified) headers['If-Modified-Since'] = feed.last_modified;
+    if (!force && feed.etag) headers['If-None-Match'] = feed.etag;
+    if (!force && feed.last_modified) headers['If-Modified-Since'] = feed.last_modified;
     const opts = { cache: 'no-store' };
     if (Object.keys(headers).length) opts.headers = headers;
     try {
@@ -12357,7 +12362,7 @@ class Poller {
       // "fresh" hit could mask an empty store, e.g. after a data reset).
       const cacheTag = res.headers?.get?.('x-gcu-bridge-cache');
       const hasItems = (this.store.byFeed?.get(feed.id)?.size || 0) > 0;
-      if (hasItems && (res.status === 304 || cacheTag === 'hit' || cacheTag === 'fresh')) {
+      if (!force && hasItems && (res.status === 304 || cacheTag === 'hit' || cacheTag === 'fresh')) {
         this._stats.unchanged++;
         this._markHealthy(feed);
         await this.store.putFeed(feed);
@@ -16108,6 +16113,21 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return r;
   }
 
+  // Force a fresh poll of one feed NOW, bypassing conditional-GET so the full body
+  // re-parses even when nothing changed — re-deriving titles, picking up edits.
+  // The clean replacement for "change the URL to itself" as a refresh trick: it
+  // does NOT reset the feed's validators or schedule. For nudging a specific feed
+  // during a curation sweep (e.g. healing a microblog feed's titles). Returns the
+  // poll result { inserted, updated, skipped } (or { error } on a fetch failure).
+  async function repoll(input = {}) {
+    if (!app || !app.poller) throw new Error('repoll is only available in the running app');
+    const f = input.id != null && store.getFeed(String(input.id));
+    if (!f) throw new Error(`No feed "${input.id}". Use weir_listSources for ids.`);
+    const result = await app.poller.pollFeed(f, { force: true });
+    if (app.renderAll) app.renderAll();
+    return { id: f.id, ...(result || { skipped: 'already polling' }) };
+  }
+
   // Kick the background link resolver — resolve wrapped saved links (share.google
   // etc.) to their real url + fetch thumbnail/title metadata, gently over time.
   async function resolveLinks() {
@@ -16231,7 +16251,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, renameFeed, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -16307,6 +16327,12 @@ const TOOLS = [
       }, required: ['id', 'newId'],
     },
     annotations: { title: 'Rename a feed id' },
+  },
+  {
+    name: 'weir_repoll', fn: 'repoll',
+    description: 'Force a fresh poll of one feed right now, bypassing conditional-GET so the full body re-parses even if nothing changed — re-derives titles, picks up edits. The clean way to refresh a feed (does NOT reset validators or schedule, unlike changing the URL). Use it to heal a microblog feed reading as "(untitled)", or to pull a feed immediately. Returns { id, inserted, updated, skipped } or { error }.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Feed id (from weir_listSources)' } }, required: ['id'] },
+    annotations: { title: 'Force-refresh a feed' },
   },
   {
     name: 'weir_resolveLinks', fn: 'resolveLinks',
@@ -16593,7 +16619,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '4577e61';          // short content hash of the bundle (build id)
+const COMMIT = '050b663';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
