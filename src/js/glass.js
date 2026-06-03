@@ -10,7 +10,7 @@ export const FACETS = ['domain', 'entity', 'process', 'method', 'scale', 'spatia
 export const TYPE_TO_FORM = {
   article: 'article', video: 'video', release: 'release', paper: 'paper',
   status: 'status', track: 'track', podcast: 'podcast', commit: 'commit',
-  issue: 'issue', note: 'note',
+  issue: 'issue', note: 'note', book: 'book',
 };
 
 // Coarse origin tier until the real provenance vocabulary is frozen (GLASS §15.3,

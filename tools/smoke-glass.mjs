@@ -28,6 +28,7 @@ assert.equal(card.dublin_core.date, '2023-06-15', 'date from published_at');
 assert.equal(card.dublin_core.identifier, 'https://arxiv.org/abs/2306.001');
 assert.equal(card.dublin_core.source, 'arXiv geo');
 assert.deepEqual(card.facets.form, ['paper'], 'form ← type');
+assert.equal(TYPE_TO_FORM.book, 'book', 'book type maps to book form (not the article fallback)');
 assert.deepEqual(card.facets.provenance, ['web-feed'], 'provenance ← feed');
 assert.deepEqual(card.facets.temporal, ['2023'], 'temporal ← year');
 assert.deepEqual(card.facets.entity, ['kriging', 'iron-ore'], 'entity ← deduped lowercased tags');
