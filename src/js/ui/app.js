@@ -46,6 +46,7 @@ export class App {
     this.catFilter = null;      // active folder/category view, or null
     this.smartView = null;      // active saved view (smart folder), or null
     this.catalog = null;        // glass catalog mode: { filters: { facet: Set<term> } } or null
+    this.facetFilter = '';      // facet-browser search box (filters terms within each facet group)
     this.layout = 'list';       // stream layout: 'list' | 'gallery'
     this.collapsedCats = new Set();
     this.sourceFilter = '';          // rail source-filter query (narrows the Sources list by name/folder)
@@ -152,7 +153,15 @@ export class App {
     }, true);
 
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
-    document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
+    document.getElementById('facets')?.addEventListener('click', (e) => {
+      const sortBtn = e.target.closest('.facet-sort');
+      if (sortBtn) { this.cycleFacetSort(sortBtn.dataset.facet); return; }
+      const tog = e.target.closest('.fh-tog');
+      if (tog) { this.toggleFacetCollapse(tog.dataset.facet); return; }
+      const t = e.target.closest('.facet-term');
+      if (t) this.toggleFacet(t.dataset.facet, t.dataset.term);
+    });
+    { const fs = document.getElementById('facet-search'); fs?.addEventListener('input', () => { this.facetFilter = fs.value; this.renderCatalogFacets(); }); }
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
     document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
@@ -915,28 +924,63 @@ export class App {
     this.renderAll();
   }
 
+  // Per-facet sort mode (persisted). Default: count, EXCEPT temporal → 'za' so
+  // years read newest-first (count-sorting put 2021 above 2022 — looked broken).
+  _facetSortMode(facet) {
+    const m = (this.store.getSettings().facet_sort || {})[facet];
+    return m || (facet === 'temporal' ? 'za' : 'count');
+  }
+  cycleFacetSort(facet) {
+    const next = { count: 'az', az: 'za', za: 'count' }[this._facetSortMode(facet)];
+    this.store.setSettings({ facet_sort: { ...(this.store.getSettings().facet_sort || {}), [facet]: next } });
+    this.renderCatalogFacets();
+  }
+  toggleFacetCollapse(facet) {
+    const set = new Set(this.store.getSettings().facet_collapsed || []);
+    set.has(facet) ? set.delete(facet) : set.add(facet);
+    this.store.setSettings({ facet_collapsed: [...set] });
+    this.renderCatalogFacets();
+  }
+
   renderCatalogFacets() {
     const el = document.getElementById('facets'); if (!el) return;
+    if (!this.catalog) { el.innerHTML = ''; return; }
     { const b = document.getElementById('cat-shelf'); if (b) b.classList.toggle('active', !!this.catalogShelf); }
     this.buildCatalogIndex();
-    const order = ['form', 'provenance', 'temporal', 'entity', 'domain', 'method', 'process', 'scale', 'spatial'];
+    const order = ['form', 'provenance', 'temporal', 'entity', 'domain', 'method', 'process', 'scale', 'spatial', 'stance'];
     const ICONS = { form: '⬡', provenance: '✦', temporal: '◷', entity: '◆', domain: '▤', method: '⚙', process: '↻', scale: '⤢', spatial: '⌖', stance: '⚖' };
+    const SORT = { count: '#', az: 'a–z', za: 'z–a' };
+    const filter = (this.facetFilter || '').trim().toLowerCase();
+    const collapsed = new Set(this.store.getSettings().facet_collapsed || []);
     let html = '';
     for (const facet of order) {
       const map = this._catalogIndex[facet];
-      if (!map || !map.size) continue;   // empty facets (the LLM ones in Stage 0) stay hidden
-      const terms = [...map.entries()].sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]));
+      if (!map || !map.size) continue;   // empty facets (un-enriched in Stage 0) stay hidden
+      let terms = [...map.entries()];
+      if (filter) terms = terms.filter(([t]) => t.toLowerCase().includes(filter));
+      if (!terms.length) continue;       // hide groups with nothing matching the search
+      const mode = this._facetSortMode(facet);
+      if (mode === 'az') terms.sort((a, b) => a[0].localeCompare(b[0]));
+      else if (mode === 'za') terms.sort((a, b) => b[0].localeCompare(a[0]));
+      else terms.sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]));
       const sel = this.catalog.filters[facet] || new Set();
-      html += `<div class="facet-group"><div class="facet-head"><span class="ico">${ICONS[facet] || '·'}</span>${escapeHtml(facet)}</div>`;
-      for (const [term, set] of terms.slice(0, 40)) {
-        const active = sel.has(term) ? ' active' : '';
-        html += `<div class="facet-term${active}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`
-          + `<span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`;
+      const isCollapsed = !filter && collapsed.has(facet);   // an active search overrides collapse
+      html += `<div class="facet-group${isCollapsed ? ' collapsed' : ''}">`
+        + `<div class="facet-head">`
+        + `<span class="fh-tog" data-facet="${escapeHtml(facet)}"><span class="fchev">${isCollapsed ? '▸' : '▾'}</span><span class="ico">${ICONS[facet] || '·'}</span>${escapeHtml(facet)}</span>`
+        + `<button class="facet-sort" type="button" data-facet="${escapeHtml(facet)}" title="Sort: ${mode === 'count' ? 'by count' : mode === 'az' ? 'A→Z' : 'Z→A'} — click to cycle">${SORT[mode]}</button>`
+        + `</div>`;
+      if (!isCollapsed) {
+        for (const [term, set] of terms.slice(0, 40)) {
+          const active = sel.has(term) ? ' active' : '';
+          html += `<div class="facet-term${active}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`
+            + `<span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`;
+        }
+        if (terms.length > 40) html += `<div class="facet-more">+ ${terms.length - 40} more</div>`;
       }
-      if (terms.length > 40) html += `<div class="facet-more">+ ${terms.length - 40} more</div>`;
       html += '</div>';
     }
-    el.innerHTML = html || '<div class="rail-empty">No catalog facets yet</div>';
+    el.innerHTML = html || `<div class="rail-empty">${filter ? 'No facets match' : 'No catalog facets yet'}</div>`;
   }
 
   renderStream() {

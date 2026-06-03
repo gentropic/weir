@@ -54,8 +54,16 @@ body {
 
 /* ── Glass catalog: facet browser ── */
 .facet-group { margin-bottom: 10px; }
-.facet-head { display: flex; align-items: center; gap: 7px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 600; color: var(--au-fg-soft); padding: 2px 8px 4px; }
+.facet-search { width: calc(100% - 12px); margin: 0 6px 8px; padding: 4px 8px; font-size: 12px; font-family: var(--au-font-ui); color: var(--au-fg); background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius); box-sizing: border-box; }
+.facet-search::placeholder { color: var(--au-fg-soft); }
+.facet-search:focus { outline: none; border-color: var(--au-action); }
+.facet-head { display: flex; align-items: center; justify-content: space-between; gap: 7px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 600; color: var(--au-fg-soft); padding: 2px 8px 4px; }
+.facet-head .fh-tog { display: inline-flex; align-items: center; gap: 7px; flex: 1; min-width: 0; cursor: pointer; }
+.facet-head .fh-tog:hover { color: var(--au-fg); }
+.facet-head .fchev { font-size: 8px; width: 9px; flex-shrink: 0; }
 .facet-head .ico { font-size: 11px; }
+.facet-sort { font-family: var(--au-font-mono); font-size: 9px; letter-spacing: 0; text-transform: none; color: var(--au-fg-soft); background: none; border: 1px solid transparent; border-radius: var(--au-radius); cursor: pointer; padding: 1px 5px; flex-shrink: 0; }
+.facet-sort:hover { color: var(--au-fg); border-color: var(--au-border); }
 .facet-term { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 8px 3px 22px; border-radius: var(--au-radius); cursor: pointer; }
 .facet-term:hover { background: var(--sw-bg-bright); }
 .facet-term.active { background: var(--sw-bg-bright); box-shadow: inset 2px 0 0 var(--au-action); }

@@ -198,8 +198,16 @@ body {
 
 /* ── Glass catalog: facet browser ── */
 .facet-group { margin-bottom: 10px; }
-.facet-head { display: flex; align-items: center; gap: 7px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 600; color: var(--au-fg-soft); padding: 2px 8px 4px; }
+.facet-search { width: calc(100% - 12px); margin: 0 6px 8px; padding: 4px 8px; font-size: 12px; font-family: var(--au-font-ui); color: var(--au-fg); background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius); box-sizing: border-box; }
+.facet-search::placeholder { color: var(--au-fg-soft); }
+.facet-search:focus { outline: none; border-color: var(--au-action); }
+.facet-head { display: flex; align-items: center; justify-content: space-between; gap: 7px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 600; color: var(--au-fg-soft); padding: 2px 8px 4px; }
+.facet-head .fh-tog { display: inline-flex; align-items: center; gap: 7px; flex: 1; min-width: 0; cursor: pointer; }
+.facet-head .fh-tog:hover { color: var(--au-fg); }
+.facet-head .fchev { font-size: 8px; width: 9px; flex-shrink: 0; }
 .facet-head .ico { font-size: 11px; }
+.facet-sort { font-family: var(--au-font-mono); font-size: 9px; letter-spacing: 0; text-transform: none; color: var(--au-fg-soft); background: none; border: 1px solid transparent; border-radius: var(--au-radius); cursor: pointer; padding: 1px 5px; flex-shrink: 0; }
+.facet-sort:hover { color: var(--au-fg); border-color: var(--au-border); }
 .facet-term { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 8px 3px 22px; border-radius: var(--au-radius); cursor: pointer; }
 .facet-term:hover { background: var(--sw-bg-bright); }
 .facet-term.active { background: var(--sw-bg-bright); box-shadow: inset 2px 0 0 var(--au-action); }
@@ -659,6 +667,7 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
 
     <div class="rail-section" id="facets-section" style="display:none">
       <div class="rail-label">Facets <button id="cat-shelf" class="btn-link" type="button" title="Shelf order — wander the catalog by glass call number (subject → form → author)">⊞ shelf</button> <button id="cat-run" class="btn-link" type="button" title="Catalog the shown items with AI (click again to stop)">catalog ▸</button></div>
+      <input id="facet-search" class="facet-search" type="text" placeholder="filter facets…" autocomplete="off" spellcheck="false">
       <div id="facets"></div>
     </div>
 
@@ -7521,6 +7530,8 @@ const DEFAULT_SETTINGS = {
   rail_width: 240,                       // source rail width in px (drag to resize)
   rail_order: null,                      // user's rail-section order (array of keys); null = default order
   rail_collapsed: [],                    // collapsed rail sections (keys) — fold the body, keep the header
+  facet_sort: {},                        // catalog facet → sort mode ('count'|'az'|'za'); default count, temporal za (newest year first)
+  facet_collapsed: [],                   // collapsed catalog facet groups (facet names)
   density: 'comfortable',                // row density: 'comfortable' | 'compact'
   stream_layout: 'list',                 // stream layout: 'list' | 'gallery' (thumbnail grid)
   feed_stale_days: 120,                  // a feed quiet longer than this reads as "stale" in health
@@ -12567,6 +12578,7 @@ class App {
     this.catFilter = null;      // active folder/category view, or null
     this.smartView = null;      // active saved view (smart folder), or null
     this.catalog = null;        // glass catalog mode: { filters: { facet: Set<term> } } or null
+    this.facetFilter = '';      // facet-browser search box (filters terms within each facet group)
     this.layout = 'list';       // stream layout: 'list' | 'gallery'
     this.collapsedCats = new Set();
     this.sourceFilter = '';          // rail source-filter query (narrows the Sources list by name/folder)
@@ -12673,7 +12685,15 @@ class App {
     }, true);
 
     document.getElementById('routes')?.addEventListener('click', (e) => { const r = e.target.closest('[data-route]'); if (r) this.setRoute(r.dataset.route); });
-    document.getElementById('facets')?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) this.toggleFacet(t.dataset.facet, t.dataset.term); });
+    document.getElementById('facets')?.addEventListener('click', (e) => {
+      const sortBtn = e.target.closest('.facet-sort');
+      if (sortBtn) { this.cycleFacetSort(sortBtn.dataset.facet); return; }
+      const tog = e.target.closest('.fh-tog');
+      if (tog) { this.toggleFacetCollapse(tog.dataset.facet); return; }
+      const t = e.target.closest('.facet-term');
+      if (t) this.toggleFacet(t.dataset.facet, t.dataset.term);
+    });
+    { const fs = document.getElementById('facet-search'); fs?.addEventListener('input', () => { this.facetFilter = fs.value; this.renderCatalogFacets(); }); }
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
     document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
@@ -13436,28 +13456,63 @@ class App {
     this.renderAll();
   }
 
+  // Per-facet sort mode (persisted). Default: count, EXCEPT temporal → 'za' so
+  // years read newest-first (count-sorting put 2021 above 2022 — looked broken).
+  _facetSortMode(facet) {
+    const m = (this.store.getSettings().facet_sort || {})[facet];
+    return m || (facet === 'temporal' ? 'za' : 'count');
+  }
+  cycleFacetSort(facet) {
+    const next = { count: 'az', az: 'za', za: 'count' }[this._facetSortMode(facet)];
+    this.store.setSettings({ facet_sort: { ...(this.store.getSettings().facet_sort || {}), [facet]: next } });
+    this.renderCatalogFacets();
+  }
+  toggleFacetCollapse(facet) {
+    const set = new Set(this.store.getSettings().facet_collapsed || []);
+    set.has(facet) ? set.delete(facet) : set.add(facet);
+    this.store.setSettings({ facet_collapsed: [...set] });
+    this.renderCatalogFacets();
+  }
+
   renderCatalogFacets() {
     const el = document.getElementById('facets'); if (!el) return;
+    if (!this.catalog) { el.innerHTML = ''; return; }
     { const b = document.getElementById('cat-shelf'); if (b) b.classList.toggle('active', !!this.catalogShelf); }
     this.buildCatalogIndex();
-    const order = ['form', 'provenance', 'temporal', 'entity', 'domain', 'method', 'process', 'scale', 'spatial'];
+    const order = ['form', 'provenance', 'temporal', 'entity', 'domain', 'method', 'process', 'scale', 'spatial', 'stance'];
     const ICONS = { form: '⬡', provenance: '✦', temporal: '◷', entity: '◆', domain: '▤', method: '⚙', process: '↻', scale: '⤢', spatial: '⌖', stance: '⚖' };
+    const SORT = { count: '#', az: 'a–z', za: 'z–a' };
+    const filter = (this.facetFilter || '').trim().toLowerCase();
+    const collapsed = new Set(this.store.getSettings().facet_collapsed || []);
     let html = '';
     for (const facet of order) {
       const map = this._catalogIndex[facet];
-      if (!map || !map.size) continue;   // empty facets (the LLM ones in Stage 0) stay hidden
-      const terms = [...map.entries()].sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]));
+      if (!map || !map.size) continue;   // empty facets (un-enriched in Stage 0) stay hidden
+      let terms = [...map.entries()];
+      if (filter) terms = terms.filter(([t]) => t.toLowerCase().includes(filter));
+      if (!terms.length) continue;       // hide groups with nothing matching the search
+      const mode = this._facetSortMode(facet);
+      if (mode === 'az') terms.sort((a, b) => a[0].localeCompare(b[0]));
+      else if (mode === 'za') terms.sort((a, b) => b[0].localeCompare(a[0]));
+      else terms.sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]));
       const sel = this.catalog.filters[facet] || new Set();
-      html += `<div class="facet-group"><div class="facet-head"><span class="ico">${ICONS[facet] || '·'}</span>${escapeHtml(facet)}</div>`;
-      for (const [term, set] of terms.slice(0, 40)) {
-        const active = sel.has(term) ? ' active' : '';
-        html += `<div class="facet-term${active}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`
-          + `<span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`;
+      const isCollapsed = !filter && collapsed.has(facet);   // an active search overrides collapse
+      html += `<div class="facet-group${isCollapsed ? ' collapsed' : ''}">`
+        + `<div class="facet-head">`
+        + `<span class="fh-tog" data-facet="${escapeHtml(facet)}"><span class="fchev">${isCollapsed ? '▸' : '▾'}</span><span class="ico">${ICONS[facet] || '·'}</span>${escapeHtml(facet)}</span>`
+        + `<button class="facet-sort" type="button" data-facet="${escapeHtml(facet)}" title="Sort: ${mode === 'count' ? 'by count' : mode === 'az' ? 'A→Z' : 'Z→A'} — click to cycle">${SORT[mode]}</button>`
+        + `</div>`;
+      if (!isCollapsed) {
+        for (const [term, set] of terms.slice(0, 40)) {
+          const active = sel.has(term) ? ' active' : '';
+          html += `<div class="facet-term${active}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`
+            + `<span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`;
+        }
+        if (terms.length > 40) html += `<div class="facet-more">+ ${terms.length - 40} more</div>`;
       }
-      if (terms.length > 40) html += `<div class="facet-more">+ ${terms.length - 40} more</div>`;
       html += '</div>';
     }
-    el.innerHTML = html || '<div class="rail-empty">No catalog facets yet</div>';
+    el.innerHTML = html || `<div class="rail-empty">${filter ? 'No facets match' : 'No catalog facets yet'}</div>`;
   }
 
   renderStream() {
@@ -16739,7 +16794,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'f2d6112';          // short content hash of the bundle (build id)
+const COMMIT = '47f4479';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
