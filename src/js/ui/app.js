@@ -161,7 +161,8 @@ export class App {
     document.getElementById('se-save')?.addEventListener('click', () => this.saveNoteEditor());
     document.getElementById('se-close')?.addEventListener('click', () => this.closeNoteEditor());
     document.querySelectorAll('.se-mode').forEach((b) => b.addEventListener('click', () => this._seSetMode(b.dataset.semode)));
-    { const ed = document.getElementById('se-edit'); ed?.addEventListener('input', () => { clearTimeout(this._sePvTimer); this._sePvTimer = setTimeout(() => this._seSyncPreview(), 150); }); }
+    // (the editor's change→preview sync is wired inside _seEnsureEditor — CM6's
+    // updateListener, or the fallback textarea's input event)
     document.getElementById('btn-recover')?.addEventListener('click', () => { if (this.feedFilter) this.recoverHistory(this.feedFilter); });
     document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
     document.getElementById('open-settings')?.addEventListener('click', () => this.openSettings());
@@ -2262,37 +2263,84 @@ export class App {
     const sub = document.getElementById('view-sub'); if (sub && n) sub.textContent = `forgot ${n} missing stack entr${n === 1 ? 'y' : 'ies'}`;
   }
 
-  // ── note editor (edit / split / preview toggle; cm6 swaps in for the textarea later) ──
+  // ── note editor (CodeMirror 6; edit / split / preview toggle) ──
+  // Lazily build the editor in #se-edit. CM6 when the bundle is present; a plain
+  // textarea fallback if it somehow didn't load — both behind one {get,set,focus}
+  // shim so the rest of the editor code is widget-agnostic.
+  _seEnsureEditor() {
+    if (this._seEditor) return this._seEditor;
+    const host = document.getElementById('se-edit'); if (!host) return null;
+    const sync = () => { clearTimeout(this._sePvTimer); this._sePvTimer = setTimeout(() => this._seSyncPreview(), 150); };
+    const CM = window.CM6;
+    if (!CM || !CM.EditorView) {   // fallback: a textarea, styled to fill the host
+      const ta = document.createElement('textarea');
+      ta.style.cssText = 'width:100%;height:100%;resize:none;border:none;outline:none;background:transparent;color:var(--au-fg);font-family:var(--au-font-mono);font-size:13px;line-height:1.6;padding:14px 16px;box-sizing:border-box;';
+      ta.spellcheck = false; ta.addEventListener('input', sync); host.appendChild(ta);
+      this._seEditor = { get: () => ta.value, set: (t) => { ta.value = t; }, focus: () => ta.focus(), measure: () => {} };
+      return this._seEditor;
+    }
+    const view = new CM.EditorView({
+      parent: host,
+      state: CM.EditorState.create({
+        doc: '',
+        extensions: [
+          CM.minimalSetup,
+          CM.markdown ? CM.markdown() : [],
+          CM.EditorView.lineWrapping,
+          CM.keymap.of([{ key: 'Mod-s', preventDefault: true, run: () => { this.saveNoteEditor(); return true; } }, CM.indentWithTab].filter(Boolean)),
+          CM.EditorView.updateListener.of((u) => { if (u.docChanged) sync(); }),
+          CM.EditorView.theme({
+            '&': { color: 'var(--au-fg)', backgroundColor: 'transparent', height: '100%', fontSize: '13px' },
+            '.cm-content': { fontFamily: 'var(--au-font-mono)', padding: '14px 16px', caretColor: 'var(--au-fg)' },
+            '.cm-scroller': { lineHeight: '1.6' },
+            '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--au-fg)' },
+            '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': { backgroundColor: 'var(--sw-bg-bright)' },
+            '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: 'var(--au-fg-soft)' },
+            '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'transparent' },
+          }, { dark: true }),
+        ],
+      }),
+    });
+    this._seEditor = { get: () => view.state.doc.toString(), set: (t) => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: String(t || '') } }), focus: () => view.focus(), measure: () => view.requestMeasure() };
+    return this._seEditor;
+  }
+  _seGetValue() { return this._seEditor ? this._seEditor.get() : ''; }
+  _seSetValue(text) { const ed = this._seEnsureEditor(); if (ed) ed.set(text); }
+
   async openNoteEditor(id) {
     const ov = document.getElementById('stacks-editor-overlay'); if (!ov || !this.stacks) return;
     this._seEditing = id || null;
     const titleEl = document.getElementById('se-title'), pathEl = document.getElementById('se-path');
-    const editEl = document.getElementById('se-edit'), tagsEl = document.getElementById('se-tags'), statusEl = document.getElementById('se-status');
+    const tagsEl = document.getElementById('se-tags'), statusEl = document.getElementById('se-status');
     if (statusEl) statusEl.textContent = '';
+    let body = '';
     if (id) {
       const it = this.store.getItem(id);
       titleEl.value = it.title || ''; pathEl.textContent = it.path || ''; tagsEl.value = (it.tags || []).join(', ');
-      editEl.value = it.type === 'note' ? await this.stacks.readNote(it) : '';
-    } else { titleEl.value = ''; pathEl.textContent = 'inbox/ · new note'; tagsEl.value = ''; editEl.value = ''; }
-    ov.hidden = false;
+      body = it.type === 'note' ? await this.stacks.readNote(it) : '';
+    } else { titleEl.value = ''; pathEl.textContent = 'inbox/ · new note'; tagsEl.value = ''; }
+    ov.hidden = false;   // show BEFORE mounting CM6 so it measures a laid-out container
+    this._seEnsureEditor();
+    this._seSetValue(body);
     this._seSetMode(this._seMode || 'split');
     this._seSyncPreview();
-    (id ? editEl : titleEl).focus();
+    const ed = this._seEditor; if (id && ed) ed.focus(); else titleEl.focus();
   }
   _seSetMode(mode) {
     this._seMode = mode;
     const body = document.getElementById('se-body'); if (body) body.className = `se-body mode-${mode}`;
     document.querySelectorAll('.se-mode').forEach((b) => b.classList.toggle('active', b.dataset.semode === mode));
     if (mode !== 'edit') this._seSyncPreview();
+    if (mode !== 'preview' && this._seEditor) this._seEditor.measure();   // CM6 needs a re-measure after being un-hidden
   }
   _seSyncPreview() {
-    const pv = document.getElementById('se-preview'), ed = document.getElementById('se-edit');
-    if (pv && ed) pv.innerHTML = renderMarkdown(ed.value) || '<p class="se-empty">nothing to preview</p>';
+    const pv = document.getElementById('se-preview');
+    if (pv) pv.innerHTML = renderMarkdown(this._seGetValue()) || '<p class="se-empty">nothing to preview</p>';
   }
   async saveNoteEditor() {
     if (!this.stacks) return;
-    const editEl = document.getElementById('se-edit'), titleEl = document.getElementById('se-title'), tagsEl = document.getElementById('se-tags'), statusEl = document.getElementById('se-status');
-    const md = editEl.value; const title = titleEl.value.trim() || undefined;
+    const titleEl = document.getElementById('se-title'), tagsEl = document.getElementById('se-tags'), statusEl = document.getElementById('se-status');
+    const md = this._seGetValue(); const title = titleEl.value.trim() || undefined;
     const tags = tagsEl.value.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
     try {
       let rec;
