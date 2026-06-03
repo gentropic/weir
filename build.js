@@ -47,6 +47,24 @@ function stripModuleSyntax(src) {
   return src.replace(/^\n+/, '').replace(/\n+$/, '');
 }
 
+// Guard against the OTHER flat-concatenation footgun: an ALIASED or NAMESPACE import
+// (`import { emit as yamlEmit }`, `import * as Y`). stripModuleSyntax deletes the
+// import line and leaves names resolving against the inlined globals BY NAME — so the
+// alias `yamlEmit` / namespace `Y` is an undefined reference in the bundle. It works
+// under node ESM (real import bindings), so smoke tests pass while the browser throws
+// "X is not defined" at runtime (bit the Stacks save path). Aliasing is NEVER valid
+// here: import the real exported name (collisions → the duplicate-decl guard).
+function collectAliasedImports(rawSrc, label, out) {
+  const importRe = /^import\s+([\s\S]*?)\s+from\s+['"][^'"]+['"]/gm;
+  let m;
+  while ((m = importRe.exec(rawSrc))) {
+    const clause = m[1];
+    const oneLine = clause.replace(/\s+/g, ' ').trim();
+    if (/\*\s+as\s+/.test(clause)) out.push(`  ${label}: namespace import "${oneLine}" — becomes undefined in the flat bundle`);
+    else if (/\{/.test(clause) && /\bas\b/.test(clause)) out.push(`  ${label}: aliased import "${oneLine}" — the alias is undefined in the flat bundle; use the real name`);
+  }
+}
+
 // Read main.js, follow its relative imports in declared order, inline each.
 // main.js is a manifest only — its own (post-strip) body, if any, runs last.
 function processModules(mainPath, moduleDir) {
@@ -59,6 +77,8 @@ function processModules(mainPath, moduleDir) {
   }
   const chunks = [];
   const seen = new Set();
+  const aliased = [];
+  collectAliasedImports(mainSrc, 'src/js/main.js', aliased);
   for (const relPath of importPaths) {
     const filePath = path.resolve(moduleDir, relPath);
     if (seen.has(filePath)) continue;
@@ -68,7 +88,13 @@ function processModules(mainPath, moduleDir) {
       process.exit(1);
     }
     const label = path.relative(ROOT, filePath).replace(/\\/g, '/');
-    chunks.push(`// ── ${label} ──\n\n${stripModuleSyntax(fs.readFileSync(filePath, 'utf8'))}`);
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!label.startsWith('vendor/')) collectAliasedImports(raw, label, aliased);   // vendored bundles are self-contained
+    chunks.push(`// ── ${label} ──\n\n${stripModuleSyntax(raw)}`);
+  }
+  if (aliased.length) {
+    console.error(`Error: aliased/namespace imports don't survive the flat-concat build —\n${aliased.join('\n')}`);
+    process.exit(1);
   }
   const mainBody = stripModuleSyntax(mainSrc);
   if (mainBody.trim()) chunks.push(`// ── src/js/main.js ──\n\n${mainBody}`);
