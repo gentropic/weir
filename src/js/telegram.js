@@ -58,11 +58,20 @@ export class TelegramInflux {
     try { const prev = await this.store._readText(NOTES_STASH, ''); await this.store.vfs.writeFile(NOTES_STASH, (prev ? prev + '\n' : '') + rec); } catch { /* best effort */ }
   }
 
+  // Confirm a capture by REACTING to the message (no chat clutter). Best-effort —
+  // 👍 link captured, ✍ note stashed. Only Telegram's allowed reaction emoji work.
+  _react(msg, emoji) {
+    if (!msg || !msg.chat || !this._token) return;
+    const reaction = encodeURIComponent(JSON.stringify([{ type: 'emoji', emoji }]));
+    this.fetch(`${TG_API}/bot${this._token}/setMessageReaction?chat_id=${msg.chat.id}&message_id=${msg.message_id}&reaction=${reaction}`).catch(() => {});
+  }
+
   async tick() {
     if (this._busy) return;
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;   // poll only while visible
     const token = this.getToken ? await this.getToken() : null;
     if (!token) return;
+    this._token = token;
     this._busy = true;
     try {
       const offset = this._offset();
@@ -89,8 +98,8 @@ export class TelegramInflux {
         if (allowed && fromId !== allowed) { this.status.ignored++; continue; }   // not you → ignore (don't capture or stash)
         if (/^\//.test((msg.text || '').trim())) continue;   // a bot command (/start, /help) — it bound you, but isn't content
         const ls = messageLinks(msg.text, msg.entities);
-        if (ls.length) for (const l of ls) links.push({ ...l, date: msg.date ? msg.date * 1000 : undefined });
-        else if ((msg.text || '').trim()) { await this._stashNote(msg); this.status.notes++; }   // a note → stash for the notes system
+        if (ls.length) { for (const l of ls) links.push({ ...l, date: msg.date ? msg.date * 1000 : undefined }); this._react(msg, '👍'); }
+        else if ((msg.text || '').trim()) { await this._stashNote(msg); this.status.notes++; this._react(msg, '✍'); }   // a note → stash for the notes system
       }
       await this._setOffset(maxId + 1);   // confirm → Telegram drops the consumed updates
       if (links.length && this.onLinks) { await this.onLinks(links); this.status.captured += links.length; }
