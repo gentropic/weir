@@ -2398,7 +2398,7 @@ export class App {
   // javascript()) or null; `onChange()` fires on every doc change. Returns a
   // widget-agnostic { get, set, focus, measure } shim. Shared by the note editor +
   // the routing-rules editor — cm6 is already bundled, so reusing it is free.
-  _mountCm(host, language, onChange) {
+  _mountCm(host, language, onChange, extraExts = []) {
     const CM = window.CM6;
     if (!CM || !CM.EditorView) {   // fallback: a textarea, styled to fill the host
       const ta = document.createElement('textarea');
@@ -2408,7 +2408,10 @@ export class App {
     }
     // NB: no Mod-s binding here — the document-level onKey handles Cmd/Ctrl-S (the
     // keydown bubbles up from CM6); binding it here too would double-fire the save.
+    // extraExts go FIRST so their keymaps (e.g. completion Enter/Tab) out-rank the
+    // base ones — acceptCompletion returns false when no popup is open, falling through.
     const exts = [
+      ...extraExts,
       CM.minimalSetup,
       language || [],
       CM.EditorView.lineWrapping,
@@ -2433,8 +2436,38 @@ export class App {
     if (this._seEditor) return this._seEditor;
     const host = document.getElementById('se-edit'); if (!host) return null;
     const sync = () => { clearTimeout(this._sePvTimer); this._sePvTimer = setTimeout(() => this._seSyncPreview(), 150); };
-    this._seEditor = this._mountCm(host, (window.CM6 && window.CM6.markdown) ? window.CM6.markdown() : null, sync);
+    const CM = window.CM6;
+    const extra = [];
+    if (CM && CM.autocompletion) {   // [[ autocomplete: pick a holding by title → inserts [[uid|Title]]
+      extra.push(CM.autocompletion({ override: [(ctx) => this._wikiCompletions(ctx)], activateOnTyping: true, icons: false }));
+      if (CM.acceptCompletion && CM.keymap) extra.push(CM.keymap.of([{ key: 'Enter', run: CM.acceptCompletion }, { key: 'Tab', run: CM.acceptCompletion }]));
+    }
+    this._seEditor = this._mountCm(host, (CM && CM.markdown) ? CM.markdown() : null, sync, extra);
     return this._seEditor;
+  }
+  // CM6 completion source: when the cursor is just after "[[…", suggest holdings by
+  // title (stacks first), applying "<uid>|<title>]]" → a resolvable [[ref|label]] link.
+  _wikiCompletions(context) {
+    const before = context.matchBefore(/\[\[[^\]\n]*/);
+    if (!before || before.from === before.to) return null;
+    const query = before.text.slice(2).toLowerCase();
+    const stacksFirst = [], rest = [];
+    for (const it of this.store.items.values()) {
+      if (it.missing) continue;
+      const title = it.title || it.path || it.id;
+      if (query && !title.toLowerCase().includes(query)) continue;
+      const ref = it.uid || it.glass_id || it.id;
+      const clean = String(title).replace(/[[\]|\n]/g, ' ').trim() || ref;
+      (it.feed_id === 'stacks' ? stacksFirst : rest).push({
+        label: title.length > 60 ? title.slice(0, 60) + '…' : title,
+        detail: it.feed_id === 'stacks' ? it.path : (this.store.getFeed(it.feed_id)?.name || it.feed_id),
+        apply: `${ref}|${clean}]]`,
+      });
+      if (stacksFirst.length + rest.length >= 80) break;
+    }
+    const options = stacksFirst.concat(rest).slice(0, 60);
+    if (!options.length) return null;
+    return { from: before.from + 2, options, filter: false };
   }
   _seGetValue() { return this._seEditor ? this._seEditor.get() : ''; }
   _seSetValue(text) { const ed = this._seEnsureEditor(); if (ed) ed.set(text); }

@@ -479,3 +479,12 @@ body {
 .bl-head { color: var(--au-fg-soft); font-family: var(--au-font-mono); font-size: 11px; }
 .backlink { color: var(--au-info); font-size: 12.5px; cursor: pointer; }
 .backlink:hover { text-decoration: underline; }
+
+/* CM6 autocomplete tooltip ([[ wiki-link picker) — themed to the dark surfaces */
+.cm-tooltip.cm-tooltip-autocomplete { background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius); box-shadow: 0 8px 28px rgba(0,0,0,0.45); }
+.cm-tooltip-autocomplete > ul { font-family: var(--au-font-mono); font-size: 12px; max-height: 18em; }
+.cm-tooltip-autocomplete > ul > li { padding: 3px 8px; color: var(--au-fg-muted); }
+.cm-tooltip-autocomplete > ul > li[aria-selected] { background: var(--au-action); color: var(--sw-bg); }
+.cm-completionLabel { color: inherit; }
+.cm-completionDetail { color: var(--au-fg-soft); font-style: normal; margin-left: 10px; font-size: 10px; }
+li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }

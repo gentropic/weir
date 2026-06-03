@@ -224,8 +224,8 @@ automatic (your notes aren't feed slop to auto-classify).
 renders in the reader as a clickable link resolved to the target's title (broken links
 flagged), and every item's reader shows a **"← linked from"** backlinks panel. Outbound
 refs are extracted onto `item.links` at write/scan (so backlinks are O(items), no body
-re-reads). *Remaining bonus:* `[[` autocomplete in the editor (pick a holding by title)
-— manual insertion works today via the entry menu's "Copy [[link]]".
+re-reads). `[[` in the editor opens a **CM6 autocomplete** of holdings by title (stacks
+first), inserting `[[uid|Title]]`; the entry menu's "Copy [[link]]" is the manual path.
 
 Later: drag-to-move UI, external-edit rescan/sync, PDF text-extraction → catalog,
-`[[`-autocomplete in the editor, Mini-App remote browse.
+Mini-App remote browse.
