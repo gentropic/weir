@@ -140,6 +140,12 @@ export class Poller {
         return result;
       }
 
+      // A 4xx/5xx is a feed problem, not a clean poll. The bridge now RESOLVES these
+      // (matching native fetch) instead of throwing, so without this a moved feed (404)
+      // or a down server (5xx) would parse to 0 items and look "healthy but empty".
+      // Throw so it lands in feed_health with its real status (e.g. "HTTP 404").
+      if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
+
       let items = await adapter.parse(res.clone ? res.clone() : res, feed);
 
       // Pasted a site URL, not a feed? Try autodiscovery once.

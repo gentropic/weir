@@ -444,10 +444,20 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (input.images_allowed !== undefined) patch.images_allowed = !!input.images_allowed;
     if (input.fetch_full_content !== undefined) patch.fetch_full_content = !!input.fetch_full_content;
     if (input.retention !== undefined) patch.retention = (input.retention === 'forever' || input.retention == null) ? { unread_days: 'forever', read_days: 'forever' } : { unread_days: Math.max(1, Number(input.retention) || 0) };
-    if (!Object.keys(patch).length) throw new Error('nothing to update — pass name/category/retention/poll_interval_minutes/images_allowed/fetch_full_content');
+    if (input.url != null) {
+      // Point the feed at a new URL (e.g. fixing a moved/404 feed). Items stay under the
+      // same feed id; drop the stale validators + re-poll now so it gets a clean fetch.
+      patch.url = String(input.url).trim();
+      patch.etag = undefined; patch.last_modified = undefined;
+      patch.next_poll_at = Date.now();
+      patch.state = 'healthy'; patch.feed_health = { ...(f.feed_health || {}), consecutive_failures: 0, last_error: undefined };
+    }
+    if (!Object.keys(patch).length) throw new Error('nothing to update — pass url/name/category/retention/poll_interval_minutes/images_allowed/fetch_full_content');
     await store.updateFeed(f.id, patch);
-    if (app && app.renderRail) app.renderRail();
-    return { id: f.id, ...patch };
+    let repoll;
+    if (patch.url && app && app.poller) { try { repoll = await app.poller.pollFeed(store.getFeed(f.id)); } catch (e) { repoll = { error: String(e && e.message || e) }; } }
+    if (app && app.renderAll) app.renderAll();
+    return { id: f.id, ...patch, ...(repoll ? { repoll } : {}) };
   }
 
   // Kick the background link resolver — resolve wrapped saved links (share.google
@@ -618,10 +628,11 @@ const TOOLS = [
   },
   {
     name: 'weir_updateFeed', fn: 'updateFeed',
-    description: 'Curate a feed: rename, recategorize (folder), set retention ("forever" or a day count), poll interval (minutes), image policy, or full-text auto-fetch. Identify it by `id` (from weir_listSources). Not destructive — no unsubscribe here (that lives in the UI). Returns the applied patch.',
+    description: 'Curate a feed: change its URL (e.g. fix a moved/404 feed — items stay, validators reset, it re-polls now), rename, recategorize (folder), set retention ("forever" or a day count), poll interval (minutes), image policy, or full-text auto-fetch. Identify it by `id` (from weir_listSources). Not destructive — no unsubscribe here (that lives in the UI). Returns the applied patch (+ `repoll` result when the URL changed).',
     inputSchema: {
       type: 'object', properties: {
         id: { type: 'string', description: 'Feed id (from weir_listSources)' },
+        url: { type: 'string', description: 'New feed URL (fixes a moved/dead feed; re-polls immediately)' },
         name: { type: 'string', description: 'Rename the feed' },
         category: { type: 'string', description: 'Move to a folder ("" = ungrouped)' },
         retention: { description: '"forever", or a number of days to keep before archiving' },

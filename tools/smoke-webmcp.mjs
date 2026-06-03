@@ -127,6 +127,11 @@ await assert.rejects(tools.addFeed({ url: 'http://x/f' }), /only available/, 'ad
 const uf = await tools.updateFeed({ id: 'f', category: 'news', name: 'BB' });
 assert.equal(uf.category, 'news'); assert.equal(store.getFeed('f').name, 'BB', 'feed renamed');
 await assert.rejects(tools.updateFeed({ id: 'nope', name: 'x' }), /No feed/, 'unknown feed errors');
+store.getFeed('f').etag = 'stale-etag';
+const ufu = await tools.updateFeed({ id: 'f', url: 'http://new.example/feed.xml' });
+assert.equal(ufu.url, 'http://new.example/feed.xml', 'updateFeed changed the URL');
+assert.equal(store.getFeed('f').url, 'http://new.example/feed.xml', 'persisted');
+assert.equal(store.getFeed('f').etag, undefined, 'stale validators cleared on URL change');
 store.getFeed('f').state = 'failing';
 store.getFeed('f').feed_health = { consecutive_failures: 3, last_error: 'HTTP 500' };
 const ls2 = await tools.listSources();
