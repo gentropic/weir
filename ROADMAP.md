@@ -233,6 +233,22 @@ the trigger/query layer on top.
   recover the rei DB's per-link **Wayback snapshots** (`archive_url`/`archive_date`)
   when it's back — dead-link insurance, ties to feed archaeology; (c) more import
   formats (browser bookmarks HTML, `.bib`) = one parser each in `importers.js`.
+- **Books & bibliographic holdings.** ✅ *LibraryThing import + biblio enricher +
+  glass call numbers shipped 2026-06-02.* Drag a LibraryThing **JSON** export →
+  `book` holdings (`importers.parseLibraryThing`, defensive field shapes, idempotent
+  by LibraryThing id). arXiv/DOI/ISBN items get **authoritative Dublin Core** from the
+  open APIs (`biblio.js`: arXiv / Crossref / Open Library, via the bridge, polite-pool
+  `mailto`), and every holding gets a CC0 **glass call number** (`callnumber.js`,
+  Ranganathan citation order — subject·subdomain·form·cutter·year) for the by-subject
+  shelf wander; DDC rides along as display metadata, never the organizing system.
+  **Remaining:** (a) **MARC import** — the richest LibraryThing/library export format
+  (carries authoritative DDC/LCC **and LCSH subject headings** in structured fields);
+  a MARC21 / MARCXML parser in `importers.js` would let records seed classification +
+  the thesaurus directly. (b) **Seed the controlled-vocabulary thesaurus** from LCSH
+  (`id.loc.gov`, open linked data, BT/NT/RT built in) / Wikidata / OpenAlex concepts —
+  the open answer to a subject authority, no DDC-license risk. (c) **OA resolver**
+  (Unpaywall / OpenAlex → free full-text PDF), a paper-flavored link resolver. (d) grow
+  the curated `DOMAIN_CODES` map as the corpus reveals which domains you actually have.
 - **Archive-on-save (linkrot insurance).** Adopt Holocene's habit: when a link is
   saved/imported, ask the Internet Archive to snapshot it (Save-Page-Now), so the
   copy survives the source going dark. It's *good* citizenship (you're feeding the

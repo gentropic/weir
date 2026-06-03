@@ -1917,6 +1917,10 @@ export class App {
     await this.store.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15, retention: { unread_days: 'forever', read_days: 'forever' } });
   }
 
+  // Decode HTML entities (LibraryThing titles ship them, e.g. "M&atilde;os" → "Mãos")
+  // via a textarea — full named-entity support, browser-native.
+  _decodeHtml(s) { if (!s) return s; const t = (this._teDecode = this._teDecode || document.createElement('textarea')); t.innerHTML = String(s); return t.value; }
+
   async _ensureBooksSource() {
     const cur = this.store.getFeed('books');
     if (cur && cur.retention && cur.retention.unread_days === 'forever') return;
@@ -1940,8 +1944,8 @@ export class App {
       const tags = b.tags || [];
       return {
         id, feed_id: 'books', type: 'book', url,
-        title: b.title, author: b.author || undefined,
-        published_at: b.date || undefined, excerpt: b.excerpt || undefined,
+        title: this._decodeHtml(b.title), author: this._decodeHtml(b.author) || undefined,
+        published_at: b.date || undefined, excerpt: this._decodeHtml(b.excerpt) || undefined,
         tags, tag_src: tags.reduce((o, t) => { o[t] = 'human'; return o; }, {}), structured,
       };
     });

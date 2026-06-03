@@ -138,13 +138,23 @@ function ltAuthor(b) {
   if (!first) return '';
   return ltStr(typeof first === 'string' ? first : (first.fl || first.lf || first.name));
 }
+// A LibraryThing field can be an array, an object with numeric-string keys
+// ({"0":…,"2":…}), or a bare scalar — flatten any of them to a list.
+function ltVals(v) {
+  if (v == null) return [];
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'object') return Object.values(v);
+  return [v];
+}
 function ltIsbn(b) {
-  const c = b.ISBNs || b.isbns || b.ISBN || b.isbn || b.originalisbn;
-  for (const v of (Array.isArray(c) ? c : (c ? [c] : []))) {
+  const cands = [].concat(ltVals(b.isbn), ltVals(b.ISBNs), ltVals(b.isbns), ltVals(b.ISBN), ltVals(b.originalisbn), ltVals(b.ean));
+  let isbn10 = null;
+  for (const v of cands) {
     const d = String(v).replace(/[^0-9xX]/gi, '');
-    if (d.length === 10 || d.length === 13) return d;
+    if (d.length === 13 && /^97[89]/.test(d)) return d;   // prefer a real ISBN-13
+    if (d.length === 10 && !isbn10) isbn10 = d;
   }
-  return null;
+  return isbn10;
 }
 function ltCode(v) {   // ddc / lcc may be {code:[…]} | {code:"…"} | "…"
   if (!v) return null;
@@ -182,7 +192,7 @@ export function parseLibraryThing(json) {
     books.push({
       lt_id: ltId || null, isbn, title: title || '(untitled)', author: ltAuthor(b),
       tags: ltTags(b), ddc: ltCode(b.ddc), lcc: ltCode(b.lcc),
-      date: ltDate(b), excerpt: ltStr(b.comment || b.review || b.summary).slice(0, 400),
+      date: ltDate(b), excerpt: ltStr(b.comment || b.review).slice(0, 400),   // a real note, not LibraryThing's auto "Title by Author (year)" summary
     });
   }
   return books;

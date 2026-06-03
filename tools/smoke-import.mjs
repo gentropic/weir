@@ -72,11 +72,14 @@ const LT = {
   101: { books_id: '101', title: 'Introduction to Algorithms', authors: [{ lf: 'Cormen, Thomas H.', fl: 'Thomas H. Cormen' }], ISBNs: ['9780262033848'], date: '2009', ddc: { code: ['005.1'], description: [['Computer programming']] }, lcc: { code: 'QA76.6' }, tags: ['algorithms', 'cs'], comment: 'The CLRS bible.' },
   102: { book_id: '102', title: 'The Nature of Geographic Information', primaryauthor: 'David DiBiase', isbn: '0-9772521-0-1', date: 'c2014', ddc: '910', tags: 'gis, maps' },
   103: { title: 'No-ISBN Book', authors: ['Anon'] },
+  104: { books_id: '104', title: 'Object-ISBN Book', authors: [{ fl: 'X Y' }], isbn: { 0: '8550811769', 2: '9788550811765' }, comment: 'a real note' },
   junk: { not: 'a book' },
 };
 const books = parseLibraryThing(LT);
 const byId = Object.fromEntries(books.map((b) => [b.lt_id, b]));
-assert.equal(books.length, 3, 'three books parsed (junk skipped)');
+assert.equal(books.length, 4, 'four books parsed (junk skipped)');
+assert.equal(byId['104'].isbn, '9788550811765', 'ISBN from an object-shaped {"0":…,"2":…} field, ISBN-13 preferred');
+assert.equal(byId['104'].excerpt, 'a real note', 'excerpt from a real comment');
 assert.equal(byId['101'].author, 'Thomas H. Cormen', 'author from fl');
 assert.equal(byId['101'].isbn, '9780262033848', 'ISBN from ISBNs array');
 assert.equal(byId['101'].ddc, '005.1', 'ddc from {code:[…]}');
@@ -88,19 +91,19 @@ assert.equal(byId['102'].isbn, '0977252101', 'hyphenated ISBN-10 normalized');
 assert.equal(byId['102'].ddc, '910', 'ddc as a bare string');
 assert.deepEqual(byId['102'].tags, ['gis', 'maps'], 'comma-string tags split');
 assert.equal(detectImport(JSON.stringify(LT)).format, 'librarything', 'librarything export detected');
-assert.equal(detectImport(JSON.stringify(LT)).books.length, 3, 'detect carries the parsed books');
+assert.equal(detectImport(JSON.stringify(LT)).books.length, 4, 'detect carries the parsed books');
 
 // idempotent book holdings round-trip (mirrors app.importBooks)
 const bstore = new Store(await VFS.create()); await bstore._hydrate();
 await bstore.putFeed({ id: 'books', name: 'Books', adapter: 'books', url: '', next_poll_at: 8.64e15 });
 const bookRaws = books.map((b) => ({ id: `book:${b.lt_id || `h${hash32((b.isbn || b.title || '').toLowerCase())}`}`, feed_id: 'books', type: 'book', title: b.title, tags: b.tags, structured: (b.ddc || b.lcc || b.isbn) ? { ddc: b.ddc, lcc: b.lcc, isbn: b.isbn } : undefined }));
 const bk1 = await bstore.upsertItems(bookRaws);
-assert.equal(bk1.inserted, 3, 'three books inserted');
+assert.equal(bk1.inserted, 4, 'four books inserted');
 assert.equal(bstore.getItem('book:101').type, 'book', 'type is book');
 assert.equal(bstore.getItem('book:101').structured.ddc, '005.1', 'DDC carried in structured');
 await bstore.setState('book:101', { read: true });
 const bk2 = await bstore.upsertItems(bookRaws);
-assert.deepEqual({ i: bk2.inserted, u: bk2.updated }, { i: 0, u: 3 }, 're-import updates, never dupes (stable id)');
+assert.deepEqual({ i: bk2.inserted, u: bk2.updated }, { i: 0, u: 4 }, 're-import updates, never dupes (stable id)');
 assert.equal(bstore.getItem('book:101').read, true, 'reading state survives a re-import');
 
 // ── store round-trip: dedup + never-reset (mirrors app.importLinks item build) ──
