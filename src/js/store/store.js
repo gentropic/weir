@@ -15,7 +15,7 @@
 import { VFS } from '../../../vendor/vfs.js';
 import {
   SCHEMA_VERSION, DEFAULT_SETTINGS, DEFAULT_VIEWS, makeItem, makeFeed, makeTombstone,
-  fsKey, hash32, deriveExcerpt, deriveSearchText, computeExpiry, now,
+  fsKey, hash32, slugify, deriveExcerpt, deriveSearchText, computeExpiry, now,
 } from './schema.js';
 import { buildCard, nextGlassId } from '../glass.js';
 import { inputMultiplier } from '../llm.js';
@@ -168,6 +168,20 @@ export class Store {
   getFeed(id) { return this.feeds.get(id) || null; }
 
   async putFeed(raw) {
+    // Collision-free id for NEW feeds (no explicit id). makeFeed slugifies the
+    // name, so two feeds whose names slugify alike — e.g. two bsky.app profiles
+    // that both fell back to the host name 'bsky.app' → 'bsky-app' — would share
+    // an id and the second would clobber the first's record + items. Keep the
+    // readable slug; disambiguate with a short url-hash ONLY on a real collision
+    // (a different url claiming a taken slug). Re-adding the same url reuses its
+    // id, so re-add stays idempotent.
+    if (!raw.id) {
+      const base = slugify(raw.name || raw.url || 'feed');
+      const taken = this.feeds.get(base);
+      if (taken && taken.url !== (raw.url || '')) {
+        raw = { ...raw, id: `${base}-${hash32(String(raw.url || '')).slice(0, 6)}` };
+      }
+    }
     const feed = makeFeed(raw);
     this.feeds.set(feed.id, feed);
     this._feedSet(feed.id);

@@ -202,4 +202,19 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.equal(bd.total, Object.values(bd.areas).reduce((a, b) => a + b, 0), 'total = sum of areas');
 }
 
+// ── putFeed id collision: two feeds whose names slugify alike keep distinct ids ──
+{
+  const s = new Store(await VFS.create()); await s._hydrate();
+  // Two bsky profiles, both name-fallback to the host 'bsky.app' → slug 'bsky-app'.
+  const a = await s.putFeed({ name: 'bsky.app', adapter: 'feed', url: 'https://bsky.app/profile/did:plc:aaa/rss' });
+  const b = await s.putFeed({ name: 'bsky.app', adapter: 'feed', url: 'https://bsky.app/profile/did:plc:bbb/rss' });
+  assert.equal(a.id, 'bsky-app', 'first claims the clean slug');
+  assert.notEqual(b.id, a.id, 'second feed gets a distinct id, not a clobber');
+  assert.equal(s.listFeeds().length, 2, 'both feeds survive — no overwrite');
+  // Re-adding the SAME url (no id) is idempotent — reuses the disambiguated id.
+  const b2 = await s.putFeed({ name: 'bsky.app', adapter: 'feed', url: 'https://bsky.app/profile/did:plc:bbb/rss' });
+  assert.equal(b2.id, b.id, 're-add of same url reuses its id (idempotent)');
+  assert.equal(s.listFeeds().length, 2, 'still two feeds after re-add');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));
