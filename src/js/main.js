@@ -29,6 +29,7 @@ import './adapters/github.js';           // → parseGithub, githubAdapter (rele
 import './extract.js';                   // → extractArticle (readability; browser DOMParser)
 import './opml.js';                      // → parseOpml, buildOpml (uses parseXml)
 import './importers.js';                 // → detectImport, parseTelegramExport (multi-format link import)
+import './runner.js';                     // → BackgroundRunner (one keep-alive path for all background loops)
 import './linkresolver.js';              // → LinkResolver (background drip resolving wrapped saved links)
 import './telegram.js';                  // → TelegramInflux (live getUpdates capture; reuses importers.messageLinks)
 import './router.js';                    // → Router, compileRules, DEFAULT_ROUTING
