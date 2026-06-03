@@ -10194,7 +10194,20 @@ class App {
 
   // The paced batch loop, shared by catalogVisible / catalogAll. Cancelable,
   // resumable (only un-cataloged items are queued), self-stopping on a failure run.
+  // Catalog priority tier (lower = sooner). Value-first: an interrupted run should
+  // leave the LIBRARY core cataloged first. saved/tagged (explicit interest) →
+  // books/papers (durable holdings) → articles/releases → videos & the ephemeral rest.
+  _catalogPriority(it) {
+    if (it.saved || (it.tags && it.tags.length)) return 0;
+    if (it.type === 'book' || it.type === 'paper') return 1;
+    if (it.type === 'article' || it.type === 'release') return 2;
+    return 3;
+  }
+
   async _runCatalog(todo) {
+    // Order value-first (tier, then newest within tier), so a partial run is still a
+    // useful catalog — the books/papers/saved shelf fills before the video bulk.
+    todo = todo.slice().sort((a, b) => this._catalogPriority(a) - this._catalogPriority(b) || (b.published_at || 0) - (a.published_at || 0));
     const pace = Math.max(0, Number(this.store.getSettings().catalog_pace_ms) ?? 400);   // 0 = as fast as the LLM answers (cloud)
     const job = this._cataloging = { cancel: false };
     this._batch = true;
@@ -12803,7 +12816,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'c8f821b';          // short content hash of the bundle (build id)
+const COMMIT = '36445f2';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
