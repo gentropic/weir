@@ -193,6 +193,12 @@ export class Poller {
     const cap = this.store.getSettings().poll_concurrency || 8;
     const queue = [...feeds];
     const results = [];
+    // Warm the bridge with the FIRST feed serially, THEN burst the rest. A cold
+    // (terminated) MV3 service worker drops most of a simultaneous burst while it
+    // restarts — so 8 concurrent fetches at once mostly failed and fell back to direct
+    // (CORS) even though the bridge was healthy. One lead request wakes the worker; the
+    // burst that follows lands on a warm SW. Cheap (one extra serial fetch per cycle).
+    if (queue.length > 1) results.push(await this.pollFeed(queue.shift()));
     const workers = Array.from({ length: Math.min(cap, queue.length) }, async () => {
       while (queue.length) results.push(await this.pollFeed(queue.shift()));
     });
