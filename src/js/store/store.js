@@ -235,6 +235,90 @@ export class Store {
     this.emit('feed', { id, removed: true });
   }
 
+  // Re-key a feed and EVERYTHING that references it, atomically in memory then
+  // persisted: the feed record, its items, their stored content files, the
+  // archived-index tombstones, and any glass cards. This is not a rename of a
+  // display field — a feed's id is load-bearing:
+  //   • the `feed` / `youtube` adapters mint item ids as `<feed.id>:<guid>` on
+  //     EVERY poll, so leaving item ids on the old prefix would make the next
+  //     poll re-insert all of them as "new" and orphan the originals;
+  //   • content/shard/feed FILES are addressed by feedKey(id) and fsKey(itemId);
+  //   • tombstones (resurrection guard) and cards (document_ref) point at item ids.
+  // Item state (read/saved/tags/glass_id) rides along untouched (never-reset,
+  // SPEC §5). Files are RELOCATED (write-new-then-unlink-old) — content is moved,
+  // never data-deleted. Returns null if oldId is gone; throws if newId is taken
+  // (the caller picks a free id). Built as a general capability, not a one-off:
+  // weir will accrete more id mistakes worth correcting cleanly.
+  async renameFeed(oldId, newId) {
+    oldId = String(oldId);
+    newId = slugify(String(newId));
+    if (!newId) throw new Error('renameFeed: empty target id');
+    const feed = this.feeds.get(oldId);
+    if (!feed) return null;
+    if (newId === oldId) return { renamed: oldId, from: oldId, items: 0, tombstones: 0 };
+    if (this.feeds.has(newId)) throw new Error(`feed id "${newId}" already exists`);
+    const prefix = `${oldId}:`;
+    const rekey = (id) => (String(id).startsWith(prefix) ? `${newId}:${String(id).slice(prefix.length)}` : String(id));
+
+    // 1. Move the feed record.
+    const moved = { ...feed, id: newId };
+    this.feeds.delete(oldId);
+    this.feeds.set(newId, moved);
+
+    // 2. Re-key items + relocate their content. Content path derives from BOTH
+    //    feed id and item id, so a re-keyed item's html must be rewritten under
+    //    the new address. content_path is normally undefined for feed items (it
+    //    resolves via _contentPath); only stacks set it, and stacks isn't renamed.
+    const oldSet = this.byFeed.get(oldId) || new Set();
+    const newSet = new Set();
+    for (const oldItemId of [...oldSet]) {
+      const rec = this.items.get(oldItemId);
+      if (!rec) continue;
+      const newItemId = rekey(oldItemId);
+      let html = null;
+      if (rec.has_content) { try { html = await this._readText(rec.content_path || this._contentPath(oldId, oldItemId), null); } catch { html = null; } }
+      rec.feed_id = newId;
+      rec.id = newItemId;
+      if (rec.content_path) rec.content_path = this._contentPath(newId, newItemId);
+      if (oldItemId !== newItemId) this.items.delete(oldItemId);
+      this.items.set(newItemId, rec);
+      newSet.add(newItemId);
+      if (html != null) await this._writeContent(newId, newItemId, html);
+    }
+    this.byFeed.delete(oldId);
+    this.byFeed.set(newId, newSet);
+
+    // 3. archived-index tombstones — keep the resurrection guard valid.
+    let tombstones = 0;
+    for (const t of this.tombstones) {
+      if (t.feed_id === oldId) t.feed_id = newId;
+      const nid = rekey(t.id);
+      if (nid !== t.id) { this.archived.delete(String(t.id)); t.id = nid; this.archived.add(nid); tombstones++; }
+    }
+    if (tombstones) this._archivedDirty = true;
+
+    // 4. glass cards — document_ref points at an item id.
+    for (const card of this.cards.values()) {
+      const ref = card.glass && card.glass.document_ref;
+      if (ref && String(ref).startsWith(prefix)) { card.glass.document_ref = rekey(ref); this._markCardDirty(card.glass.glass_id); }
+    }
+
+    // 5. pending notifications keyed by item id (drives the notify badge).
+    for (const n of this.notifications) n.id = rekey(n.id);
+
+    // 6. Persist the new layout, then drop the now-empty old files (relocation).
+    await this._ensureDir('/feeds');
+    await this.vfs.writeFile(this._feedPath(newId), JSON.stringify(moved, null, 2));
+    this._dirtyFeeds.delete(oldId);
+    this._markFeedDirty(newId);
+    await this.flush();
+    for (const p of [this._feedPath(oldId), this._shardPath(oldId)]) { try { await this.vfs.unlink(p); } catch { /* gone */ } }
+    try { await this.vfs.rm(this._contentDir(oldId), { recursive: true }); } catch { /* gone */ }
+
+    this.emit('feed', { id: newId, renamedFrom: oldId });
+    return { renamed: newId, from: oldId, items: newSet.size, tombstones };
+  }
+
   // Remove all of a feed's items (and their stored content), saved items exempt.
   // For re-pointing a feed to a new source — the old items belong to the old
   // URL. Unlike prune(), it does NOT tombstone: the new source has its own ids,

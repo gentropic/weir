@@ -217,4 +217,68 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.equal(s.listFeeds().length, 2, 'still two feeds after re-add');
 }
 
+// ── renameFeed: re-key a feed + everything that references it, survive reload ──
+{
+  const v = await VFS.create();
+  const s = new Store(v); await s._hydrate();
+  await s.putFeed({ id: 'bsky-app', name: 'bsky.app', adapter: 'feed', url: 'https://bsky.app/profile/did:plc:t2x/rss' });
+  await s.upsertItems([
+    { id: 'bsky-app:1', feed_id: 'bsky-app', type: 'article', title: 'Post one', content: '<p>body one</p>' },
+    { id: 'bsky-app:2', feed_id: 'bsky-app', type: 'article', title: 'Post two', content: '<p>body two</p>' },
+    { id: 'bsky-app:3', feed_id: 'bsky-app', type: 'article', title: 'Post three' },
+  ]);
+  s.setState('bsky-app:1', { read: true, saved: true });
+  s.addTag('bsky-app:1', 'pixelart');
+  await s.buildCatalog({ cataloged: '2026-06-03' });           // cards: document_ref = bsky-app:N
+  const gid1 = s.items.get('bsky-app:1').glass_id;
+  assert.equal((await s.getCard(gid1)).glass.document_ref, 'bsky-app:1', 'card ref before rename');
+  await s.prune(['bsky-app:3'], 'test');                       // tombstone bsky-app:3
+  assert.ok(s.archived.has('bsky-app:3'), 'tombstone on old id');
+
+  const r = await s.renameFeed('bsky-app', 'Arne (androidarts)');   // arbitrary name → slugified
+  assert.equal(r.renamed, 'arne-androidarts', 'target slugified');
+  assert.equal(r.items, 2, 'two live items moved (one was pruned)');
+  assert.equal(r.tombstones, 1, 'one tombstone re-keyed');
+
+  // feed moved
+  assert.ok(s.getFeed('arne-androidarts'), 'new feed present');
+  assert.equal(s.getFeed('bsky-app'), null, 'old feed gone');
+  // items re-keyed + state preserved + content relocated
+  assert.equal(s.items.get('bsky-app:1'), undefined, 'old item id gone');
+  const it1 = s.items.get('arne-androidarts:1');
+  assert.ok(it1 && it1.feed_id === 'arne-androidarts', 'item re-keyed + feed_id moved');
+  assert.ok(it1.read && it1.saved && it1.tags.includes('pixelart'), 'state preserved (never-reset)');
+  assert.match(await s.getContent('arne-androidarts:1'), /body one/, 'content readable at new address');
+  assert.equal(s.query({ feed_id: 'arne-androidarts' }).length, 2, 'both live items under new feed');
+  // tombstone + card refs re-keyed
+  assert.ok(s.archived.has('arne-androidarts:3') && !s.archived.has('bsky-app:3'), 'tombstone re-keyed');
+  assert.equal((await s.getCard(gid1)).glass.document_ref, 'arne-androidarts:1', 'card ref re-keyed');
+  // old physical files relocated away
+  assert.equal(await v.exists('/feeds/' + s.feedKey('bsky-app') + '.json'), false, 'old feed file gone');
+  assert.equal(await v.exists('/items/' + s.feedKey('bsky-app') + '.ndjson'), false, 'old shard gone');
+
+  // re-poll idempotence: the adapter now mints arne-androidarts:N — must UPDATE,
+  // not duplicate, and the re-keyed tombstone must still block the pruned one.
+  const rp = await s.upsertItems([
+    { id: 'arne-androidarts:1', feed_id: 'arne-androidarts', type: 'article', title: 'Post one (edited)', content: '<p>body one</p>' },
+    { id: 'arne-androidarts:3', feed_id: 'arne-androidarts', type: 'article', title: 'Post three' },
+  ]);
+  assert.equal(rp.inserted, 0, 're-poll inserts nothing new');
+  assert.equal(rp.updated, 1, 'live item updated in place');
+  assert.equal(rp.skipped, 1, 'pruned item still blocked by re-keyed tombstone');
+
+  // collision guard
+  await s.putFeed({ id: 'other', name: 'Other', adapter: 'feed', url: 'http://o/f' });
+  await assert.rejects(() => s.renameFeed('arne-androidarts', 'other'), /already exists/, 'rejects taken id');
+
+  // survives reload (hydrate from the persisted shards)
+  await s.flush();
+  const s2 = new Store(v); await s2._hydrate();
+  assert.ok(s2.getFeed('arne-androidarts') && !s2.getFeed('bsky-app'), 'rename survives reload');
+  const r1 = s2.items.get('arne-androidarts:1');
+  assert.ok(r1 && r1.read && r1.saved, 'item + state survive reload');
+  assert.match(await s2.getContent('arne-androidarts:1'), /body one/, 'content survives reload at new address');
+  assert.ok(s2.archived.has('arne-androidarts:3'), 'tombstone survives reload');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

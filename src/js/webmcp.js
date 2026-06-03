@@ -481,6 +481,22 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { removed: f.id, name: f.name, items };
   }
 
+  // Re-key a feed's id (NOT its display name — use updateFeed for that). A feed's
+  // id is load-bearing: the adapter mints item ids as `<feed.id>:<guid>` each poll,
+  // and content/shard files + tombstones + catalog cards are addressed by it. This
+  // moves ALL of that in lockstep (and relocates content; nothing is data-deleted),
+  // preserving read/saved/tags. For cleaning up an id that was auto-derived from a
+  // bad name (e.g. a feed that landed on the generic host slug `bsky-app`). The new
+  // id is slugified; collisions are rejected. Returns { renamed, from, items }.
+  async function renameFeed(input = {}) {
+    const f = input.id != null && store.getFeed(String(input.id));
+    if (!f) throw new Error(`No feed "${input.id}". Use weir_listSources for ids.`);
+    if (input.newId == null || !String(input.newId).trim()) throw new Error('pass newId (the desired feed id; it will be slugified)');
+    const r = await store.renameFeed(f.id, input.newId);   // throws if the target id is taken
+    if (app && app.renderAll) app.renderAll();
+    return r;
+  }
+
   // Kick the background link resolver — resolve wrapped saved links (share.google
   // etc.) to their real url + fetch thumbnail/title metadata, gently over time.
   async function resolveLinks() {
@@ -604,7 +620,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, listProviderModels, setCatalog, removeFeed, renameFeed, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -669,6 +685,17 @@ const TOOLS = [
     description: 'Unsubscribe and DELETE a feed and its items — for pruning dead/moved sources (DNS-gone, TLS-dead, 404) during a curation sweep. Destructive + NOT reversible (no trash, unlike the stacks). Gated behind a user setting; if disabled, errors and points to the UI. Confirm with the user before calling. Returns { removed, name, items }.',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Feed id (from weir_listSources)' } }, required: ['id'] },
     annotations: { title: 'Remove a feed', destructiveHint: true },
+  },
+  {
+    name: 'weir_renameFeed', fn: 'renameFeed',
+    description: 'Re-key a feed\'s ID (not its display name — use weir_updateFeed for the name). A feed id is load-bearing: the adapter mints item ids as `<feedid>:<guid>` every poll, and content files, tombstones, and catalog cards are addressed by it. This migrates ALL of that in lockstep (relocating content; nothing is data-deleted) and preserves read/saved/tags. Use it to clean up an id that was auto-derived from a bad name — e.g. a feed that landed on the generic host slug `bsky-app`. The newId is slugified; a collision with an existing id is rejected. Returns { renamed, from, items, tombstones }.',
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'Current feed id (from weir_listSources)' },
+        newId: { type: 'string', description: 'Desired feed id (will be slugified, e.g. "arne-androidarts")' },
+      }, required: ['id', 'newId'],
+    },
+    annotations: { title: 'Rename a feed id' },
   },
   {
     name: 'weir_resolveLinks', fn: 'resolveLinks',

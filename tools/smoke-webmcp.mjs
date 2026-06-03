@@ -156,6 +156,18 @@ assert.ok(foundByUrl.feeds.some((x) => x.id === 'f'), 'listSources q finds a fee
 assert.ok(foundByUrl.feeds.every((x) => 'url' in x), 'q results include the url (so a feed is recognizable)');
 assert.ok((await tools.listSources({ q: 'bb' })).feeds.some((x) => x.id === 'f'), 'and finds it by name');
 
+// ── renameFeed: re-key a feed id (clean up an auto-derived id) ──
+await store.putFeed({ id: 'bsky-app', name: 'bsky.app', adapter: 'feed', url: 'https://bsky.app/profile/did:plc:zzz/rss' });
+await store.upsertItems([{ id: 'bsky-app:1', feed_id: 'bsky-app', type: 'article', title: 'a post' }]);
+const rf = await tools.renameFeed({ id: 'bsky-app', newId: 'Arne (androidarts)' });
+assert.equal(rf.renamed, 'arne-androidarts', 'newId slugified');
+assert.ok(store.getFeed('arne-androidarts') && !store.getFeed('bsky-app'), 'feed re-keyed');
+assert.ok(store.items.get('arne-androidarts:1') && !store.items.get('bsky-app:1'), 'item id re-keyed');
+await assert.rejects(tools.renameFeed({ id: 'nope', newId: 'x' }), /No feed/, 'unknown feed errors');
+await assert.rejects(tools.renameFeed({ id: 'arne-androidarts' }), /newId/, 'missing newId errors');
+await assert.rejects(tools.renameFeed({ id: 'arne-androidarts', newId: 'f' }), /already exists/, 'collision rejected');
+await store.removeFeed('arne-androidarts');   // restore the shared store's baseline counts
+
 // ── catalog control (mock app) ──
 const calls = [];
 const mockApp = {
