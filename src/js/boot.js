@@ -16,6 +16,7 @@ import { catalogStoreItem } from './cataloger.js';
 import { SearchIndex } from './search.js';
 import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
+import { TelegramInflux } from './telegram.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
 import { githubAdapter } from './adapters/github.js';
@@ -131,6 +132,17 @@ async function boot() {
   linkResolver.on((st) => app.renderResolverStatus(st));
   app.renderResolverStatus(linkResolver.status());
   linkResolver.kick();
+
+  // Telegram influxer — poll a weir-only bot's getUpdates (direct fetch; CORS-ok)
+  // for live captures: links → Saved Links (resolved), notes → stashed. Token in the
+  // vault; only runs when enabled + a token is set.
+  const telegram = new TelegramInflux(store, {
+    getToken: () => getKey('telegram'),
+    onLinks: (links) => app.importLinks(links, 'telegram'),
+  });
+  app.telegram = telegram;
+  telegram.on((st) => app.renderTelegramStatus(st));
+  if (store.getSettings().telegram_enabled && await getKey('telegram')) telegram.start();
 
   window.__weir = { store, poller, router, drip, retainer, linkResolver, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {

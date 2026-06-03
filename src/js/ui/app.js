@@ -161,6 +161,7 @@ export class App {
     document.getElementById('bridge-dismiss')?.addEventListener('click', () => { this._bridgeDismissed = true; this._setBridgeBanner(false); });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('set-cat-gauge')?.addEventListener('click', () => this.checkCatGauge());
+    document.getElementById('set-tg-verify')?.addEventListener('click', () => this._verifyTelegram());
     document.getElementById('set-cat-models')?.addEventListener('click', () => this.loadCatModels());
     document.getElementById('set-cat-model')?.addEventListener('change', () => this._reflectCatCustom());
     document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } this._renderCatModelSelect([], ''); });
@@ -1935,6 +1936,26 @@ export class App {
   // via a textarea — full named-entity support, browser-native.
   _decodeHtml(s) { if (!s) return s; const t = (this._teDecode = this._teDecode || document.createElement('textarea')); t.innerHTML = String(s); return t.value; }
 
+  // Telegram capture status (settings line) + the verify button.
+  renderTelegramStatus(st) {
+    const el = document.getElementById('tg-status'); if (!el || !st) return;
+    if (st.error) { el.textContent = `error: ${st.error}`; return; }
+    const parts = [];
+    if (st.bot) parts.push(`@${st.bot}`);
+    parts.push(st.enabled ? 'polling' : 'idle');
+    if (st.captured) parts.push(`${st.captured} captured`);
+    if (st.notes) parts.push(`${st.notes} note${st.notes === 1 ? '' : 's'} stashed`);
+    el.textContent = parts.join(' · ') || 'not connected';
+  }
+  async _verifyTelegram() {
+    const el = document.getElementById('tg-status');
+    const token = (document.getElementById('set-tg-token')?.value.trim()) || (await getKey('telegram'));
+    if (!token) { if (el) el.textContent = 'enter a bot token first'; return; }
+    if (el) el.textContent = 'checking…';
+    const r = this.telegram ? await this.telegram.verify(token) : { ok: false, error: 'not ready' };
+    if (el) el.textContent = r.ok ? `connected: @${r.username || '?'}` : `failed: ${r.error}`;
+  }
+
   async _ensureBooksSource() {
     const cur = this.store.getFeed('books');
     if (cur && cur.retention && cur.retention.unread_days === 'forever') return;
@@ -2243,6 +2264,9 @@ export class App {
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
     this.renderWebmcpStatus();
     chk('set-retention', s.retention_enabled);
+    chk('set-tg-enabled', s.telegram_enabled);
+    { const k = document.getElementById('set-tg-token'); if (k) { k.value = ''; hasKey('telegram').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
+    if (this.telegram) this.renderTelegramStatus(this.telegram.status);
     chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
     val('set-wb-interval', Math.round(s.wayback_min_interval_ms / 1000));
@@ -2401,6 +2425,7 @@ export class App {
       catalog_max_body_chars: Math.max(500, parseInt(document.getElementById('set-cat-maxbody')?.value, 10) || 6000),
       catalog_mailto: document.getElementById('set-cat-mailto')?.value.trim() || '',
       retention_enabled: chk('set-retention'),
+      telegram_enabled: chk('set-tg-enabled'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
       wayback_min_interval_ms: Math.max(1000, num('set-wb-interval', 5) * 1000),
@@ -2411,6 +2436,10 @@ export class App {
     await this.store.setSettings(patch);
     const keyVal = document.getElementById('set-cat-key')?.value;
     if (keyVal) { await saveKey(patch.catalog_provider, keyVal); const k = document.getElementById('set-cat-key'); if (k) k.value = ''; }
+    { const tg = document.getElementById('set-tg-token')?.value; if (tg) { await saveKey('telegram', tg); const t = document.getElementById('set-tg-token'); if (t) t.value = ''; } }
+    if (this.telegram) {   // (re)start or stop the influxer to match the new setting
+      if (patch.telegram_enabled && await getKey('telegram')) this.telegram.start(); else this.telegram.stop();
+    }
     this._setDensity(patch.density);
     setAutoCheck(patch.auto_check_updates);   // push the preference to the SW
     if (patch.retention_enabled) this.store.runRetention();   // apply immediately if just enabled

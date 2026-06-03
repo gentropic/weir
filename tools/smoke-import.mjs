@@ -1,7 +1,7 @@
 // Multi-format link import: parsers + store round-trip (dedup / never-reset).
 // Run: node tools/smoke-import.mjs
 import assert from 'node:assert';
-import { detectImport, parseTelegramExport, parseUrlList, parseLibraryThing, isWrappedUrl, isSkippedUrl } from '../src/js/importers.js';
+import { detectImport, parseTelegramExport, parseUrlList, parseLibraryThing, messageLinks, isWrappedUrl, isSkippedUrl } from '../src/js/importers.js';
 import { VFS } from '../vendor/vfs.js';
 import { Store } from '../src/js/store/store.js';
 import { hash32 } from '../src/js/store/schema.js';
@@ -47,6 +47,25 @@ assert.equal(byUrl['https://youtu.be/dQw4w9WgXcQ'].wrapped, false, 'youtu.be not
 assert.equal(byUrl['http://www.e-basteln.de/papertape/'].date, 1777622400000, 'date from date_unixtime (ms)');
 assert.ok(!links.some((l) => /archive\.org/.test(l.url)), 'archive.org echo skipped');
 assert.ok(!links.some((l) => l.title === null && /papertape/.test(l.url) === false), 'sanity');
+
+// ── messageLinks: live getUpdates message → link records (or [] for a note) ──
+// a Google Discover share (blurb + wrapped link) → ONE link, blurb as title
+const share = messageLinks('Huge trackball mouse | Tom’s Hardware https://share.google/abc', []);
+assert.equal(share.length, 1, 'share message → one link');
+assert.equal(share[0].url, 'https://share.google/abc', 'url extracted from text');
+assert.equal(share[0].title, 'Huge trackball mouse | Tom’s Hardware', 'blurb becomes the title');
+assert.equal(share[0].wrapped, true, 'share.google flagged for unwrap');
+// a text_link entity (button-style link, url not in the visible text)
+const ent = messageLinks('read this', [{ type: 'text_link', offset: 0, length: 9, url: 'https://hackaday.com/x' }]);
+assert.equal(ent[0].url, 'https://hackaday.com/x', 'text_link entity url extracted');
+// a 'url' entity (url IS the visible text)
+const ent2 = messageLinks('see https://github.com/a/b here', [{ type: 'url', offset: 4, length: 21 }]);
+assert.ok(ent2.some((l) => l.url === 'https://github.com/a/b'), 'url entity extracted from offset/length');
+// a pure-text note → [] (caller treats as a note)
+assert.deepEqual(messageLinks('just a thought, no link', []), [], 'no url → [] (a note)');
+assert.deepEqual(messageLinks('', []), [], 'empty → []');
+// skipped host filtered even if present
+assert.deepEqual(messageLinks('saved https://web.archive.org/web/x', []), [], 'archive.org skipped → treated as note');
 
 // ── isWrappedUrl ──
 assert.equal(isWrappedUrl('https://share.google/x'), true);

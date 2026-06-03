@@ -771,6 +771,13 @@ body {
         <div class="hint">The librarian that fills the language facets. Ollama runs locally (free, nothing leaves your machine). Keys are stored encrypted-out-of-band (OPFS), never in backups or the mounted folder. Cloud providers need their origin added to the bridge allowlist once.</div>
       </section>
       <section class="set-group">
+        <h4>Telegram capture</h4>
+        <label class="set-row check"><input type="checkbox" id="set-tg-enabled"> poll my weir bot for live captures (links → Saved Links, notes stashed)</label>
+        <label class="set-row">bot token<span><input type="password" id="set-tg-token" class="field" autocomplete="off" placeholder="(none)"> <button class="btn-link" id="set-tg-verify" type="button" title="Check the token + show the bot's @username">connect</button></span></label>
+        <div class="set-row"><span id="tg-status" class="hint">not connected</span></div>
+        <div class="hint">Make a <b>fresh</b> bot with <code>@BotFather</code> → <code>/newbot</code>, paste its token, and DM it links/notes from your phone — URL messages (incl. Google Discover shares) flow into Saved Links and get resolved; pure-text notes are stashed for the coming notes view. No server/webhook needed (api.telegram.org is CORS-friendly); the token is stored encrypted (OPFS vault), never in backups. One consumer per bot — don't reuse a bot that has a webhook or another poller. If weir's been closed past ~24h, fall back to a conversation export + Import.</div>
+      </section>
+      <section class="set-group">
         <h4>Claude (WebMCP)</h4>
         <div class="set-row"><span>status: <b id="set-webmcp-state">—</b></span><button class="btn-link" id="set-webmcp-toggle" type="button">connect</button></div>
         <label class="set-row">connection<input type="text" id="set-webmcp-conn" class="field" autocomplete="off" spellcheck="false" placeholder="port:token (e.g. 7801:…)"></label>
@@ -5738,6 +5745,8 @@ const DEFAULT_SETTINGS = {
   catalog_provider: 'ollama',            // glass cataloger LLM provider (ollama | nanogpt | groq | custom)
   catalog_model: '',                     // model id ('' → provider default)
   catalog_mailto: '',                    // optional contact for the Crossref/OpenAlex "polite pool" (good-citizen biblio enrich)
+  telegram_enabled: false,               // poll your weir bot's getUpdates for live captures (token in the OPFS vault)
+  telegram_offset: 0,                    // last consumed Telegram update_id + 1 (so nothing re-ingests across reloads)
   catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
   // Retention ARCHIVES expired items (moves to the archived view) — never
@@ -8062,6 +8071,27 @@ function parseTelegramExport(json) {
   return links;
 }
 
+// Live-bot sibling of parseTelegramExport's per-message logic, for the Telegram
+// Bot API getUpdates shape (a message's `text` string + `entities` array). URL
+// present → link capture(s) with the surrounding blurb as the title (a Google
+// Discover share becomes a LINK, not a note); NO url → returns [] so the caller
+// treats it as a note. Skips archive/internal hosts; flags wrappers for unwrap.
+function messageLinks(text, entities) {
+  const t = String(text || '');
+  const urls = [];
+  for (const e of (entities || [])) {
+    if (e && e.type === 'text_link' && e.url) urls.push(e.url);
+    else if (e && e.type === 'url' && typeof e.offset === 'number') urls.push(t.substr(e.offset, e.length));
+  }
+  let m; IMP_URL_RE.lastIndex = 0;
+  while ((m = IMP_URL_RE.exec(t))) urls.push(m[0]);
+  const uniq = [...new Set(urls.map((u) => String(u).replace(/[.,;:!?)\]]+$/, '')))]
+    .filter((u) => /^https?:\/\//i.test(u) && !isSkippedUrl(u));
+  if (!uniq.length) return [];   // a note — no link to extract
+  const title = impTitleFrom(t, uniq);
+  return uniq.map((url) => ({ url, title: uniq.length === 1 ? title : null, wrapped: isWrappedUrl(url) }));
+}
+
 // One URL per line, optionally "Title — https://…" / "https://… Title".
 function parseUrlList(text) {
   const links = [];
@@ -8402,6 +8432,101 @@ class LinkResolver {
     } finally {
       this._busy = false;
     }
+  }
+}
+
+// ── src/js/telegram.js ──
+
+// Telegram influxer — a gentle poll loop that drains your weir bot's getUpdates
+// while weir is open. Each message becomes a capture: a URL-bearing message (incl.
+// a Google Discover share, blurb + link) → a Saved Link (the resolver unwraps +
+// enriches it); a pure-text message → a NOTE, stashed to a pending file until the
+// notes system lands (so nothing's lost or bricked into a Telegram-blurb shape).
+//
+// No server, no webhook, no bridge: api.telegram.org is CORS-friendly, so a plain
+// fetch works. The bot token lives in the OPFS vault; the offset (last update_id)
+// is persisted so nothing re-ingests across reloads. getUpdates is SINGLE-consumer
+// — use a fresh, weir-only bot (no webhook, no other poller, e.g. retire rei's).
+
+
+
+const TG_API = 'https://api.telegram.org';
+const NOTES_STASH = '/telegram-notes.ndjson';
+
+class TelegramInflux {
+  constructor(store, { fetch, getToken, onLinks, intervalMs = 18_000 } = {}) {
+    this.store = store;
+    this.fetch = fetch || ((u, o) => globalThis.fetch(u, o));   // direct — CORS-ok, no bridge
+    this.getToken = getToken;
+    this.onLinks = onLinks;        // (links[]) => Promise, usually app.importLinks
+    this.intervalMs = intervalMs;
+    this._timer = null; this._busy = false;
+    this.status = { enabled: false, bot: null, lastPoll: null, captured: 0, notes: 0, error: null };
+    this._listeners = new Set();
+  }
+
+  on(fn) { this._listeners.add(fn); return () => this._listeners.delete(fn); }
+  _emit() { const s = { ...this.status }; this._listeners.forEach((f) => { try { f(s); } catch { /* ignore */ } }); }
+
+  _offset() { return this.store.getSettings().telegram_offset || 0; }
+  _setOffset(n) { return this.store.setSettings({ telegram_offset: n }); }
+
+  start() {
+    if (this._timer) return;
+    this.status.enabled = true; this._emit();
+    this._timer = setInterval(() => this.tick().catch(() => {}), this.intervalMs);
+    if (this._timer && typeof this._timer.unref === 'function') this._timer.unref();
+    this.tick().catch(() => {});
+  }
+  stop() { if (this._timer) { clearInterval(this._timer); this._timer = null; } this.status.enabled = false; this._emit(); }
+
+  // One-time check for the settings UI: confirm the token + grab the bot's @username.
+  async verify(token) {
+    try {
+      const r = await this.fetch(`${TG_API}/bot${token}/getMe`);
+      const j = JSON.parse(await r.text());
+      if (j && j.ok && j.result) { this.status.bot = j.result.username || j.result.first_name; this._emit(); return { ok: true, username: j.result.username }; }
+      return { ok: false, error: (j && j.description) || 'getMe failed' };
+    } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+  }
+
+  // Pure-text messages are notes — stash them (date + text + sender) so they survive
+  // until the notes system consumes /telegram-notes.ndjson. Never lost, never bricked.
+  async _stashNote(msg) {
+    const rec = JSON.stringify({ at: msg.date ? msg.date * 1000 : Date.now(), text: msg.text, from: msg.from && (msg.from.username || msg.from.first_name) || null });
+    try { const prev = await this.store._readText(NOTES_STASH, ''); await this.store.vfs.writeFile(NOTES_STASH, (prev ? prev + '\n' : '') + rec); } catch { /* best effort */ }
+  }
+
+  async tick() {
+    if (this._busy) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;   // poll only while visible
+    const token = this.getToken ? await this.getToken() : null;
+    if (!token) return;
+    this._busy = true;
+    try {
+      const offset = this._offset();
+      const r = await this.fetch(`${TG_API}/bot${token}/getUpdates?timeout=0&offset=${offset}&allowed_updates=${encodeURIComponent('["message"]')}`);
+      const j = JSON.parse(await r.text());
+      this.status.lastPoll = Date.now();
+      if (!j || !j.ok) { this.status.error = (j && j.description) || 'getUpdates failed'; this._emit(); return; }
+      this.status.error = null;
+      const updates = j.result || [];
+      if (!updates.length) { this._emit(); return; }
+      let maxId = offset - 1;
+      const links = [];
+      for (const u of updates) {
+        if (u.update_id > maxId) maxId = u.update_id;
+        const msg = u.message; if (!msg) continue;
+        const ls = messageLinks(msg.text, msg.entities);
+        if (ls.length) for (const l of ls) links.push({ ...l, date: msg.date ? msg.date * 1000 : undefined });
+        else if ((msg.text || '').trim()) { await this._stashNote(msg); this.status.notes++; }   // a note → stash for the notes system
+      }
+      await this._setOffset(maxId + 1);   // confirm → Telegram drops the consumed updates
+      if (links.length && this.onLinks) { await this.onLinks(links); this.status.captured += links.length; }
+      this._emit();
+    } catch (e) {
+      this.status.error = String((e && e.message) || e); this._emit();
+    } finally { this._busy = false; }
   }
 }
 
@@ -9811,6 +9936,7 @@ class App {
     document.getElementById('bridge-dismiss')?.addEventListener('click', () => { this._bridgeDismissed = true; this._setBridgeBanner(false); });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
     document.getElementById('set-cat-gauge')?.addEventListener('click', () => this.checkCatGauge());
+    document.getElementById('set-tg-verify')?.addEventListener('click', () => this._verifyTelegram());
     document.getElementById('set-cat-models')?.addEventListener('click', () => this.loadCatModels());
     document.getElementById('set-cat-model')?.addEventListener('change', () => this._reflectCatCustom());
     document.getElementById('set-cat-provider')?.addEventListener('change', () => { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(document.getElementById('set-cat-provider').value).then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } this._renderCatModelSelect([], ''); });
@@ -11585,6 +11711,26 @@ class App {
   // via a textarea — full named-entity support, browser-native.
   _decodeHtml(s) { if (!s) return s; const t = (this._teDecode = this._teDecode || document.createElement('textarea')); t.innerHTML = String(s); return t.value; }
 
+  // Telegram capture status (settings line) + the verify button.
+  renderTelegramStatus(st) {
+    const el = document.getElementById('tg-status'); if (!el || !st) return;
+    if (st.error) { el.textContent = `error: ${st.error}`; return; }
+    const parts = [];
+    if (st.bot) parts.push(`@${st.bot}`);
+    parts.push(st.enabled ? 'polling' : 'idle');
+    if (st.captured) parts.push(`${st.captured} captured`);
+    if (st.notes) parts.push(`${st.notes} note${st.notes === 1 ? '' : 's'} stashed`);
+    el.textContent = parts.join(' · ') || 'not connected';
+  }
+  async _verifyTelegram() {
+    const el = document.getElementById('tg-status');
+    const token = (document.getElementById('set-tg-token')?.value.trim()) || (await getKey('telegram'));
+    if (!token) { if (el) el.textContent = 'enter a bot token first'; return; }
+    if (el) el.textContent = 'checking…';
+    const r = this.telegram ? await this.telegram.verify(token) : { ok: false, error: 'not ready' };
+    if (el) el.textContent = r.ok ? `connected: @${r.username || '?'}` : `failed: ${r.error}`;
+  }
+
   async _ensureBooksSource() {
     const cur = this.store.getFeed('books');
     if (cur && cur.retention && cur.retention.unread_days === 'forever') return;
@@ -11893,6 +12039,9 @@ class App {
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
     this.renderWebmcpStatus();
     chk('set-retention', s.retention_enabled);
+    chk('set-tg-enabled', s.telegram_enabled);
+    { const k = document.getElementById('set-tg-token'); if (k) { k.value = ''; hasKey('telegram').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
+    if (this.telegram) this.renderTelegramStatus(this.telegram.status);
     chk('set-autocheck', s.auto_check_updates);
     val('set-drip-interval', Math.round(s.recovery_drip_interval_ms / 60000));
     val('set-wb-interval', Math.round(s.wayback_min_interval_ms / 1000));
@@ -12051,6 +12200,7 @@ class App {
       catalog_max_body_chars: Math.max(500, parseInt(document.getElementById('set-cat-maxbody')?.value, 10) || 6000),
       catalog_mailto: document.getElementById('set-cat-mailto')?.value.trim() || '',
       retention_enabled: chk('set-retention'),
+      telegram_enabled: chk('set-tg-enabled'),
       auto_check_updates: chk('set-autocheck'),
       recovery_drip_interval_ms: Math.max(60000, num('set-drip-interval', 8) * 60000),
       wayback_min_interval_ms: Math.max(1000, num('set-wb-interval', 5) * 1000),
@@ -12061,6 +12211,10 @@ class App {
     await this.store.setSettings(patch);
     const keyVal = document.getElementById('set-cat-key')?.value;
     if (keyVal) { await saveKey(patch.catalog_provider, keyVal); const k = document.getElementById('set-cat-key'); if (k) k.value = ''; }
+    { const tg = document.getElementById('set-tg-token')?.value; if (tg) { await saveKey('telegram', tg); const t = document.getElementById('set-tg-token'); if (t) t.value = ''; } }
+    if (this.telegram) {   // (re)start or stop the influxer to match the new setting
+      if (patch.telegram_enabled && await getKey('telegram')) this.telegram.start(); else this.telegram.stop();
+    }
     this._setDensity(patch.density);
     setAutoCheck(patch.auto_check_updates);   // push the preference to the SW
     if (patch.retention_enabled) this.store.runRetention();   // apply immediately if just enabled
@@ -12814,9 +12968,10 @@ function initWebmcp({ store, app, fetch }) {
 
 
 
+
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '277ddfe';          // short content hash of the bundle (build id)
+const COMMIT = '9444d6f';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -12923,6 +13078,17 @@ async function boot() {
   linkResolver.on((st) => app.renderResolverStatus(st));
   app.renderResolverStatus(linkResolver.status());
   linkResolver.kick();
+
+  // Telegram influxer — poll a weir-only bot's getUpdates (direct fetch; CORS-ok)
+  // for live captures: links → Saved Links (resolved), notes → stashed. Token in the
+  // vault; only runs when enabled + a token is set.
+  const telegram = new TelegramInflux(store, {
+    getToken: () => getKey('telegram'),
+    onLinks: (links) => app.importLinks(links, 'telegram'),
+  });
+  app.telegram = telegram;
+  telegram.on((st) => app.renderTelegramStatus(st));
+  if (store.getSettings().telegram_enabled && await getKey('telegram')) telegram.start();
 
   window.__weir = { store, poller, router, drip, retainer, linkResolver, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {

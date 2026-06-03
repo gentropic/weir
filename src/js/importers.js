@@ -108,6 +108,27 @@ export function parseTelegramExport(json) {
   return links;
 }
 
+// Live-bot sibling of parseTelegramExport's per-message logic, for the Telegram
+// Bot API getUpdates shape (a message's `text` string + `entities` array). URL
+// present → link capture(s) with the surrounding blurb as the title (a Google
+// Discover share becomes a LINK, not a note); NO url → returns [] so the caller
+// treats it as a note. Skips archive/internal hosts; flags wrappers for unwrap.
+export function messageLinks(text, entities) {
+  const t = String(text || '');
+  const urls = [];
+  for (const e of (entities || [])) {
+    if (e && e.type === 'text_link' && e.url) urls.push(e.url);
+    else if (e && e.type === 'url' && typeof e.offset === 'number') urls.push(t.substr(e.offset, e.length));
+  }
+  let m; IMP_URL_RE.lastIndex = 0;
+  while ((m = IMP_URL_RE.exec(t))) urls.push(m[0]);
+  const uniq = [...new Set(urls.map((u) => String(u).replace(/[.,;:!?)\]]+$/, '')))]
+    .filter((u) => /^https?:\/\//i.test(u) && !isSkippedUrl(u));
+  if (!uniq.length) return [];   // a note — no link to extract
+  const title = impTitleFrom(t, uniq);
+  return uniq.map((url) => ({ url, title: uniq.length === 1 ? title : null, wrapped: isWrappedUrl(url) }));
+}
+
 // One URL per line, optionally "Title — https://…" / "https://… Title".
 export function parseUrlList(text) {
   const links = [];
