@@ -223,7 +223,17 @@ export async function gcuFetch(url, opts = {}) {
     try {
       return await viaBridge(url, opts);
     } catch (_e) {
-      // Fall through to direct fetch.
+      // A cold MV3 service worker can drop the first relayed request(s) while it
+      // wakes — the content script's chrome.runtime.sendMessage throws and the relay
+      // returns "bridge unavailable", so viaBridge rejects fast. This is common on a
+      // burst (e.g. a feed poll cycle) against an idle SW. The first attempt woke it,
+      // so retry once before giving up to a (CORS-doomed) direct fetch.
+      try {
+        await new Promise((r) => setTimeout(r, 250));
+        return await viaBridge(url, opts);
+      } catch (_e2) {
+        // Both bridge attempts failed — fall through to direct fetch.
+      }
     }
   }
   try {
