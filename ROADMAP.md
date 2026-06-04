@@ -140,6 +140,24 @@ the trigger/query layer on top.
   vocabulary model), **post-coordination** (= facet intersection), **berrypicking** (=
   the drill-down/chips/saved-views UX). See GLASS §2.1 (decides-vs-proposes), §5.1
   (facet structure types).
+- **Consume `gcu-library` packs (`std.data` / `.gcudat`) — the acquisitions channel.**
+  `../gcu-library` (sibling repo `gentropic/gcu-library`) is a registry of CC0/PD
+  **data + book packs** in a defined format (`.gcudat` + sha256 integrity +
+  `std.data("name")` access) — which **IS the "local data pack" tier** weir's
+  authority/holdings work needs (separate from the shipped single file; mounted/
+  downloaded like the catalog, never inflating `index.html`). One piece of plumbing
+  serves two arcs at once:
+  - **`std.data("factbook")` → the gazetteer** (LIS arc step 3). The CC0 CIA World
+    Factbook pack = 254 countries with `region` + `capital` + coords = the
+    *country→region / capital→country* containment **backbone, free + local**. Only
+    the city/sub-national tail then needs a build-time GeoNames/Wikidata extract.
+  - **book packs → Stage-4 holdings.** *Elements of Style*, Open Data Structures, the
+    `arcr` DSL manual, the `rt*` set — static holdings the catalog can shelve (Dewey/
+    Cutter via the shipped call-number machinery): exactly what the holdings shelf
+    wants, already in the right format.
+  Same ingestion contract for both; integrity-hashed; CC0/PD so no attribution
+  friction. A clean instance of GCU cross-repo design — **gcu-library produces,
+  weir/glass shelves.** See GLASS §16 (authority data sources).
 - **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +
   annotations; webmcp triggers. (Graph/map visualization broken out below.) The
   data model is ready today (`provenance: self`, `type: note` in `glass.js`); the
