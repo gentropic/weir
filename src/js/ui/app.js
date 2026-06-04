@@ -183,11 +183,14 @@ export class App {
       if (term) { e.preventDefault(); this.facetTermMenu(term.dataset.facet, term.dataset.term, e.clientX, e.clientY); return; }
       const head = e.target.closest('.facet-head');
       const fc = head && head.querySelector('.fh-tog')?.dataset.facet;
-      if (fc) { e.preventDefault(); this.facetGroupMenu(fc, e.clientX, e.clientY); }
+      if (fc) { e.preventDefault(); this.facetGroupMenu(fc, e.clientX, e.clientY); return; }
+      e.preventDefault(); this.facetsHeaderMenu(e.clientX, e.clientY);   // empty space → panel-wide menu
     });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
     document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
     document.getElementById('facet-guided')?.addEventListener('click', () => this.toggleFacetGuided());
+    document.getElementById('facet-clear')?.addEventListener('click', () => this.clearFacetFilters());
+    document.getElementById('facets-head')?.addEventListener('contextmenu', (e) => { if (e.target.closest('button')) return; e.preventDefault(); this.facetsHeaderMenu(e.clientX, e.clientY); });
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
     const sv = document.getElementById('smart-views');
@@ -951,6 +954,26 @@ export class App {
     this.store.setSettings({ facet_guided: this.store.getSettings().facet_guided === false });
     this.renderCatalogFacets();
   }
+  _activeFacets() { return this.catalog ? Object.keys(this.catalog.filters).filter((f) => this.catalog.filters[f] && this.catalog.filters[f].size) : []; }
+  clearFacetFilters() { if (!this.catalog) return; this.catalog.filters = {}; this.renderAll(); }
+
+  // Right-click the FACETS header (or empty space in the panel) → panel-wide
+  // controls: clear the selection, the narrow toggle, collapse/expand all, and a
+  // reset of the sort/collapse customization.
+  facetsHeaderMenu(x, y) {
+    const active = this._activeFacets();
+    const guided = this.store.getSettings().facet_guided !== false;
+    showMenu(x, y, [
+      active.length && { label: `✕ Clear selection (${active.length} facet${active.length === 1 ? '' : 's'})`, onClick: () => this.clearFacetFilters() },
+      active.length && { sep: true },
+      { label: `${guided ? '● ' : '○ '}Narrow to selection`, onClick: () => this.toggleFacetGuided() },
+      { sep: true },
+      { label: 'Collapse all', onClick: () => this._setAllFacetsCollapsed(true) },
+      { label: 'Expand all', onClick: () => this._setAllFacetsCollapsed(false) },
+      { sep: true },
+      { label: '↺ Reset sort & layout', onClick: () => { this.store.setSettings({ facet_sort: {}, facet_collapsed: [] }); this.renderCatalogFacets(); } },
+    ].filter(Boolean));
+  }
 
   // Scoped term counts for guided faceting. For each facet F, a term's count =
   // items matching every OTHER active facet (F itself excluded, so OR-within-a-
@@ -1127,6 +1150,7 @@ export class App {
     const active = Object.keys(this.catalog.filters).filter((f) => this.catalog.filters[f] && this.catalog.filters[f].size);
     const scoped = (guided && active.length) ? this._facetCounts(this.catalog.filters) : null;
     { const gb = document.getElementById('facet-guided'); if (gb) gb.classList.toggle('active', guided); }
+    { const cb = document.getElementById('facet-clear'); if (cb) cb.hidden = !active.length; }
     let html = '';
     for (const facet of order) {
       const map = this._catalogIndex[facet];
