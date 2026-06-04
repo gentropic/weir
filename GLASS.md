@@ -426,6 +426,26 @@ for free. Markdown (not Auditable cells — weir isn't Auditable-based): univers
 FSA-friendly, glass-compatible; the catalog *card* carries the structure, the body
 stays plain. **Annotations** (a note bound to a specific item) are a second step.
 
+**Annotation model — adopt the W3C Web Annotation Data Model** (the same "take the
+standard, don't invent" move as SKOS in §7). Shape: `body` (your note/tag, markdown) +
+`target` (`source` = a weir item id) + optional `selector` (where in the item). An
+annotation is just *a note that carries a `target`* — so it rides the §9 notes-as-items
+machinery for free. **The selector choice is forced by a weir fact:** the poller *updates*
+an item's content on re-fetch (mutable fields rewrite; state never resets), so a position-
+only anchor silently drifts onto the wrong text. Therefore anchor by **`TextQuoteSelector`**
+(`exact` + `prefix`/`suffix` — re-findable by fuzzy match) as the durable truth, with
+**`TextPositionSelector`** (`start`/`end`) as a disposable fast hint recomputed on each
+load (Hypothesis's `dom-anchor-text-quote` algorithm). weir anchors against its *own*
+sanitized stored content, not a hostile live page — higher hit rate than Hypothesis gets.
+**Granularity ladder = build order:** (1) whole-item note (no selector) — the primary
+gesture; (2) range highlight (add selector); (3) **tagging annotation** (`motivation:
+tagging`, body = a vocab concept) — which makes *applying a facet term* and *annotating*
+**one operation**, folding controlled-vocab linking into the annotation system. `motivation`
+maps to existing weir verbs (commenting/highlighting/tagging→vocab/linking→`related`/
+bookmarking→saved). Bonus, like SKOS: annotations are **portable** (round-trip with
+Hypothesis, exportable). Verify at freeze: exact selector field names vs the live W3C Rec +
+Hypothesis's fuzzy-match tolerances.
+
 ---
 
 ## 10. The knowledge graph — emergent, not an engine **[designed]**
