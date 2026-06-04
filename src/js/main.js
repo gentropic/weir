@@ -30,6 +30,7 @@ import './ui/markdown.js';               // → renderMarkdown (stacks notes; us
 import './adapters/feed.js';             // → parseFeed, feedAdapter (uses xml/sanitize/schema)
 import './adapters/youtube.js';          // → parseYoutube, youtubeAdapter (uses parseXml)
 import './adapters/github.js';           // → parseGithub, githubAdapter (releases/commits/tags)
+import './adapters/usgs.js';             // → parseUsgs, usgsAdapter (earthquakes — the first gauge source)
 import './extract.js';                   // → extractArticle (readability; browser DOMParser)
 import './opml.js';                      // → parseOpml, buildOpml (uses parseXml)
 import './importers.js';                 // → detectImport, parseTelegramExport (multi-format link import)

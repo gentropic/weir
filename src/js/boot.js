@@ -22,6 +22,7 @@ import { BackgroundRunner } from './runner.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
 import { githubAdapter } from './adapters/github.js';
+import { usgsAdapter } from './adapters/usgs.js';
 import { fmtBytes } from './ui/format.js';
 import { hasBridge, bridgeVersion, gcuFetch } from '../../vendor/bridge-client.js';
 
@@ -93,7 +94,7 @@ async function boot() {
   router.loadStacks(await store.getStacksRouting());   // stacks filing rules (STACKS.md §4)
   store.router = router;
 
-  const adapters = [youtubeAdapter, githubAdapter, feedAdapter];   // specific before the `feed` fallback
+  const adapters = [youtubeAdapter, githubAdapter, usgsAdapter, feedAdapter];   // specific before the `feed` fallback
   const poller = new Poller(store, { adapters, fetch: gcuFetch });
   const faviconFetcher = new FaviconFetcher(store, { fetch: gcuFetch });   // lazy rail icons, polite
   // Full-text search v2 — build the in-RAM librarian index from the corpus, and

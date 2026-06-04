@@ -208,6 +208,7 @@ body {
 .pill.book { background: var(--au-success-soft, rgba(120,180,120,0.15)); color: var(--au-success); }
 .pill.track, .pill.issue { background: var(--au-error-soft); color: var(--au-error); }
 .pill.podcast { background: var(--au-warn-soft); color: var(--au-warn); }
+.pill.event { background: var(--au-warn-soft); color: var(--au-warn); }
 
 .ibody { min-width: 0; position: relative; }
 

@@ -6,6 +6,7 @@ export const SCHEMA_VERSION = 1;
 export const ITEM_TYPES = [
   'article', 'video', 'release', 'paper', 'status', 'track', 'podcast', 'commit', 'issue', 'book',
   'note', 'file',   // stacks entries (STACKS.md): authored notes + dropped files
+  'event',          // derived events from exotic/gauge sources (USGS quakes, …) — ROADMAP: weir-as-gauge
 ];
 
 // Retention TTLs in days, or 'forever'. Per-feed `retention` overrides these
