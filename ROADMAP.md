@@ -78,6 +78,29 @@ the trigger/query layer on top.
   vocabulary** in weir, the thing that turns a flat facet list into a classified
   tree. Scale's ordinal ladder (global>national>regional>local>personal) is a cheap
   companion (sort/range by rank). Do spatial as the opening move of the thesaurus.
+- **Temporal depth — recency filter + seasonality (two FREE axes off `published_at`).**
+  PMEST's Time goes finer than year, but the catalog `temporal` facet should NOT
+  (an LLM won't meaningfully emit a month for "an article about 2024"; flat months
+  are ambiguous — "March" of which year?; finer *classificatory* time, if ever, is a
+  hierarchical year→month drill like spatial, never a flat facet). The realization:
+  there are **two time axes** and they were conflated — the year-granular `temporal`
+  *facet* (classificatory content-time) vs the item's real **`published_at`**
+  timestamp, already stored at **ms precision, for free**. Finer time lives on the
+  latter, orthogonal to the facet. Two cheap, distinct controls worth building:
+  - **Recency / date-range filter** on `published_at`: relative windows (last 7 / 30
+    / 90 days, YTD) + an exact from–to date. The classic feed-reader recency axis;
+    needs no catalog, no LLM — just filter the timestamps. Complements (doesn't
+    replace) the year-facet range already shipped.
+  - **Seasonality — the cyclical cut** (the genuinely novel one): month-of-year
+    derived from `published_at` *ignoring the year* — "what do I save every December,"
+    recurring/seasonal interests, content that cycles. The one sub-year segmentation
+    that's *independently* meaningful (it's a different question from both "which
+    year" and "how recent"). Cheap + deterministic (a Stage-0-style derived facet
+    from the month, no LLM). **Watch the hemisphere:** *month* is unambiguous, but
+    *season* is hemisphere-relative (the user is Southern-Hemisphere — "summer" =
+    Dec–Feb), so expose month-of-year as the clean axis and treat season as an
+    optional derived view behind a hemisphere setting. Pairs naturally with a small
+    12-spoke radial / month-histogram viz down the line.
 - **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +
   annotations; webmcp triggers. (Graph/map visualization broken out below.) The
   data model is ready today (`provenance: self`, `type: note` in `glass.js`); the
