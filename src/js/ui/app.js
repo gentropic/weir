@@ -2756,7 +2756,7 @@ export class App {
     host.classList.add('ws-solo');   // single-pane default from the FIRST measure → no phantom strip band
     this.rails = createRails(host, {
       initialState: { rails: [ { id: 'r-main', flex: 1, stacks: [ { id: 's-main', flex: 1,
-        active: 'stream', tabs: [ { id: 'stream', kind: 'stream', title: 'stream', closeable: false, draggable: false } ] } ] } ], floats: [] },
+        active: 'stream', tabs: [ { id: 'stream', kind: 'stream', title: 'stream', closeable: false } ] } ] } ], floats: [] },
       renderPanel: (tab) => this._renderPanel(tab),
       renderEmpty: () => { const d = document.createElement('div'); d.className = 'rails-empty'; return d; },
       onPanelDestroy: (tab) => { if (tab.kind === 'note') this._disposeNotePane(tab.id); },
