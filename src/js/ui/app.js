@@ -1173,9 +1173,14 @@ export class App {
       else if (mode === 'za') entries.sort((a, b) => b[0].localeCompare(a[0]));
       else entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
       const isCollapsed = !filter && collapsed.has(facet);   // an active search overrides collapse
-      html += `<div class="facet-group${isCollapsed ? ' collapsed' : ''}">`
+      // A collapsed group hides its terms — so surface any selection inside it as
+      // a badge (count + the terms in the tooltip), and tint the header, so you can
+      // fold facets without losing track of what's still filtering.
+      const hidSel = isCollapsed && sel.size;
+      const selBadge = hidSel ? `<span class="facet-selbadge" title="${escapeHtml([...sel].join(', '))}">${sel.size}</span>` : '';
+      html += `<div class="facet-group${isCollapsed ? ' collapsed' : ''}${hidSel ? ' has-sel' : ''}">`
         + `<div class="facet-head">`
-        + `<span class="fh-tog" data-facet="${escapeHtml(facet)}"><span class="fchev">${isCollapsed ? '▸' : '▾'}</span><span class="ico">${ICONS[facet] || '·'}</span>${escapeHtml(facet)}</span>`
+        + `<span class="fh-tog" data-facet="${escapeHtml(facet)}"><span class="fchev">${isCollapsed ? '▸' : '▾'}</span><span class="ico">${ICONS[facet] || '·'}</span>${escapeHtml(facet)}${selBadge}</span>`
         + `<button class="facet-sort" type="button" data-facet="${escapeHtml(facet)}" title="Sort: ${mode === 'count' ? 'by count' : mode === 'az' ? 'A→Z' : 'Z→A'} — click to cycle">${SORT[mode]}</button>`
         + `</div>`;
       if (!isCollapsed) {

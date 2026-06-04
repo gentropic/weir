@@ -64,6 +64,8 @@ body {
 .facet-head .ico { font-size: 11px; }
 .facet-sort { font-family: var(--au-font-mono); font-size: 9px; letter-spacing: 0; text-transform: none; color: var(--au-fg-soft); background: none; border: 1px solid transparent; border-radius: var(--au-radius); cursor: pointer; padding: 1px 5px; flex-shrink: 0; }
 .facet-sort:hover { color: var(--au-fg); border-color: var(--au-border); }
+.facet-selbadge { display: inline-block; margin-left: 6px; min-width: 15px; padding: 0 4px; font-family: var(--au-font-mono); font-size: 9px; line-height: 14px; text-align: center; color: var(--au-action); background: var(--sw-bg-bright); border-radius: 7px; box-sizing: border-box; }
+.facet-group.has-sel .fh-tog { color: var(--au-action); }
 .facet-term { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 8px 3px 22px; border-radius: var(--au-radius); cursor: pointer; }
 .facet-term:hover { background: var(--sw-bg-bright); }
 .facet-term.active { background: var(--sw-bg-bright); box-shadow: inset 2px 0 0 var(--au-action); }
