@@ -190,27 +190,47 @@ target:
 `;
 }
 
-let noteStackId = null;            // where subsequent notes append (one notes pane)
-function stackExists(id) {
-  return !!rails && rails.state.rails.some(r => r.stacks.some(s => s.id === id));
+// Placement policy lives in the CONSUMER, not rails. Resolve a target stack from
+// LIVE state every time — never trust a captured id, because dragging a note out
+// empties its old stack and rails prunes it (that stale id was the "always new
+// rail" bug). new-rail only when zero notes are open anywhere; otherwise notes
+// coalesce into the notes stack you're looking at (MRU via tab:activate), else any.
+let lastNoteStackId = null;
+function stackById(id) {
+  if (!id) return null;
+  for (const r of rails.state.rails)
+    for (const s of r.stacks) if (s.id === id) return s;
+  return null;
 }
+const isNoteStack = (s) => s.tabs.some(t => t.kind === 'note');
 function findStackOfTab(tabId) {
   for (const r of rails.state.rails)
     for (const s of r.stacks)
       if (s.tabs.some(t => t.id === tabId)) return s.id;
   return null;
 }
+function resolveNotesStack() {
+  const mru = stackById(lastNoteStackId);            // 1. where you last looked, if it survives
+  if (mru && isNoteStack(mru)) return mru.id;
+  let any = null;                                     // 2. else a stack currently holding notes
+  for (const r of rails.state.rails)
+    for (const s of r.stacks)
+      if (isNoteStack(s)) {
+        const active = s.tabs.find(t => t.id === s.active);
+        if (active?.kind === 'note') return s.id;     //    prefer one already showing a note
+        any = any || s.id;
+      }
+  return any;                                         // 3. null → nothing open → caller summons a rail
+}
 
 let noteN = 0;
 function openNote(item) {
   const tabId = 'note-' + item.id + '-' + (++noteN);
   const tab = { id: tabId, kind: 'note', title: '✎ ' + shortTitle(item), item };
-  if (noteStackId && stackExists(noteStackId)) {
-    rails.addTab(tab, { to: 'stack', stackId: noteStackId });   // append to the notes pane
-  } else {
-    rails.addTab(tab, { to: 'new-rail' });                       // first note → open the pane (right)
-    noteStackId = findStackOfTab(tabId);
-  }
+  const target = resolveNotesStack();
+  if (target) rails.addTab(tab, { to: 'stack', stackId: target });   // coalesce into the notes pane
+  else        rails.addTab(tab, { to: 'new-rail' });                  // none open → summon one (right)
+  lastNoteStackId = findStackOfTab(tabId);                            // MRU = where it actually landed
   flagNoted(item.id);
 }
 function shortTitle(it) {
@@ -253,6 +273,12 @@ const rails = createRails(document.getElementById('workspace'), {
   },
 });
 window.rails = rails;   // console poking
+
+// MRU: remember the notes stack you're actually looking at, so the next `n`
+// lands there (not in the leftmost notes rail).
+rails.on('tab:activate', ({ tab, stack }) => {
+  if (tab?.kind === 'note' && stack) lastNoteStackId = stack.id;
+});
 
 // ── keyboard: weir's discipline — single-key shortcuts must NOT leak into CM6 ──
 function isTyping() {
