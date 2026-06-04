@@ -187,6 +187,7 @@ export class App {
     });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
     document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
+    document.getElementById('facet-guided')?.addEventListener('click', () => this.toggleFacetGuided());
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
     const sv = document.getElementById('smart-views');
@@ -946,6 +947,38 @@ export class App {
     else f[facet].add(term);
     this.renderAll();
   }
+  toggleFacetGuided() {
+    this.store.setSettings({ facet_guided: this.store.getSettings().facet_guided === false });
+    this.renderCatalogFacets();
+  }
+
+  // Scoped term counts for guided faceting. For each facet F, a term's count =
+  // items matching every OTHER active facet (F itself excluded, so OR-within-a-
+  // facet still broadens) AND carrying the term — the conjunctive-across,
+  // disjunctive-within counting rule. One pass over the live (card/Stage-0)
+  // facets. Returns facet → Map(term → count); only called when a selection exists.
+  _facetCounts(filters) {
+    const out = {}; for (const f of FACETS) out[f] = new Map();
+    const active = Object.keys(filters).filter((f) => filters[f] && filters[f].size);
+    const total = active.length;
+    for (const item of this.store.items.values()) {
+      if (item.archived) continue;
+      const ff = (this._cardFacets && this._cardFacets.get(item.id)) || facetsOf(item, this.store.getFeed(item.feed_id));
+      let matched = 0, missFacet = null;
+      for (const af of active) {
+        const sel = filters[af]; let hit = false;
+        for (const t of (ff[af] || [])) if (sel.has(t)) { hit = true; break; }
+        if (hit) matched++; else missFacet = af;
+      }
+      for (const F of FACETS) {
+        // an item counts toward F if it matches every active facet except (at most) F itself
+        if (!(matched === total || (matched === total - 1 && missFacet === F))) continue;
+        const m = out[F];
+        for (const t of (ff[F] || [])) m.set(t, (m.get(t) || 0) + 1);
+      }
+    }
+    return out;
+  }
 
   // Per-facet sort mode (persisted). Default: count, EXCEPT temporal → 'za' so
   // years read newest-first (count-sorting put 2021 above 2022 — looked broken).
@@ -1086,18 +1119,35 @@ export class App {
     const SORT = { count: '#', az: 'a–z', za: 'z–a' };
     const filter = (this.facetFilter || '').trim().toLowerCase();
     const collapsed = new Set(this.store.getSettings().facet_collapsed || []);
+    // Guided faceting: once term(s) are selected, scope every facet's counts to
+    // the current selection and hide dead-ends (zero co-occurrence) so a click
+    // can never reach an empty set. Default on; the toggle clears it. (The
+    // browse-all dialog stays global — curation wants the whole vocabulary.)
+    const guided = this.store.getSettings().facet_guided !== false;
+    const active = Object.keys(this.catalog.filters).filter((f) => this.catalog.filters[f] && this.catalog.filters[f].size);
+    const scoped = (guided && active.length) ? this._facetCounts(this.catalog.filters) : null;
+    { const gb = document.getElementById('facet-guided'); if (gb) gb.classList.toggle('active', guided); }
     let html = '';
     for (const facet of order) {
       const map = this._catalogIndex[facet];
       if (!map || !map.size) continue;   // empty facets (un-enriched in Stage 0) stay hidden
-      let terms = [...map.entries()];
-      if (filter) terms = terms.filter(([t]) => t.toLowerCase().includes(filter));
-      if (!terms.length) continue;       // hide groups with nothing matching the search
-      const mode = this._facetSortMode(facet);
-      if (mode === 'az') terms.sort((a, b) => a[0].localeCompare(b[0]));
-      else if (mode === 'za') terms.sort((a, b) => b[0].localeCompare(a[0]));
-      else terms.sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]));
       const sel = this.catalog.filters[facet] || new Set();
+      // term → count: scoped to the selection (guided) or global
+      let entries;
+      if (scoped) {
+        const sc = scoped[facet] || new Map();
+        entries = [];
+        for (const [t, c] of sc) if (c > 0 || sel.has(t)) entries.push([t, c]);
+        for (const t of sel) if (!sc.has(t)) entries.push([t, 0]);   // keep a selected term visible even if it scoped to 0
+      } else {
+        entries = [...map.entries()].map(([t, s]) => [t, s.size]);
+      }
+      if (filter) entries = entries.filter(([t]) => t.toLowerCase().includes(filter));
+      if (!entries.length) continue;     // hide groups with nothing (no search match / all dead-ends)
+      const mode = this._facetSortMode(facet);
+      if (mode === 'az') entries.sort((a, b) => a[0].localeCompare(b[0]));
+      else if (mode === 'za') entries.sort((a, b) => b[0].localeCompare(a[0]));
+      else entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
       const isCollapsed = !filter && collapsed.has(facet);   // an active search overrides collapse
       html += `<div class="facet-group${isCollapsed ? ' collapsed' : ''}">`
         + `<div class="facet-head">`
@@ -1105,16 +1155,16 @@ export class App {
         + `<button class="facet-sort" type="button" data-facet="${escapeHtml(facet)}" title="Sort: ${mode === 'count' ? 'by count' : mode === 'az' ? 'A→Z' : 'Z→A'} — click to cycle">${SORT[mode]}</button>`
         + `</div>`;
       if (!isCollapsed) {
-        for (const [term, set] of terms.slice(0, 40)) {
-          const active = sel.has(term) ? ' active' : '';
-          html += `<div class="facet-term${active}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`
-            + `<span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`;
+        for (const [term, count] of entries.slice(0, 40)) {
+          const isSel = sel.has(term) ? ' active' : '';
+          html += `<div class="facet-term${isSel}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`
+            + `<span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${count}</span></div>`;
         }
-        if (terms.length > 40) html += `<div class="facet-more" data-facet="${escapeHtml(facet)}">+ ${terms.length - 40} more</div>`;
+        if (entries.length > 40) html += `<div class="facet-more" data-facet="${escapeHtml(facet)}">+ ${entries.length - 40} more</div>`;
       }
       html += '</div>';
     }
-    el.innerHTML = html || `<div class="rail-empty">${filter ? 'No facets match' : 'No catalog facets yet'}</div>`;
+    el.innerHTML = html || `<div class="rail-empty">${filter ? 'No facets match' : (active.length ? 'No matches — clear a filter' : 'No catalog facets yet')}</div>`;
   }
 
   renderStream() {

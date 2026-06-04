@@ -41,6 +41,7 @@ export const DEFAULT_SETTINGS = {
   rail_collapsed: [],                    // collapsed rail sections (keys) — fold the body, keep the header
   facet_sort: {},                        // catalog facet → sort mode ('count'|'az'|'za'); default count, temporal za (newest year first)
   facet_collapsed: [],                   // collapsed catalog facet groups (facet names)
+  facet_guided: true,                    // guided faceting: scope facet counts to the active selection + hide dead-ends (rail only; the browse-all dialog stays global)
   density: 'comfortable',                // row density: 'comfortable' | 'compact'
   stream_layout: 'list',                 // stream layout: 'list' | 'gallery' (thumbnail grid)
   feed_stale_days: 120,                  // a feed quiet longer than this reads as "stale" in health
