@@ -397,6 +397,8 @@ body {
 .tag-src.r { color: var(--au-fg-soft); }
 .tagrow .tagdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; vertical-align: middle; margin-right: 3px; flex-shrink: 0; }
 .callno { font-family: var(--au-font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.03em; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; margin-right: 7px; cursor: pointer; white-space: nowrap; }
+.wbadge { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; cursor: pointer; white-space: nowrap; }
+.wbadge:hover { border-color: var(--au-action); }
 .callno:hover { border-color: var(--au-action); }
 .ddc { font-family: var(--au-font-mono); font-size: 9px; color: var(--au-fg-soft); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 4px; margin-right: 7px; white-space: nowrap; }
 
@@ -14123,6 +14125,7 @@ class App {
     if (this.pendingImport) { this.stream.innerHTML = this.importReviewHtml(); return; }
     const scrollTop = this.stream.scrollTop;   // preserve scroll across rebuild
     this.items = this.query();
+    this._buildWorkCounts();   // work_id → manifestation count, for the "⧉ N sources" badge
     if (this.selectedId && !this.items.some((x) => x.id === this.selectedId)) this.selectedId = null;
     if (!this.selectedId && this.items.length) this.selectedId = this.items[0].id;
 
@@ -14135,6 +14138,23 @@ class App {
     this.stream.scrollTop = scrollTop;
     this.renderTopbar();
     if (this._pipWin) this._renderFlightDeck();   // keep the pop-out's latest list fresh
+  }
+
+  _buildWorkCounts() {
+    const m = new Map();
+    for (const it of this.store.items.values()) if (it.work_id) m.set(it.work_id, (m.get(it.work_id) || 0) + 1);
+    this._workCounts = m;
+  }
+
+  // The "⧉ N sources" badge → the OTHER manifestations of this Work (FRBR). Click one
+  // to open its source (or, lacking a URL, jump to it in weir).
+  workMenu(workId, curId, x, y) {
+    const others = [...this.store.items.values()].filter((i) => i.work_id === workId && i.id !== curId);
+    if (!others.length) return;
+    showMenu(x, y, others.map((m) => {
+      const feed = (this.store.getFeed(m.feed_id) || {}).name || m.feed_id;
+      return { label: `${feed}: ${m.title || m.url || m.id}`.slice(0, 90), onClick: () => { if (m.url) window.open(m.url, '_blank', 'noopener'); else { this.selectFeed(m.feed_id); this.select(m.id); } } };
+    }));
   }
 
   emptyHtml() {
@@ -14343,6 +14363,9 @@ class App {
     const cn = this.catalog ? this._callNumber(it) : null;
     const callno = cn ? `<span class="callno" data-callno="${escapeHtml(renderCoded(cn))}" title="${escapeHtml(renderReadable(cn))} — click to copy the call number">${escapeHtml(renderCoded(cn))}</span>` : '';
     const ddc = (this.catalog && it.structured && it.structured.ddc) ? `<span class="ddc" title="Dewey — display metadata from your record (not the organizing system)">DDC ${escapeHtml(it.structured.ddc)}</span>` : '';
+    // FRBR: this item is one manifestation of a Work that appears in N sources.
+    const wn = it.work_id && this._workCounts ? (this._workCounts.get(it.work_id) || 0) : 0;
+    const wbadge = wn > 1 ? `<span class="wbadge" data-work="${escapeHtml(it.work_id)}" title="Same content in ${wn} sources — click to see the others">⧉ ${wn}</span>` : '';
 
     let body;
     const isVideo = it.type === 'video';
@@ -14357,9 +14380,9 @@ class App {
       const play = isVideo ? '<span class="playover">▶</span>' : '';
       const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
       const excerpt = (!isVideo && it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
-      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${ddc}${meta}${views} ${tags}</div></div></div>`;
+      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${ddc}${meta}${views} ${tags}${wbadge}</div></div></div>`;
     } else {
-      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${(it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}</div>`;
+      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${(it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}${wbadge}</div>`;
     }
     const actions = `<div class="iactions">`
       + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
@@ -14436,6 +14459,8 @@ class App {
     if (tagEl) { e.stopPropagation(); this.filterByTag(tagEl.dataset.tag); return; }
     const cnEl = e.target.closest('.callno');
     if (cnEl) { e.stopPropagation(); navigator.clipboard?.writeText(cnEl.dataset.callno).catch(() => {}); this._catStatus(`copied call number ${cnEl.dataset.callno}`); return; }
+    const wbEl = e.target.closest('.wbadge');
+    if (wbEl) { e.stopPropagation(); this.workMenu(wbEl.dataset.work, id, e.clientX, e.clientY); return; }
     if (btn) { e.stopPropagation(); this.doAct(btn.dataset.act, id); return; }
     if (e.metaKey || e.ctrlKey) { const it = this.store.getItem(id); if (it?.url) window.open(it.url, '_blank', 'noopener'); return; }
     if (e.target.closest('.iexpand')) return;   // clicks inside the open article (links, text) — leave alone
@@ -17507,7 +17532,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '2d79a20';          // short content hash of the bundle (build id)
+const COMMIT = '153c2b4';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

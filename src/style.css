@@ -253,6 +253,8 @@ body {
 .tag-src.r { color: var(--au-fg-soft); }
 .tagrow .tagdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; vertical-align: middle; margin-right: 3px; flex-shrink: 0; }
 .callno { font-family: var(--au-font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.03em; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; margin-right: 7px; cursor: pointer; white-space: nowrap; }
+.wbadge { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; cursor: pointer; white-space: nowrap; }
+.wbadge:hover { border-color: var(--au-action); }
 .callno:hover { border-color: var(--au-action); }
 .ddc { font-family: var(--au-font-mono); font-size: 9px; color: var(--au-fg-soft); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 4px; margin-right: 7px; white-space: nowrap; }
 
