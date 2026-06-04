@@ -342,4 +342,36 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.deepEqual(x1b.facets.spatial, ['united states'], 'spatial merge survives reload');
 }
 
+// ── controlled vocabulary (SKOS shape): merge records synonyms; BT/NT/RT + inverse ──
+{
+  const v = await VFS.create();
+  const s = new Store(v); await s._hydrate();
+  // a merge records the from-term as an altLabel (synonym) of the target
+  s.mergeFacetTerm('spatial', 'usa', 'united states');
+  s.mergeFacetTerm('spatial', 'u.s.', 'united states');
+  assert.deepEqual(s.getConcept('spatial', 'united states').alt.sort(), ['u.s.', 'usa'], 'merges record synonyms as altLabels');
+  // BT/NT with maintained inverse
+  s.setVocabRelation('spatial', 'tokyo', 'broader', 'japan');
+  assert.deepEqual(s.getConcept('spatial', 'tokyo').broader, ['japan'], 'broader set');
+  assert.deepEqual(s.getConcept('spatial', 'japan').narrower, ['tokyo'], 'inverse narrower maintained');
+  // related is symmetric
+  s.setVocabRelation('entity', 'variogram', 'related', 'kriging');
+  assert.ok(s.getConcept('entity', 'kriging').related.includes('variogram'), 'related is symmetric');
+  // a former preferred concept folds (labels + relations) into its merge target
+  s.setVocabRelation('spatial', 'britain', 'broader', 'europe');
+  s.mergeFacetTerm('spatial', 'britain', 'united kingdom');
+  assert.ok(s.getConcept('spatial', 'united kingdom').alt.includes('britain'), 'britain → altLabel of united kingdom');
+  assert.ok(s.getConcept('spatial', 'united kingdom').broader.includes('europe'), "britain's broader folded into uk");
+  assert.equal(s.getConcept('spatial', 'britain'), null, 'britain is no longer a preferred concept');
+  // SKOS JSON-LD export
+  const skos = s.vocabExportSkos('spatial');
+  assert.ok(skos['@context'].skos && Array.isArray(skos['@graph']), 'SKOS JSON-LD shape');
+  assert.ok(skos['@graph'].find((n) => n['skos:prefLabel'] === 'united states')['skos:altLabel'].includes('usa'), 'export carries altLabels');
+  // survives reload (persisted to /schema/vocab/<facet>.json)
+  await s.flush();
+  const s2 = new Store(v); await s2._hydrate();
+  assert.deepEqual(s2.getConcept('spatial', 'united states').alt.sort(), ['u.s.', 'usa'], 'vocab survives reload');
+  assert.deepEqual(s2.getConcept('spatial', 'japan').narrower, ['tokyo'], 'relations survive reload');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

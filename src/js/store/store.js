@@ -37,8 +37,10 @@ export class Store {
     this.router = null;              // optional Router; applied to new items on insert
     this.notifications = [];         // items a rule flagged notify:true (ephemeral)
     this.cards = new Map();          // glass_id → catalog card (in-memory; persisted as bucketed shards)
+    this.vocab = {};                 // facet → { term → SKOS concept {alt,broader,narrower,related} } (controlled vocabulary / thesaurus, GLASS §7; one /schema/vocab/<facet>.json each)
     this._dirtyFeeds = new Set();
     this._dirtyCards = new Set();     // card-shard buckets needing a rewrite
+    this._dirtyVocab = new Set();     // facet vocab files needing a rewrite
     this._archivedDirty = false;
     this._ensured = new Set();       // dirs already mkdir'd
     this._listeners = new Map();
@@ -124,6 +126,31 @@ export class Store {
     }
     for (const fid of this.feeds.keys()) await this._loadShard(fid);
     await this._loadCatalog();
+    await this._loadVocab();
+  }
+
+  // Controlled-vocabulary / thesaurus store (GLASS §7), SKOS-shaped from the start
+  // so it's a standard (exportable as JSON-LD, seedable from published SKOS) rather
+  // than a bespoke format we'd have to migrate. One file per facet under
+  // /schema/vocab/. A concept is keyed by its preferred term (skos:prefLabel) and
+  // holds { alt: [skos:altLabel/UF], broader: [BT], narrower: [NT], related: [RT] }.
+  async _loadVocab() {
+    let files = [];
+    try { files = await this.vfs.readdir('/schema/vocab'); } catch { return; }
+    for (const f of files) {
+      if (!f.endsWith('.json')) continue;
+      const facet = f.replace(/\.json$/, '');
+      const v = await this._readJSON(`/schema/vocab/${f}`, null);
+      if (v && typeof v === 'object') this.vocab[facet] = v.concepts || v;   // tolerate {concepts:{…}} or a bare map
+    }
+  }
+  _vocabPath(facet) { return `/schema/vocab/${String(facet).replace(/[^a-z0-9_-]/gi, '')}.json`; }   // facets are simple enumerated names
+  _markVocabDirty(facet) { this._dirtyVocab.add(facet); this._scheduleFlush(); }
+  async _writeVocab(facet) {
+    await this._ensureDir('/schema/vocab');
+    const concepts = this.vocab[facet] || {};
+    if (Object.keys(concepts).length) await this.vfs.writeFile(this._vocabPath(facet), JSON.stringify({ facet, concepts }, null, 2));
+    else { try { await this.vfs.unlink(this._vocabPath(facet)); } catch { /* already gone */ } }
   }
 
   // Hydrate the in-memory card index from packed shards, migrating any legacy
@@ -808,6 +835,8 @@ export class Store {
     this._dirtyFeeds.clear();
     for (const b of this._dirtyCards) await this._writeCardShard(b);
     this._dirtyCards.clear();
+    for (const f of this._dirtyVocab) await this._writeVocab(f);
+    this._dirtyVocab.clear();
     if (this._archivedDirty) {
       await this.vfs.writeFile('/archived_index.ndjson', this.tombstones.map((t) => JSON.stringify(t)).join('\n'));
       this._archivedDirty = false;
@@ -947,12 +976,76 @@ export class Store {
   // (collapse a junk/singleton term). Match on `from` is case-insensitive (terms
   // are stored lowercased). Returns the number of cards changed. Pure card edit —
   // items/content/reading state untouched; reversible by merging back.
+  // ── controlled vocabulary / thesaurus (SKOS-shaped, GLASS §7) ──
+  getVocab(facet) { return this.vocab[facet] || {}; }
+  getConcept(facet, term) { return (this.vocab[facet] || {})[String(term).toLowerCase().trim()] || null; }
+  _ensureConcept(facet, term) {
+    const v = this.vocab[facet] || (this.vocab[facet] = {});
+    return v[term] || (v[term] = { alt: [], broader: [], narrower: [], related: [] });
+  }
+  // Record `alt` as a non-preferred synonym (skos:altLabel / UF) of `pref`. If `alt`
+  // was itself a concept, its labels + relations fold into `pref` (then it's removed
+  // as a preferred term). The non-destructive memory behind a merge.
+  recordSynonym(facet, pref, alt) {
+    facet = String(facet || '').trim();
+    pref = String(pref).toLowerCase().trim(); alt = String(alt).toLowerCase().trim();
+    if (!facet || !pref || !alt || pref === alt) return;
+    const c = this._ensureConcept(facet, pref);
+    const old = (this.vocab[facet] || {})[alt];
+    if (old) {                                  // fold a former preferred term into pref
+      for (const a of old.alt || []) if (a !== pref && !c.alt.includes(a)) c.alt.push(a);
+      for (const rel of ['broader', 'narrower', 'related']) for (const t of old[rel] || []) if (t !== pref && !c[rel].includes(t)) c[rel].push(t);
+      delete this.vocab[facet][alt];
+    }
+    if (!c.alt.includes(alt)) c.alt.push(alt);
+    // never let a term be both a preferred concept and someone's alt elsewhere → fine; alt simply redirects here
+    this._markVocabDirty(facet);
+  }
+  // Declare a typed relation. relation ∈ alt|broader|narrower|related; inverse is
+  // maintained (broader↔narrower; related is symmetric). `targets` = string | string[].
+  setVocabRelation(facet, term, relation, targets) {
+    facet = String(facet || '').trim();
+    term = String(term).toLowerCase().trim();
+    const list = (Array.isArray(targets) ? targets : [targets]).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
+    if (!facet || !term || !list.length) throw new Error('setVocabRelation needs facet, term, relation, target(s)');
+    if (relation === 'alt') { for (const t of list) this.recordSynonym(facet, term, t); return this.getConcept(facet, term); }
+    if (!['broader', 'narrower', 'related'].includes(relation)) throw new Error(`unknown relation "${relation}"`);
+    const c = this._ensureConcept(facet, term);
+    const inverse = relation === 'broader' ? 'narrower' : relation === 'narrower' ? 'broader' : 'related';
+    for (const t of list) {
+      if (t === term) continue;
+      if (!c[relation].includes(t)) c[relation].push(t);
+      const o = this._ensureConcept(facet, t);
+      if (!o[inverse].includes(term)) o[inverse].push(term);
+    }
+    this._markVocabDirty(facet);
+    return this.getConcept(facet, term);
+  }
+  // SKOS JSON-LD export — proves the shape is a standard, not a bespoke format.
+  vocabExportSkos(facet) {
+    const facets = facet ? [facet] : Object.keys(this.vocab);
+    const graph = [];
+    for (const f of facets) for (const [term, c] of Object.entries(this.vocab[f] || {})) {
+      const node = { '@id': `weir:${f}/${encodeURIComponent(term)}`, '@type': 'skos:Concept', 'skos:inScheme': `weir:${f}`, 'skos:prefLabel': term };
+      if (c.alt && c.alt.length) node['skos:altLabel'] = c.alt;
+      for (const [rel, key] of [['broader', 'skos:broader'], ['narrower', 'skos:narrower'], ['related', 'skos:related']]) {
+        if (c[rel] && c[rel].length) node[key] = c[rel].map((t) => `weir:${f}/${encodeURIComponent(t)}`);
+      }
+      graph.push(node);
+    }
+    return { '@context': { skos: 'http://www.w3.org/2004/02/skos/core#', weir: 'https://gentropic.org/weir/vocab#' }, '@graph': graph };
+  }
+
   mergeFacetTerm(facet, from, to) {
     facet = String(facet || '').trim();
     const fromT = String(from == null ? '' : from).toLowerCase().trim();
     const toT = String(to == null ? '' : to).toLowerCase().trim();
     if (!facet || !fromT) throw new Error('mergeFacetTerm needs a facet and a from-term');
     if (fromT === toT) return 0;
+    // Record the merge as a vocabulary decision (non-destructive): the merged term
+    // becomes a skos:altLabel of the target, so the synonym is remembered even if no
+    // card currently uses it. (A drop — empty `to` — records nothing.)
+    if (toT) this.recordSynonym(facet, toT, fromT);
     let changed = 0;
     for (const card of this.cards.values()) {
       const arr = card.facets && card.facets[facet];

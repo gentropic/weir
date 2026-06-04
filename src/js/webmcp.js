@@ -343,9 +343,44 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       results.push({ facet: String(m.facet), from: String(m.from), to: m.to == null ? '' : String(m.to), cards });
       cardsChanged += cards;
     }
-    if (cardsChanged) await store.flush();
+    await store.flush();   // cards and/or the vocabulary (recorded altLabels) may have changed
     if (app && app.renderAll) app.renderAll();
     return { merges: results, cardsChanged };
+  }
+
+  // Inspect the controlled vocabulary / thesaurus (SKOS, GLASS §7): a per-facet
+  // concept-count overview (no args), one facet's concepts (`facet`), one term's
+  // concept (`facet`+`term` → prefLabel + altLabels/UF + broader/narrower/related),
+  // or SKOS JSON-LD (`export:true`). The vocabulary is GROWN by curation —
+  // weir_mergeFacetTerm records synonyms (altLabel), weir_relateTerm declares BT/NT/RT.
+  async function vocab(input = {}) {
+    const facet = input.facet != null ? String(input.facet) : null;
+    if (input.export) return store.vocabExportSkos(facet || undefined);
+    if (facet && input.term != null) {
+      return { facet, term: String(input.term).toLowerCase().trim(), concept: store.getConcept(facet, String(input.term)) };
+    }
+    if (facet) {
+      const v = store.getVocab(facet); const terms = Object.keys(v);
+      return { facet, concepts: terms.length, terms: terms.slice(0, 200).map((t) => ({ term: t, ...v[t] })), omitted: Math.max(0, terms.length - 200) };
+    }
+    return { facets: Object.fromEntries(Object.keys(store.vocab).map((f) => [f, Object.keys(store.vocab[f]).length])) };
+  }
+
+  // Declare typed thesaurus relations (SKOS, GLASS §7) on a term: broader (BT),
+  // narrower (NT), related (RT), or alt (a synonym that redirects to this term).
+  // Inverses are maintained automatically (set broader → the target gains narrower).
+  // Each value is a string or list. The ratified way to grow hierarchy — a
+  // similarity signal may *propose*, but a relation exists only once declared here.
+  async function relateTerm(input = {}) {
+    if (input.facet == null || input.term == null) throw new Error('pass facet, term, and at least one of broader/narrower/related/alt');
+    let touched = 0;
+    for (const rel of ['broader', 'narrower', 'related', 'alt']) {
+      if (input[rel] == null) continue;
+      store.setVocabRelation(String(input.facet), String(input.term), rel, input[rel]); touched++;
+    }
+    if (!touched) throw new Error('pass at least one of broader / narrower / related / alt');
+    await store.flush();
+    return { facet: String(input.facet), term: String(input.term).toLowerCase().trim(), concept: store.getConcept(String(input.facet), String(input.term)) };
   }
 
   // List the catalog provider's available models (so Claude can pick one). Named
@@ -687,7 +722,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -931,7 +966,7 @@ const TOOLS = [
   },
   {
     name: 'weir_mergeFacetTerm', fn: 'mergeFacetTerm',
-    description: 'Thesaurus normalization: rewrite a facet term across the WHOLE catalog (from → to within one facet, de-duped) so facet-browsing stops splitting one concept across spelling/synonym variants — e.g. spatial usa→united states, entity ai→artificial intelligence. An empty/omitted `to` DROPS the term (collapse a junk singleton). Use weir_listFacets to spot the variants first. Pass one {facet, from, to} or a {merges:[…]} batch (applied in one atomic flush). Pure card edit — items/reading state untouched, reversible by merging back. Returns each merge\'s card-change count.',
+    description: 'Thesaurus normalization: rewrite a facet term across the WHOLE catalog (from → to within one facet, de-duped) so facet-browsing stops splitting one concept across spelling/synonym variants — e.g. spatial usa→united states, entity ai→artificial intelligence. Also RECORDS the merge in the controlled vocabulary: the from-term becomes a skos:altLabel (synonym) of the target, so the decision is remembered (inspect via weir_vocab), not just applied. An empty/omitted `to` DROPS the term (records nothing). Use weir_listFacets to spot variants first. Pass one {facet, from, to} or a {merges:[…]} batch (one atomic flush). Pure card edit — items/reading state untouched, reversible. Returns each merge\'s card-change count.',
     inputSchema: {
       type: 'object', properties: {
         facet: { type: 'string', description: 'Facet to edit (domain|entity|process|method|scale|spatial|stance|temporal|form|provenance)' },
@@ -941,6 +976,33 @@ const TOOLS = [
       },
     },
     annotations: { title: 'Merge a facet term (thesaurus)' },
+  },
+  {
+    name: 'weir_vocab', fn: 'vocab',
+    description: 'Inspect the controlled vocabulary / thesaurus (SKOS-shaped, GLASS §7). No args → per-facet concept-count overview. `facet` → that facet\'s concepts. `facet`+`term` → one concept (prefLabel + altLabels/synonyms + broader/narrower/related). `export:true` → SKOS JSON-LD (optionally for one `facet`). The vocabulary GROWS from curation: weir_mergeFacetTerm records the merged term as a synonym (altLabel); weir_relateTerm declares BT/NT/RT.',
+    inputSchema: {
+      type: 'object', properties: {
+        facet: { type: 'string', description: 'Limit to one facet' },
+        term: { type: 'string', description: 'With facet: return just this term\'s concept' },
+        export: { type: 'boolean', description: 'Return SKOS JSON-LD instead' },
+      },
+    },
+    annotations: { title: 'Inspect the vocabulary (SKOS)' },
+  },
+  {
+    name: 'weir_relateTerm', fn: 'relateTerm',
+    description: 'Declare typed thesaurus relations (SKOS, GLASS §7) on a term: broader (BT), narrower (NT), related (RT), or alt (a synonym/altLabel that redirects to this term). Inverses are maintained automatically (declare broader → the target gains narrower). Each value is a string or list of terms. This is the ratified way to grow hierarchy — a similarity signal may propose, but a relation exists only once you declare it here (decides-vs-proposes). Use weir_vocab to inspect.',
+    inputSchema: {
+      type: 'object', properties: {
+        facet: { type: 'string', description: 'Facet (e.g. spatial, domain, entity)' },
+        term: { type: 'string', description: 'The preferred term to relate' },
+        broader: { description: 'Broader term(s) — string or array (BT)' },
+        narrower: { description: 'Narrower term(s) — string or array (NT)' },
+        related: { description: 'Related term(s) — string or array (RT)' },
+        alt: { description: 'Synonym(s) that redirect to this term — string or array (altLabel/UF)' },
+      }, required: ['facet', 'term'],
+    },
+    annotations: { title: 'Declare a thesaurus relation' },
   },
   {
     name: 'weir_listFacets', fn: 'listFacets',

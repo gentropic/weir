@@ -231,6 +231,20 @@ await assert.rejects(tools.recover({ id: 'f' }), /only available/, 'recover need
   for (const c of [...store.cards.values()]) { if (['m1', 'm2'].includes(c.glass.document_ref)) { store.cards.delete(c.glass.glass_id); } }
 }
 
+// ── vocab + relateTerm: SKOS thesaurus grown by curation ──
+{
+  const vt = buildWeirTools({ store });
+  await vt.mergeFacetTerm({ facet: 'spatial', from: 'usa', to: 'united states' });
+  const c = await vt.vocab({ facet: 'spatial', term: 'united states' });
+  assert.ok(c.concept && c.concept.alt.includes('usa'), 'merge recorded an altLabel, visible via weir_vocab');
+  await vt.relateTerm({ facet: 'spatial', term: 'tokyo', broader: 'japan' });
+  assert.deepEqual((await vt.vocab({ facet: 'spatial', term: 'tokyo' })).concept.broader, ['japan'], 'relateTerm set broader');
+  assert.deepEqual((await vt.vocab({ facet: 'spatial', term: 'japan' })).concept.narrower, ['tokyo'], 'inverse maintained');
+  const skos = await vt.vocab({ facet: 'spatial', export: true });
+  assert.ok(skos['@graph'] && skos['@context'].skos, 'weir_vocab export → SKOS JSON-LD');
+  await assert.rejects(vt.relateTerm({ facet: 'spatial', term: 'x' }), /broader/, 'relateTerm needs a relation');
+}
+
 // ── catalog control (mock app) ──
 const calls = [];
 const mockApp = {
