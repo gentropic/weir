@@ -199,6 +199,40 @@ item fields, `entity ⊇` existing tags. So a card exists for *every* item with 
 LLM at all** — the language facets (`domain`/`entity`/`process`/`method`/`scale`/
 `spatial`) and the abstract are what the cataloger adds (Stage 1).
 
+### 5.1 Facet structure types — and the drilling each affords **[design frame]**
+
+A facet is **not a flat set of values — it is values *plus a relation* between them.**
+The relation's *shape* dictates the right drill UI. This is the organizing frame for
+the whole "deeper drilling" arc: classify each facet's structure, then build (or
+grow) the matching navigator. Five shapes cover the scheme:
+
+| Structure | Relation | Facets | Drill |
+|---|---|---|---|
+| **Nominal** | none (unordered categories) | `form`, `provenance` (and `stance`, mostly) | plain term list — *correct as-is, do not force structure* |
+| **Ordinal** | a line / total order | `temporal` (years), `scale` (global>…>personal) | range / slider / roll-up · ✅ temporal year-range shipped |
+| **Hierarchical** | containment tree (BT/NT) | `spatial` (geo), `domain` & `entity` once vocab-linked | expand/collapse; select a parent → catch its children |
+| **Cyclical** | a wheel | seasonality / month-of-year (derived from `published_at`) | wrap-around range, radial |
+| **Associative** | a graph, sideways (RT) | `entity`, `process` relate *across* not *up* | follow-related / co-occurrence |
+
+Two honest caveats this frame must carry:
+
+1. **Structure is *supplied*, not inherent in the strings.** The cataloger hands
+   back flat terms; the relations — geo containment (a gazetteer), BT/NT/RT links
+   (§7), the ordinal scales — are a **separate layer built on top.** That layer *is*
+   the thesaurus. So "a facet gains organization" = growing its relations, one facet
+   at a time, each with the structure type that fits. It is earned, not free (hence
+   spatial is real work, not a flag flip).
+2. **Some facets are legitimately flat, and should stay so.** `form`/`provenance`
+   are true nominal categories; imposing a hierarchy is over-engineering. The skill
+   is *matching* the drill to the actual structure, never imposing one model. (Even
+   nominal facets can hide a relation — `stance` has a latent sentiment ordinal,
+   critical→neutral→appreciative — worth *noticing*, not worth forcing.)
+
+Note the toolkit is broader than §7 alone: **BT/NT/RT (the thesaurus) covers
+hierarchy + association; measurement structure (ordinal, cyclical) covers the
+quantitative axes.** Both together are the full structural vocabulary. (See ROADMAP:
+structured facets, temporal depth.)
+
 ---
 
 ## 6. The cataloger — a service, not an agent **[designed]**
