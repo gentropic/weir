@@ -189,6 +189,37 @@ the trigger/query layer on top.
   bloated?), with the single-pane default preserved and the CM6-survives-drag behavior
   confirmed (expected to just work). The Stage 3 composer, the Stage 4 holdings *view*,
   and the graph/map views below all become panes in this shell.
+  - **Inspirations — center of gravity.** Obsidian/Notion are the obvious refs but the
+    *wrong* center: they're **write-only** (you author text in). weir is a **reader that
+    also writes and catalogs** — material *arrives*, notes react to it. So the loop to
+    optimize is **read → annotate-in-context → lands in the catalog**, which almost no
+    tool nails. Most-aligned prior art: **DEVONthink** (the closest whole-system analog —
+    catalogs *collected* material; smart groups = our saved facet views; "See Also" AI-
+    similarity = our `related`/UMAP; classify-on-import = the cataloger). Read→annotate
+    pipeline: **Readwise Reader** / **Omnivore** (OSS, defunct) / **org-capture** (the
+    frictionless-inbox lesson — capture-and-refile *is* weir's ethos). Pane mechanics +
+    backlinks-in-context: **Obsidian** (its *local* graph ≫ global — avoid the global-
+    graph vanity trap), **Zed** (keyboard-first, minimal chrome). "One dataset, many
+    views" + typed objects: **Notion** databases / **Tana** supertags (validate the
+    facets+saved-views instinct we already have). **Protect the differentiator:** read +
+    annotate + catalog, one local zero-dep place, opinionated & inbox-shaped — not a worse
+    Obsidian. Reject: cloud-lock, block editors, plugin-config rabbit holes, the global
+    graph.
+  - **Five decided stances (prototype starts from these defaults, not a blank slate):**
+    1. **Note ↔ source:** support *both* standalone notes and attached annotations, but
+       **annotation-in-context is the defining case** — "note *about this item*" is the
+       primary gesture (it's the whole reason for the pane).
+    2. **Capture friction → near-zero:** a keybind from the stream opens the notes pane
+       **pre-linked to the focused item** (the org-capture lesson; probably the single
+       most important UX bet).
+    3. **Linking:** weir's links are *richer than wikilinks* — it already has SKOS vocab +
+       `related` edges + facets. Lean **both**: free `[[wikilinks]]` for speed, controlled
+       vocab for structure. (Can lag the first two.)
+    4. **Format: stay markdown** (stacks already are — plain, auditable, portable). Reject
+       the Notion/Roam block editor; block-level *anchoring* for quote-back is a maybe-
+       later, not a block model.
+    5. **Panes: one opt-in notes pane** beside the stream to start; grow to tabs/splits
+       only if the prototype demands it. No Notion-level pane sprawl on day one.
 - **Stage 4 — holdings library (the glass endgame).** Extend glass from a *stream
   inbox* to also hold **static, undated holdings** — books (Dewey + Cutter, ready
   to inherit from Holocene), a papers shelf — so it's a literal LIS catalog, not
