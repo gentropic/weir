@@ -244,7 +244,7 @@ export class StacksStore {
 
   // ── authoring ──
   // Create a note. `folder` explicit → filed there; omitted → stacks rules → inbox.
-  async writeNote({ folder, name, title, markdown = '', tags = [], source, uid, created } = {}) {
+  async writeNote({ folder, name, title, markdown = '', tags = [], source, uid, created, target } = {}) {
     uid = uid || this._uid();
     created = created || now();
     title = title || this._titleFromBody(markdown, name || '');
@@ -252,9 +252,11 @@ export class StacksStore {
     const allTags = this._mergeTags(tags, resolved.tags);
     const base = this._safeName(name || slugify(title) || 'note', '.md');
     const rel = await this._uniqueRel(this._join(resolved.folder, base));
-    const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source });
+    // `target` (W3C Web Annotation): the item this note annotates. A scalar id = the
+    // whole-resource target (no selector yet); becomes a nested {source,selector} later.
+    const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source, target });
     await this._writeText(this._abs(rel), `---\n${fm}---\n\n${String(markdown).trim()}\n`);
-    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) });
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) });
     this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
     return rec;
   }

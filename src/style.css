@@ -217,6 +217,16 @@ body {
 .rails-zone.rails-active { background: var(--au-action-soft); box-shadow: 0 0 0 1px var(--au-action); }
 .rails-zone.rails-zone-insert.rails-active { background: var(--au-action); box-shadow: none; }
 
+/* ── note pane (the graduated editor, one instance per rails tab; reuses .se-* below) ── */
+.note-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--sw-bg); }
+.note-pane .note-head { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--sw-bg-raised); border-bottom: 1px solid var(--au-border); }
+.note-pane .note-tgt { display: inline-flex; align-items: center; gap: 6px; font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); max-width: 42%; overflow: hidden; white-space: nowrap; }
+.note-pane .np-tgt-title { overflow: hidden; text-overflow: ellipsis; color: var(--au-fg); }
+.note-pane .np-pill { font-family: var(--au-font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 999px; color: var(--sw-bg); font-weight: 600; }
+.note-pane .se-body { flex: 1; min-height: 0; }
+.note-pane .np-foot { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--sw-bg-raised); border-top: 1px solid var(--au-border); }
+.note-pane .np-status { color: var(--au-fg-soft); }
+
 /* ── Item rows ── */
 .item { display: grid; grid-template-columns: 92px 1fr; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--au-border); cursor: pointer; transition: background 0.1s; position: relative; }
 .item:hover { background: var(--sw-bg-raised); }

@@ -689,6 +689,16 @@ body {
 .rails-zone.rails-active { background: var(--au-action-soft); box-shadow: 0 0 0 1px var(--au-action); }
 .rails-zone.rails-zone-insert.rails-active { background: var(--au-action); box-shadow: none; }
 
+/* ── note pane (the graduated editor, one instance per rails tab; reuses .se-* below) ── */
+.note-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--sw-bg); }
+.note-pane .note-head { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--sw-bg-raised); border-bottom: 1px solid var(--au-border); }
+.note-pane .note-tgt { display: inline-flex; align-items: center; gap: 6px; font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); max-width: 42%; overflow: hidden; white-space: nowrap; }
+.note-pane .np-tgt-title { overflow: hidden; text-overflow: ellipsis; color: var(--au-fg); }
+.note-pane .np-pill { font-family: var(--au-font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 999px; color: var(--sw-bg); font-weight: 600; }
+.note-pane .se-body { flex: 1; min-height: 0; }
+.note-pane .np-foot { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--sw-bg-raised); border-top: 1px solid var(--au-border); }
+.note-pane .np-status { color: var(--au-fg-soft); }
+
 /* ── Item rows ── */
 .item { display: grid; grid-template-columns: 92px 1fr; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--au-border); cursor: pointer; transition: background 0.1s; position: relative; }
 .item:hover { background: var(--sw-bg-raised); }
@@ -1336,30 +1346,8 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
   </div>
 </div>
 
-<!-- Stacks note editor — edit / split / preview toggle (cm6 swaps in for the textarea later) -->
-<div class="overlay" id="stacks-editor-overlay" hidden>
-  <div class="panel panel-wide">
-    <div class="panel-head se-head">
-      <input id="se-title" class="field se-title" type="text" placeholder="note title…" autocomplete="off" spellcheck="false">
-      <span class="se-path" id="se-path"></span>
-      <span class="se-modes">
-        <button class="btn-link se-mode" data-semode="edit" type="button" title="Edit only">✎ edit</button>
-        <button class="btn-link se-mode active" data-semode="split" type="button" title="Edit + preview">▥ split</button>
-        <button class="btn-link se-mode" data-semode="preview" type="button" title="Preview only">▦ preview</button>
-      </span>
-    </div>
-    <div class="se-body" id="se-body">
-      <div id="se-edit" class="se-edit"></div>
-      <div id="se-preview" class="se-preview icontent"></div>
-    </div>
-    <div class="panel-foot se-foot">
-      <input id="se-tags" class="field se-tags" type="text" placeholder="tags, comma-separated…" autocomplete="off" spellcheck="false">
-      <span class="hint" id="se-status"></span>
-      <button class="btn btn-primary" id="se-save">Save</button>
-      <button class="btn" id="se-close">Close</button>
-    </div>
-  </div>
-</div>
+<!-- (the stacks note editor graduated from this modal into a rails workspace pane;
+     see NotePane in src/js/ui/app.js) -->
 
 <!-- Reorder feeds within a folder -->
 <div class="overlay" id="reorder-overlay" hidden>
@@ -12657,7 +12645,7 @@ class StacksStore {
 
   // ── authoring ──
   // Create a note. `folder` explicit → filed there; omitted → stacks rules → inbox.
-  async writeNote({ folder, name, title, markdown = '', tags = [], source, uid, created } = {}) {
+  async writeNote({ folder, name, title, markdown = '', tags = [], source, uid, created, target } = {}) {
     uid = uid || this._uid();
     created = created || now();
     title = title || this._titleFromBody(markdown, name || '');
@@ -12665,9 +12653,11 @@ class StacksStore {
     const allTags = this._mergeTags(tags, resolved.tags);
     const base = this._safeName(name || slugify(title) || 'note', '.md');
     const rel = await this._uniqueRel(this._join(resolved.folder, base));
-    const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source });
+    // `target` (W3C Web Annotation): the item this note annotates. A scalar id = the
+    // whole-resource target (no selector yet); becomes a nested {source,selector} later.
+    const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source, target });
     await this._writeText(this._abs(rel), `---\n${fm}---\n\n${String(markdown).trim()}\n`);
-    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) });
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) });
     this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
     return rec;
   }
@@ -15745,6 +15735,9 @@ class App {
     this.expandedId = null;
     this.items = [];
     this._content = new Map();   // id → sanitized html (cache)
+    this._notePanes = new Map(); // rails tabId → NotePane (the graduated, multi-instance note editor)
+    this._noteN = 0;             // monotonic note-tab counter
+    this._lastNoteStackId = null;// MRU notes stack, for coalescing new notes (see _resolveNotesStack)
     this._health = new Map();    // feed_id → {status, reasons} for non-ok feeds (hijack/stale/failing)
     this._g = false;
     this.pendingImport = null;   // { feeds, youtube } awaiting confirmation
@@ -15899,11 +15892,7 @@ class App {
       const en = e.target.closest('.stack-entry'); if (!en) return;
       e.preventDefault(); e.stopPropagation(); this.stacksEntryMenu(en.dataset.stackId, e.clientX, e.clientY);
     });
-    document.getElementById('se-save')?.addEventListener('click', () => this.saveNoteEditor());
-    document.getElementById('se-close')?.addEventListener('click', () => this.closeNoteEditor());
-    document.querySelectorAll('.se-mode').forEach((b) => b.addEventListener('click', () => this._seSetMode(b.dataset.semode)));
-    // (the editor's change→preview sync is wired inside _seEnsureEditor — CM6's
-    // updateListener, or the fallback textarea's input event)
+    // (note editor is now a rails pane — each NotePane wires its own save/modes/preview-sync; no modal buttons)
     document.getElementById('btn-recover')?.addEventListener('click', () => { if (this.feedFilter) this.recoverHistory(this.feedFilter); });
     document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
     document.getElementById('open-settings')?.addEventListener('click', () => this.openSettings());
@@ -17495,6 +17484,7 @@ class App {
       { sep: true },
       { label: it.saved ? 'Unsave' : 'Save', onClick: () => this.doAct('save', id) },
       { label: it.read ? 'Mark unread' : 'Mark read', onClick: () => this.doAct('read', id) },
+      { label: '✎ Note…', onClick: () => this.annotateItem(id) },
       { label: 'Tag…', onClick: () => this.openTagEditor(id) },
       { label: it.archived ? 'Unarchive' : 'Archive', onClick: () => { if (it.archived) { this.store.setState(id, { archived: false }); this.reflectItem(id); } else this.doAct('archive', id); } },
       { sep: true },
@@ -18104,23 +18094,23 @@ class App {
   onKey(e) {
     // Command palette (Cmd/Ctrl-K) — works everywhere, even from the search box.
     if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); this.openPalette(); return; }
-    // Cmd/Ctrl-S saves the open note editor, from anywhere within it.
-    const seOpen = !document.getElementById('stacks-editor-overlay')?.hidden;
-    if (seOpen && (e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); this.saveNoteEditor(); return; }
+    // Cmd/Ctrl-S saves the focused note pane (the editor is a rails pane now, not a modal).
+    const npEl = (e.target.closest && e.target.closest('.note-pane')) || null;
+    if (npEl && (e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); npEl._notePane?.save(); return; }
     if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S') && !document.getElementById('rules-overlay')?.hidden) { e.preventDefault(); this.saveRules(); return; }
     // Esc closes any open overlay first, from anywhere (incl. from a field in it).
     if (e.key === 'Escape') {
-      if (seOpen) { e.preventDefault(); this.closeNoteEditor(); if (e.target.blur) e.target.blur(); return; }
+      // a note pane isn't a modal — Esc just blurs its editor so stream nav (j/k) resumes.
+      if (npEl) { e.preventDefault(); if (e.target.blur) e.target.blur(); return; }
       for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay', 'facet-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; if (id === 'facet-overlay') this._facetDialog = null; return; }
       }
     }
-    // The note editor is a MODAL: once it's open, swallow every remaining key here so
-    // nav/single-key shortcuts (j/k/r/s/n…) can't leak to the background stream. CM6
-    // and the title/tags fields handle their own input natively; we just stay out of
-    // the way. (Cmd-K / Cmd-S / Esc were already handled above.)
-    if (seOpen) return;
+    // NOTE: no modal key-swallow anymore. The note editor lives BESIDE the stream, so
+    // j/k/r/s/n must keep working when the editor isn't focused. The "are they typing?"
+    // guard below (INPUT/TEXTAREA/contenteditable/.cm-editor) already stops single-key
+    // shortcuts from firing while the editor or its fields have focus.
     const tag = e.target.tagName;
     // "Are they typing?" — INPUT/TEXTAREA *and* any contenteditable (CM6's .cm-content
     // is a contenteditable div, not a textarea — single-key shortcuts must not fire).
@@ -18153,7 +18143,13 @@ class App {
       case 'e': if (this.selectedId) { const cur = this.selectedId; this.moveSelection(1); this.doAct('archive', cur); } break;
       case 'o': if (this.selectedId) this.doAct('open', this.selectedId); break;
       case 't': if (this.selectedId) { e.preventDefault(); this.openTagEditor(this.selectedId); } break;
-      case 'n': e.preventDefault(); this.openNoteEditor(); break;
+      case 'n': {   // note: about the selected item (annotation-in-context), else a blank note
+        e.preventDefault();
+        const sel = this.selectedId ? this.store.getItem(this.selectedId) : null;
+        if (sel && sel.feed_id !== 'stacks') this.annotateItem(this.selectedId);
+        else this.openNotePane({});
+        break;
+      }
       case 'u': e.preventDefault(); this.toggleUnread(); break;
       case 'g': this._g = true; setTimeout(() => { this._g = false; }, 800); break;
       case '/': e.preventDefault(); this.searchEl.focus(); break;
@@ -18435,18 +18431,12 @@ class App {
         active: 'stream', tabs: [ { id: 'stream', kind: 'stream', title: 'stream', closeable: false, draggable: false } ] } ] } ], floats: [] },
       renderPanel: (tab) => this._renderPanel(tab),
       renderEmpty: () => { const d = document.createElement('div'); d.className = 'rails-empty'; return d; },
+      onPanelDestroy: (tab) => { if (tab.kind === 'note') this._disposeNotePane(tab.id); },
     });
-    // "solo" = just the stream, nothing else open → hide the tab strip so the
-    // single-pane default reads exactly like before. The strip returns the moment
-    // a second pane/tab exists.
-    const reflectSolo = () => {
-      const rs = this.rails.state.rails;
-      const solo = rs.length === 1 && rs[0].stacks.length === 1 && rs[0].stacks[0].tabs.length === 1
-        && (rs[0].stacks[0].tabs[0].kind === 'stream');
-      host.classList.toggle('ws-solo', solo);
-    };
-    this.rails.on('layout:change', reflectSolo);
-    reflectSolo();
+    // Keep the "solo" class (hides the tab strip so the single-pane default reads like
+    // before) in sync as panes open/close, re-measuring when it flips. ws-solo is
+    // pre-set before createRails, so the initial solo state needs no toggle here.
+    this.rails.on('layout:change', () => this._reflectSoloRelayout());
   }
   // rails calls this once per tab; the returned element is cached and never
   // reparented (that's how a focused CM6 editor survives a drag).
@@ -18456,7 +18446,12 @@ class App {
       if (!s) { s = document.createElement('div'); s.className = 'stream'; s.id = 'stream'; }
       return s;
     }
-    // note panes arrive in Move 2.
+    if (tab.kind === 'note') {
+      let pane = this._notePanes.get(tab.id);
+      if (!pane) { pane = new NotePane(this, tab._noteOpts || {}); pane.tabId = tab.id; this._notePanes.set(tab.id, pane); }
+      requestAnimationFrame(() => pane.init());   // mount CM6 + load AFTER it's in the DOM
+      return pane.el;
+    }
     const d = document.createElement('div'); d.className = 'rails-empty'; d.textContent = '—'; return d;
   }
 
@@ -18597,19 +18592,6 @@ class App {
   }
 
   // ── note editor (CodeMirror 6; edit / split / preview toggle) ──
-  _seEnsureEditor() {
-    if (this._seEditor) return this._seEditor;
-    const host = document.getElementById('se-edit'); if (!host) return null;
-    const sync = () => { clearTimeout(this._sePvTimer); this._sePvTimer = setTimeout(() => this._seSyncPreview(), 150); };
-    const CM = window.CM6;
-    const extra = [];
-    if (CM && CM.autocompletion) {   // [[ autocomplete: pick a holding by title → inserts [[uid|Title]]
-      extra.push(CM.autocompletion({ override: [(ctx) => this._wikiCompletions(ctx)], activateOnTyping: true, icons: false }));
-      if (CM.acceptCompletion && CM.keymap) extra.push(CM.keymap.of([{ key: 'Enter', run: CM.acceptCompletion }, { key: 'Tab', run: CM.acceptCompletion }]));
-    }
-    this._seEditor = this._mountCm(host, (CM && CM.markdown) ? CM.markdown() : null, sync, extra);
-    return this._seEditor;
-  }
   // CM6 completion source: when the cursor is just after "[[…", suggest holdings by
   // title (stacks first), applying "<uid>|<title>]]" → a resolvable [[ref|label]] link.
   _wikiCompletions(context) {
@@ -18634,56 +18616,79 @@ class App {
     if (!options.length) return null;
     return { from: before.from + 2, options, filter: false };
   }
-  _seGetValue() { return this._seEditor ? this._seEditor.get() : ''; }
-  _seSetValue(text) { const ed = this._seEnsureEditor(); if (ed) ed.set(text); }
+  // ── note editor — now a rails PANE (per-instance NotePane), not a modal ──
+  // Back-compat entry: existing call sites (stacks ＋note, palette, context menus,
+  // the `n` key) call openNoteEditor(id). id present = edit that note; absent = new.
+  openNoteEditor(id) { this.openNotePane({ noteId: id || null }); }
+  // Annotation-in-context: open a note bound to a stream item (W3C target = item id).
+  annotateItem(id) {
+    const it = this.store.getItem(id); if (!it) return;
+    this.openNotePane({ target: { id: it.id, title: it.title || it.path || it.id, type: it.type || 'item' } });
+  }
+  // Open (or focus) a note pane. Coalesces: an already-open note for the same id is
+  // re-focused; otherwise a new pane lands in the live notes stack (MRU), or summons
+  // one if none is open. Mirrors the prototype's placement policy.
+  openNotePane({ noteId = null, target = null } = {}) {
+    if (!this.rails) return;
+    if (noteId) {   // already open? focus it instead of duplicating
+      for (const [tid, p] of this._notePanes) if (p.noteId === noteId) { this.rails.activateTab(tid); p.focus(); return; }
+    }
+    const tabId = 'note-' + (noteId || 'new') + '-' + (++this._noteN);
+    const label = target ? this._shortTitle(target.title)
+      : (noteId ? this._shortTitle(this.store.getItem(noteId)?.title || 'note') : 'new note');
+    const tab = { id: tabId, kind: 'note', title: '✎ ' + label, closeable: true, _noteOpts: { noteId, target } };
+    const stackId = this._resolveNotesStack();
+    if (stackId) this.rails.addTab(tab, { to: 'stack', stackId });
+    else this.rails.addTab(tab, { to: 'new-rail' });
+    this._lastNoteStackId = this._findStackOfTab(tabId);
+    this._reflectSoloRelayout();   // solo → multi: the strip appears; re-measure slots
+  }
+  // remove a note pane's bookkeeping when its tab closes (wired via onPanelDestroy).
+  _disposeNotePane(tabId) {
+    const p = this._notePanes.get(tabId);
+    if (p) { p.dispose(); this._notePanes.delete(tabId); }
+    this._reflectSoloRelayout();
+  }
+  _notePaneOf(el) { const host = el?.closest?.('.note-pane'); return host ? host._notePane : null; }
+  _shortTitle(t) { t = String(t || 'note'); return t.length > 26 ? t.slice(0, 24) + '…' : t; }
 
-  async openNoteEditor(id) {
-    const ov = document.getElementById('stacks-editor-overlay'); if (!ov || !this.stacks) return;
-    this._seEditing = id || null;
-    const titleEl = document.getElementById('se-title'), pathEl = document.getElementById('se-path');
-    const tagsEl = document.getElementById('se-tags'), statusEl = document.getElementById('se-status');
-    if (statusEl) statusEl.textContent = '';
-    let body = '';
-    if (id) {
-      const it = this.store.getItem(id);
-      titleEl.value = it.title || ''; pathEl.textContent = it.path || ''; tagsEl.value = (it.tags || []).join(', ');
-      body = it.type === 'note' ? await this.stacks.readNote(it) : '';
-    } else { titleEl.value = ''; pathEl.textContent = 'inbox/ · new note'; tagsEl.value = ''; }
-    ov.hidden = false;   // show BEFORE mounting CM6 so it measures a laid-out container
-    this._seEnsureEditor();
-    this._seSetValue(body);
-    this._seSetMode(this._seMode || 'split');
-    this._seSyncPreview();
-    const ed = this._seEditor; if (id && ed) ed.focus(); else titleEl.focus();
+  // ── notes-stack placement (consumer-owned policy; see proto/rails-notes.html) ──
+  _stackById(id) {
+    if (!id || !this.rails) return null;
+    for (const r of this.rails.state.rails) for (const s of r.stacks) if (s.id === id) return s;
+    return null;
   }
-  _seSetMode(mode) {
-    this._seMode = mode;
-    const body = document.getElementById('se-body'); if (body) body.className = `se-body mode-${mode}`;
-    document.querySelectorAll('.se-mode').forEach((b) => b.classList.toggle('active', b.dataset.semode === mode));
-    if (mode !== 'edit') this._seSyncPreview();
-    if (mode !== 'preview' && this._seEditor) this._seEditor.measure();   // CM6 needs a re-measure after being un-hidden
+  _findStackOfTab(tabId) {
+    if (!this.rails) return null;
+    for (const r of this.rails.state.rails) for (const s of r.stacks)
+      if (s.tabs.some((t) => t.id === tabId)) return s.id;
+    return null;
   }
-  _seSyncPreview() {
-    const pv = document.getElementById('se-preview');
-    if (pv) pv.innerHTML = renderMarkdown(this._seGetValue()) || '<p class="se-empty">nothing to preview</p>';
+  _resolveNotesStack() {
+    const isNote = (s) => s.tabs.some((t) => t.kind === 'note');
+    const mru = this._stackById(this._lastNoteStackId);   // where you last looked, if it survives
+    if (mru && isNote(mru)) return mru.id;
+    let any = null;                                        // else any stack holding a note
+    for (const r of this.rails.state.rails) for (const s of r.stacks)
+      if (isNote(s)) {
+        const active = s.tabs.find((t) => t.id === s.active);
+        if (active?.kind === 'note') return s.id;          // prefer one already showing a note
+        any = any || s.id;
+      }
+    return any;                                            // null → none open → caller summons a rail
   }
-  async saveNoteEditor() {
-    if (!this.stacks) return;
-    const titleEl = document.getElementById('se-title'), tagsEl = document.getElementById('se-tags'), statusEl = document.getElementById('se-status');
-    const md = this._seGetValue(); const title = titleEl.value.trim() || undefined;
-    const tags = tagsEl.value.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
-    try {
-      let rec;
-      if (this._seEditing) { const it = this.store.getItem(this._seEditing); rec = await this.stacks.saveNote(it, md, { title, tags }); }
-      else { rec = await this.stacks.writeNote({ title, markdown: md, tags }); }   // folder via stacks rules → inbox
-      await this.store.flush();
-      this._seEditing = rec.id; this._content.delete(rec.id);
-      document.getElementById('se-path').textContent = rec.path;
-      if (statusEl) statusEl.textContent = 'saved ✓';
-      this.renderStacks(); if (this.stackFilter) this.renderStream();
-    } catch (e) { if (statusEl) statusEl.textContent = `save failed: ${e.message || e}`; }
+  // Toggle the single-pane "solo" class (hides the tab strip) and re-measure rails'
+  // slots when it changes, so panels fill correctly as the strip shows/hides.
+  _reflectSoloRelayout() {
+    const host = document.getElementById('workspace'); if (!host || !this.rails) return;
+    const rs = this.rails.state.rails;
+    const solo = rs.length === 1 && rs[0].stacks.length === 1
+      && rs[0].stacks[0].tabs.length === 1 && rs[0].stacks[0].tabs[0].kind === 'stream';
+    if (host.classList.contains('ws-solo') !== solo) {
+      host.classList.toggle('ws-solo', solo);
+      this.rails.render();   // strip shown/hidden → reposition cached panels (does NOT rebuild them)
+    }
   }
-  closeNoteEditor() { const ov = document.getElementById('stacks-editor-overlay'); if (ov) ov.hidden = true; this._seEditing = null; }
 
   async downloadStacksFile(id) {
     const it = this.store.getItem(id); if (!it || !this.stacks) return;
@@ -19301,6 +19306,119 @@ class App {
     const cache = st && st.fetches >= 5 ? ` · ${Math.round(st.ratio * 100)}% unchanged` : '';
     el.textContent = last + next + cache;
   }
+}
+
+// item-type → accent token, for the annotation-target pill in a note pane.
+const NOTE_ACCENT = { article: '--sw-indigo', video: '--sw-red', release: '--sw-green', paper: '--sw-amber', event: '--sw-orange', track: '--sw-teal', note: '--sw-teal' };
+
+// ── NotePane — the graduated note editor, ONE instance per rails tab. Replaces the
+// singleton #stacks-editor-overlay modal: each pane owns its DOM + CM6 + state, so
+// notes edit side-by-side with the stream and survive every drag (rails never
+// reparents a panel). Annotation-in-context: a pane may be bound to a stream item via
+// `target` (the W3C Web-Annotation target → persisted as the note's `target` frontmatter).
+class NotePane {
+  constructor(app, { noteId = null, target = null } = {}) {
+    this.app = app;
+    this.noteId = noteId;        // stacks note id (editing, or after first save)
+    this.target = target;        // { id, title, type } of the annotated item, or null
+    this.mode = app._noteMode || 'split';
+    this.editor = null;
+    this._pvTimer = null;
+    this._inited = false;
+    this.el = this._build();
+    this.el._notePane = this;    // back-ref for Cmd-S / focus lookups
+  }
+  _build() {
+    const t = this.target;
+    const el = document.createElement('div');
+    el.className = 'note-pane';
+    el.innerHTML =
+      `<div class="note-head se-head">`
+      + (t ? `<span class="note-tgt" title="this note annotates a stream item">✎ <span class="np-pill" style="background:var(${NOTE_ACCENT[t.type] || '--sw-teal'})">${escapeHtml(t.type)}</span> <span class="np-tgt-title">${escapeHtml(t.title)}</span></span>` : '')
+      + `<input class="field se-title np-title" type="text" placeholder="note title…" autocomplete="off" spellcheck="false">`
+      + `<span class="se-path np-path"></span>`
+      + `<span class="se-modes">`
+      + `<button class="btn-link se-mode np-mode" data-m="edit" type="button" title="Edit only">✎ edit</button>`
+      + `<button class="btn-link se-mode np-mode" data-m="split" type="button" title="Edit + preview">▥ split</button>`
+      + `<button class="btn-link se-mode np-mode" data-m="preview" type="button" title="Preview only">▦ preview</button>`
+      + `</span></div>`
+      + `<div class="se-body np-body"><div class="se-edit np-edit"></div><div class="se-preview icontent np-preview"></div></div>`
+      + `<div class="se-foot np-foot">`
+      + `<input class="field se-tags np-tags" type="text" placeholder="tags, comma-separated…" autocomplete="off" spellcheck="false">`
+      + `<span class="hint np-status"></span>`
+      + `<button class="btn btn-primary np-save" type="button">Save</button>`
+      + `</div>`;
+    el.querySelectorAll('.np-mode').forEach((b) => b.addEventListener('click', () => this.setMode(b.dataset.m)));
+    el.querySelector('.np-save').addEventListener('click', () => this.save());
+    return el;
+  }
+  _q(sel) { return this.el.querySelector(sel); }
+  ensureEditor() {
+    if (this.editor) return this.editor;
+    const host = this._q('.np-edit');
+    const CM = window.CM6;
+    const extra = [];
+    if (CM && CM.autocompletion) {   // [[ holdings autocomplete — same source as the old modal
+      extra.push(CM.autocompletion({ override: [(ctx) => this.app._wikiCompletions(ctx)], activateOnTyping: true, icons: false }));
+      if (CM.acceptCompletion && CM.keymap) extra.push(CM.keymap.of([{ key: 'Enter', run: CM.acceptCompletion }, { key: 'Tab', run: CM.acceptCompletion }]));
+    }
+    this.editor = this.app._mountCm(host, (CM && CM.markdown) ? CM.markdown() : null, () => this._scheduleSync(), extra);
+    return this.editor;
+  }
+  _scheduleSync() { clearTimeout(this._pvTimer); this._pvTimer = setTimeout(() => this.syncPreview(), 150); }
+  getValue() { return this.editor ? this.editor.get() : ''; }
+  setValue(t) { this.ensureEditor().set(t || ''); }
+  setMode(mode) {
+    this.mode = mode; this.app._noteMode = mode;
+    const body = this._q('.np-body'); if (body) body.className = `se-body np-body mode-${mode}`;
+    this.el.querySelectorAll('.np-mode').forEach((b) => b.classList.toggle('active', b.dataset.m === mode));
+    if (mode !== 'edit') this.syncPreview();
+    if (mode !== 'preview' && this.editor) this.editor.measure();
+  }
+  syncPreview() {
+    const pv = this._q('.np-preview'); if (!pv) return;
+    pv.innerHTML = renderMarkdown(this.getValue()) || '<p class="se-empty">nothing to preview</p>';
+  }
+  async init() {
+    if (this._inited) { this.editor?.measure?.(); return; }   // re-entry → just re-measure
+    this._inited = true;
+    this.ensureEditor();
+    this.setMode(this.mode);
+    if (this.noteId) {
+      const it = this.app.store.getItem(this.noteId);
+      if (it) {
+        this._q('.np-title').value = it.title || '';
+        this._q('.np-path').textContent = it.path || '';
+        this._q('.np-tags').value = (it.tags || []).join(', ');
+        const body = it.type === 'note' ? await this.app.stacks.readNote(it) : '';
+        this.setValue(body);
+      }
+    } else {
+      this._q('.np-path').textContent = this.target ? `inbox/ · note on “${this._shortT(this.target.title)}”` : 'inbox/ · new note';
+    }
+    this.syncPreview();
+    this.focus();
+  }
+  _shortT(t) { t = String(t || ''); return t.length > 30 ? t.slice(0, 28) + '…' : t; }
+  focus() { if (this.editor) this.editor.focus(); else this._q('.np-title')?.focus(); }
+  async save() {
+    const app = this.app; if (!app.stacks) return;
+    const titleEl = this._q('.np-title'), tagsEl = this._q('.np-tags'), statusEl = this._q('.np-status');
+    const md = this.getValue(); const title = titleEl.value.trim() || undefined;
+    const tags = tagsEl.value.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+    try {
+      let rec;
+      if (this.noteId) { const it = app.store.getItem(this.noteId); rec = await app.stacks.saveNote(it, md, { title, tags }); }
+      else { rec = await app.stacks.writeNote({ title, markdown: md, tags, target: this.target ? this.target.id : undefined }); }
+      await app.store.flush();
+      this.noteId = rec.id; app._content.delete(rec.id);
+      this._q('.np-path').textContent = rec.path;
+      if (statusEl) statusEl.textContent = 'saved ✓';
+      app.rails?.updateTab?.(this.tabId, { title: '✎ ' + app._shortTitle(rec.title || 'note') });
+      app.renderStacks(); if (app.stackFilter) app.renderStream();
+    } catch (e) { if (statusEl) statusEl.textContent = `save failed: ${e.message || e}`; }
+  }
+  dispose() { clearTimeout(this._pvTimer); }
 }
 
 // ── src/js/webmcp.js ──
@@ -20485,7 +20603,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '828f206';          // short content hash of the bundle (build id)
+const COMMIT = '5bd4e06';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

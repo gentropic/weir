@@ -299,30 +299,8 @@
   </div>
 </div>
 
-<!-- Stacks note editor — edit / split / preview toggle (cm6 swaps in for the textarea later) -->
-<div class="overlay" id="stacks-editor-overlay" hidden>
-  <div class="panel panel-wide">
-    <div class="panel-head se-head">
-      <input id="se-title" class="field se-title" type="text" placeholder="note title…" autocomplete="off" spellcheck="false">
-      <span class="se-path" id="se-path"></span>
-      <span class="se-modes">
-        <button class="btn-link se-mode" data-semode="edit" type="button" title="Edit only">✎ edit</button>
-        <button class="btn-link se-mode active" data-semode="split" type="button" title="Edit + preview">▥ split</button>
-        <button class="btn-link se-mode" data-semode="preview" type="button" title="Preview only">▦ preview</button>
-      </span>
-    </div>
-    <div class="se-body" id="se-body">
-      <div id="se-edit" class="se-edit"></div>
-      <div id="se-preview" class="se-preview icontent"></div>
-    </div>
-    <div class="panel-foot se-foot">
-      <input id="se-tags" class="field se-tags" type="text" placeholder="tags, comma-separated…" autocomplete="off" spellcheck="false">
-      <span class="hint" id="se-status"></span>
-      <button class="btn btn-primary" id="se-save">Save</button>
-      <button class="btn" id="se-close">Close</button>
-    </div>
-  </div>
-</div>
+<!-- (the stacks note editor graduated from this modal into a rails workspace pane;
+     see NotePane in src/js/ui/app.js) -->
 
 <!-- Reorder feeds within a folder -->
 <div class="overlay" id="reorder-overlay" hidden>
