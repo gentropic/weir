@@ -384,7 +384,18 @@ and `weir_relateTerm` / `weir_vocab` (MCP) declare and inspect BT/NT/RT. **Remai
 known synonyms). The thesaurus is a **byproduct of curation, not a precondition of
 cataloging** — the shape is here; it fills as the corpus is governed.
 
----
+**weir as a vocabulary *producer* (give it back, sanitized).** SKOS is exportable, so a
+curated facet vocabulary can be **released as a CC0 `.gcudat` pack in gcu-library** —
+weir closes the loop: it *draws* from the commons (gazetteer, factbook) and *feeds* it
+back. A human-ratified, corpus-grown, CC0 thesaurus is rare and worth giving away (most
+are institutional + heavyweight, or auto-generated + unaccountable; this is neither).
+The licensing is clean — terms aren't copyrightable; what's CC0-dedicated is the
+*editorial work*, the declared relations. **Sanitization is the one rule:** the SKOS
+export is **structure only** (prefLabel/altLabel/BT/NT/RT — no counts, no item refs, no
+"how much you hold"), so it's mostly safe by construction; the real cut is **excluding
+vocabulary scoped to private provenance** (terms coined off notes/stacks or
+authenticated feeds), plus a light pass for oddly-identifying terms. Publish the
+relations from public material; keep the private ones home.
 
 ## 8. The query side (= weir search v2) **[designed]**
 
