@@ -71,6 +71,13 @@ body {
 .facet-term.active .ft-name { color: var(--au-action); }
 .facet-term .ft-count { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); flex-shrink: 0; }
 .facet-more { padding: 2px 8px 2px 22px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
+.facet-group .facet-more { cursor: pointer; }
+.facet-group .facet-more:hover { color: var(--au-action); }
+.panel.facet-dialog { width: min(760px, 94vw); }
+#facet-dialog-sort { float: none; font-family: var(--au-font-mono); font-size: 11px; }
+.facet-dialog-body { max-height: 62vh; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0 6px; padding: 4px 2px; }
+.facet-dialog-body .facet-term { padding-left: 10px; }
+.facet-dialog .facet-search { margin: 8px 0; width: 100%; }
 .rail-label #cat-run { float: right; font-size: 10px; text-transform: none; letter-spacing: 0; }
 .rail-label #cat-run.running { color: var(--au-action); animation: cat-pulse 1.4s ease-in-out infinite; }
 @keyframes cat-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }

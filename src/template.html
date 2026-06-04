@@ -259,6 +259,19 @@
   </div>
 </div>
 
+<!-- Facet browser — full term list for one facet (the long tails) with search + sort -->
+<div class="overlay" id="facet-overlay" hidden>
+  <div class="panel facet-dialog">
+    <div class="panel-head"><span id="facet-dialog-title">facet</span> <button id="facet-dialog-sort" class="btn-link" type="button" title="Sort — click to cycle (count / A–Z / Z–A)">#</button></div>
+    <input id="facet-dialog-search" class="facet-search" type="text" placeholder="filter terms…" autocomplete="off" spellcheck="false">
+    <div class="facet-dialog-body" id="facet-dialog-body"></div>
+    <div class="panel-foot">
+      <span class="hint">click a term to filter · right-click to merge / rename / drop</span>
+      <button class="btn" id="facet-dialog-close">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Review queue — catalog cards the librarian flagged low-confidence -->
 <div class="overlay" id="review-overlay" hidden>
   <div class="panel">

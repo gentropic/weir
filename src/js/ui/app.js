@@ -47,6 +47,8 @@ export class App {
     this.smartView = null;      // active saved view (smart folder), or null
     this.catalog = null;        // glass catalog mode: { filters: { facet: Set<term> } } or null
     this.facetFilter = '';      // facet-browser search box (filters terms within each facet group)
+    this._facetDialog = null;   // facet whose full-term dialog is open (the long-tail browser), or null
+    this._facetDialogFilter = '';
     this.layout = 'list';       // stream layout: 'list' | 'gallery'
     this.collapsedCats = new Set();
     this.sourceFilter = '';          // rail source-filter query (narrows the Sources list by name/folder)
@@ -158,9 +160,19 @@ export class App {
       if (sortBtn) { this.cycleFacetSort(sortBtn.dataset.facet); return; }
       const tog = e.target.closest('.fh-tog');
       if (tog) { this.toggleFacetCollapse(tog.dataset.facet); return; }
+      const more = e.target.closest('.facet-more');
+      if (more && more.dataset.facet) { this.openFacetDialog(more.dataset.facet); return; }
       const t = e.target.closest('.facet-term');
       if (t) this.toggleFacet(t.dataset.facet, t.dataset.term);
     });
+    {
+      const fdb = document.getElementById('facet-dialog-body');
+      fdb?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) { this.toggleFacet(t.dataset.facet, t.dataset.term); this.renderFacetDialog(); } });
+      fdb?.addEventListener('contextmenu', (e) => { const t = e.target.closest('.facet-term'); if (t) { e.preventDefault(); this.facetTermMenu(t.dataset.facet, t.dataset.term, e.clientX, e.clientY); } });
+      const fds = document.getElementById('facet-dialog-search'); fds?.addEventListener('input', () => { this._facetDialogFilter = fds.value; this.renderFacetDialog(); });
+      document.getElementById('facet-dialog-sort')?.addEventListener('click', () => { if (this._facetDialog) { this.cycleFacetSort(this._facetDialog); this.renderFacetDialog(); } });
+      document.getElementById('facet-dialog-close')?.addEventListener('click', () => this.closeFacetDialog());
+    }
     { const fs = document.getElementById('facet-search'); fs?.addEventListener('input', () => { this.facetFilter = fs.value; this.renderCatalogFacets(); }); }
     document.getElementById('facets')?.addEventListener('contextmenu', (e) => {
       const term = e.target.closest('.facet-term');
@@ -958,9 +970,44 @@ export class App {
   // (to===''). Persists + re-renders. Mirrors weir_mergeFacetTerm.
   async _facetMerge(facet, from, to) {
     const n = this.store.mergeFacetTerm(facet, from, to);
-    if (n) { await this.store.flush(); this.renderAll(); }
+    if (n) { await this.store.flush(); this.renderAll(); if (this._facetDialog) this.renderFacetDialog(); }
     const sub = document.getElementById('view-sub');
     if (sub) sub.textContent = to ? `merged “${from}” → “${to}” · ${n} card${n === 1 ? '' : 's'}` : `dropped “${from}” · ${n} card${n === 1 ? '' : 's'}`;
+  }
+
+  // The long-tail browser: a dialog with the FULL term list for one facet (entity
+  // alone has 15k+), its own search + sort, each term clickable to filter and
+  // right-clickable to curate. Opened from a facet's "+ N more" footer or its
+  // header menu — the rail caps at 40, this is "see all".
+  openFacetDialog(facet) {
+    this._facetDialog = facet; this._facetDialogFilter = '';
+    const s = document.getElementById('facet-dialog-search'); if (s) s.value = '';
+    document.getElementById('facet-overlay').hidden = false;
+    this.renderFacetDialog();
+    if (s) setTimeout(() => s.focus(), 0);
+  }
+  closeFacetDialog() { document.getElementById('facet-overlay').hidden = true; this._facetDialog = null; }
+  renderFacetDialog() {
+    const facet = this._facetDialog; if (!facet) return;
+    this.buildCatalogIndex();
+    const map = this._catalogIndex[facet] || new Map();
+    const filter = (this._facetDialogFilter || '').trim().toLowerCase();
+    let terms = [...map.entries()];
+    if (filter) terms = terms.filter(([t]) => t.toLowerCase().includes(filter));
+    const mode = this._facetSortMode(facet);
+    if (mode === 'az') terms.sort((a, b) => a[0].localeCompare(b[0]));
+    else if (mode === 'za') terms.sort((a, b) => b[0].localeCompare(a[0]));
+    else terms.sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]));
+    const sel = this.catalog?.filters[facet] || new Set();
+    const CAP = 1500;
+    let html = terms.slice(0, CAP).map(([term, set]) =>
+      `<div class="facet-term${sel.has(term) ? ' active' : ''}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}"><span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`).join('');
+    if (!terms.length) html = '<div class="hint">No terms match.</div>';
+    else if (terms.length > CAP) html += `<div class="facet-more">+ ${terms.length - CAP} more — narrow with the filter above</div>`;
+    document.getElementById('facet-dialog-body').innerHTML = html;
+    const title = document.getElementById('facet-dialog-title');
+    if (title) title.textContent = `${facet} — ${map.size} term${map.size === 1 ? '' : 's'}${filter ? ` · ${terms.length} matching` : ''}`;
+    const sb = document.getElementById('facet-dialog-sort'); if (sb) sb.textContent = mode === 'count' ? '#' : mode === 'az' ? 'a–z' : 'z–a';
   }
 
   // Right-click a facet term → curate it: filter, or the thesaurus actions
@@ -983,7 +1030,10 @@ export class App {
     const mode = this._facetSortMode(facet);
     const collapsed = new Set(this.store.getSettings().facet_collapsed || []).has(facet);
     const setSort = (m) => { this.store.setSettings({ facet_sort: { ...(this.store.getSettings().facet_sort || {}), [facet]: m } }); this.renderCatalogFacets(); };
+    const count = (this._catalogIndex && this._catalogIndex[facet] && this._catalogIndex[facet].size) || 0;
     showMenu(x, y, [
+      { label: `⋯ Browse all ${count} terms…`, onClick: () => this.openFacetDialog(facet) },
+      { sep: true },
       { label: `${mode === 'count' ? '● ' : '○ '}Sort by count`, onClick: () => setSort('count') },
       { label: `${mode === 'az' ? '● ' : '○ '}Sort A→Z`, onClick: () => setSort('az') },
       { label: `${mode === 'za' ? '● ' : '○ '}Sort Z→A`, onClick: () => setSort('za') },
@@ -1028,7 +1078,7 @@ export class App {
           html += `<div class="facet-term${active}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`
             + `<span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`;
         }
-        if (terms.length > 40) html += `<div class="facet-more">+ ${terms.length - 40} more</div>`;
+        if (terms.length > 40) html += `<div class="facet-more" data-facet="${escapeHtml(facet)}">+ ${terms.length - 40} more</div>`;
       }
       html += '</div>';
     }
@@ -2092,9 +2142,9 @@ export class App {
     // Esc closes any open overlay first, from anywhere (incl. from a field in it).
     if (e.key === 'Escape') {
       if (seOpen) { e.preventDefault(); this.closeNoteEditor(); if (e.target.blur) e.target.blur(); return; }
-      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay']) {
+      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay', 'facet-overlay']) {
         const ov = document.getElementById(id);
-        if (ov && !ov.hidden) { ov.hidden = true; return; }
+        if (ov && !ov.hidden) { ov.hidden = true; if (id === 'facet-overlay') this._facetDialog = null; return; }
       }
     }
     // The note editor is a MODAL: once it's open, swallow every remaining key here so
@@ -2111,6 +2161,7 @@ export class App {
         else if (e.target.id === 'rules-text') { this.closeRules(); }
         else if (e.target.closest('#settings-overlay')) { this.closeSettings(); }
         else if (e.target.closest('#feededit-overlay')) { this.closeFeedEdit(); }
+        else if (e.target.closest('#facet-overlay')) { this.closeFacetDialog(); }
         e.target.blur();
       }
       return;
