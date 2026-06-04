@@ -186,7 +186,7 @@ export class StacksStore {
     const created = this._parseTs(data.created);
     if (!uid) {   // stamp identity into the file (the anchor moves can't strip)
       uid = this._uid();
-      const fm = this._fmEmit({ uid, title: data.title || this._titleFromBody(body, rel), tags: data.tags || [], created: new Date(created).toISOString(), source: data.source });
+      const fm = this._fmEmit({ uid, title: data.title || this._titleFromBody(body, rel), tags: data.tags || [], created: new Date(created).toISOString(), source: data.source, target: data.target });
       await this._writeText(abs, `---\n${fm}---\n\n${body.replace(/^\n+/, '')}`);
       res.stamped++;
     }
@@ -194,7 +194,7 @@ export class StacksStore {
       uid, path: rel, type: 'note',
       title: data.title || this._titleFromBody(body, rel),
       tags: Array.isArray(data.tags) ? data.tags : [],
-      created, source: data.source,
+      created, source: data.source, target: data.target,   // W3C annotation target (item id) → backlinks
       excerpt: deriveExcerpt(body, 300),
       links: this._wikiRefs(body),
     };
@@ -275,7 +275,7 @@ export class StacksStore {
     await this._writeText(abs, `---\n${fm}---\n\n${String(markdown).trim()}\n`);
     // replaceTags: a save is authoritative over the entry's tag set (so it can remove,
     // not just add) — unlike a scan, which unions to protect human/llm tags.
-    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) }, { replaceTags: true });
+    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, target: data.target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) }, { replaceTags: true });
     this.store.emit('item', { id: rec.id });
     return rec;
   }

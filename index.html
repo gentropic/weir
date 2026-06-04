@@ -694,6 +694,8 @@ body {
 .note-pane .note-head { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--sw-bg-raised); border-bottom: 1px solid var(--au-border); }
 .note-pane .note-tgt { display: inline-flex; align-items: center; gap: 6px; font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); max-width: 42%; overflow: hidden; white-space: nowrap; }
 .note-pane .np-tgt-title { overflow: hidden; text-overflow: ellipsis; color: var(--au-fg); }
+.note-pane .note-tgt.clickable { cursor: pointer; }
+.note-pane .note-tgt.clickable:hover .np-tgt-title { color: var(--sw-teal); text-decoration: underline; }
 .note-pane .np-pill { font-family: var(--au-font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 999px; color: var(--sw-bg); font-weight: 600; }
 .note-pane .se-body { flex: 1; min-height: 0; }
 .note-pane .np-foot { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--sw-bg-raised); border-top: 1px solid var(--au-border); }
@@ -771,6 +773,8 @@ body {
 .callno { font-family: var(--au-font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.03em; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; margin-right: 7px; cursor: pointer; white-space: nowrap; }
 .wbadge { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; cursor: pointer; white-space: nowrap; }
 .wbadge:hover { border-color: var(--au-action); }
+.nbadge { font-family: var(--au-font-mono); font-size: 10px; color: var(--sw-teal); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; cursor: pointer; white-space: nowrap; }
+.nbadge:hover { border-color: var(--sw-teal); }
 .callno:hover { border-color: var(--au-action); }
 .ddc { font-family: var(--au-font-mono); font-size: 9px; color: var(--au-fg-soft); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 4px; margin-right: 7px; white-space: nowrap; }
 
@@ -11950,6 +11954,7 @@ class Store {
       }, this.feeds.get('stacks') || { id: 'stacks' });
       rec.has_content = true;
       if (Array.isArray(e.links)) rec.links = e.links;   // [[ref]] targets, for backlinks
+      if (e.target != null) rec.target = e.target;        // annotation target (item id) → backlinks
       this.items.set(id, rec);
       this._feedSet('stacks').add(id);
     } else {
@@ -11962,6 +11967,7 @@ class Store {
       rec.missing = false;
       rec.has_content = true;
       if (Array.isArray(e.links)) rec.links = e.links;
+      if (e.target != null) rec.target = e.target;
       if (opts.replaceTags) {
         // authoritative save → the given tags are the exact set (keep prior source
         // for surviving tags, 'file' for new; drop the rest)
@@ -12587,7 +12593,7 @@ class StacksStore {
     const created = this._parseTs(data.created);
     if (!uid) {   // stamp identity into the file (the anchor moves can't strip)
       uid = this._uid();
-      const fm = this._fmEmit({ uid, title: data.title || this._titleFromBody(body, rel), tags: data.tags || [], created: new Date(created).toISOString(), source: data.source });
+      const fm = this._fmEmit({ uid, title: data.title || this._titleFromBody(body, rel), tags: data.tags || [], created: new Date(created).toISOString(), source: data.source, target: data.target });
       await this._writeText(abs, `---\n${fm}---\n\n${body.replace(/^\n+/, '')}`);
       res.stamped++;
     }
@@ -12595,7 +12601,7 @@ class StacksStore {
       uid, path: rel, type: 'note',
       title: data.title || this._titleFromBody(body, rel),
       tags: Array.isArray(data.tags) ? data.tags : [],
-      created, source: data.source,
+      created, source: data.source, target: data.target,   // W3C annotation target (item id) → backlinks
       excerpt: deriveExcerpt(body, 300),
       links: this._wikiRefs(body),
     };
@@ -12676,7 +12682,7 @@ class StacksStore {
     await this._writeText(abs, `---\n${fm}---\n\n${String(markdown).trim()}\n`);
     // replaceTags: a save is authoritative over the entry's tag set (so it can remove,
     // not just add) — unlike a scan, which unions to protect human/llm tags.
-    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) }, { replaceTags: true });
+    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, target: data.target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) }, { replaceTags: true });
     this.store.emit('item', { id: rec.id });
     return rec;
   }
@@ -17008,6 +17014,7 @@ class App {
     const scrollTop = this.stream.scrollTop;   // preserve scroll across rebuild
     this.items = this.query();
     this._buildWorkCounts();   // work_id → manifestation count, for the "⧉ N sources" badge
+    this._buildNoteBacklinks();// target item id → annotating notes, for the "📝 N" badge
     if (this.selectedId && !this.items.some((x) => x.id === this.selectedId)) this.selectedId = null;
     if (!this.selectedId && this.items.length) this.selectedId = this.items[0].id;
 
@@ -17026,6 +17033,32 @@ class App {
     const m = new Map();
     for (const it of this.store.items.values()) if (it.work_id) m.set(it.work_id, (m.get(it.work_id) || 0) + 1);
     this._workCounts = m;
+  }
+  // target item id → [annotating note ids] — the backlinks behind the "📝 N" badge.
+  _buildNoteBacklinks() {
+    const m = new Map();
+    for (const it of this.store.items.values()) {
+      if (it.feed_id === 'stacks' && it.target) {
+        const arr = m.get(it.target); if (arr) arr.push(it.id); else m.set(it.target, [it.id]);
+      }
+    }
+    this._noteBacklinks = m;
+  }
+  // Open the note(s) annotating an item: one → straight to its pane; many → a picker.
+  openNotesFor(itemId, x, y) {
+    const ids = (this._noteBacklinks && this._noteBacklinks.get(itemId)) || [];
+    if (!ids.length) return;
+    if (ids.length === 1) { this.openNotePane({ noteId: ids[0] }); return; }
+    showMenu(x, y, ids.map((nid) => {
+      const n = this.store.getItem(nid);
+      return { label: '✎ ' + ((n && (n.title || n.path)) || nid), onClick: () => this.openNotePane({ noteId: nid }) };
+    }));
+  }
+  // Jump to an item in weir (the note→target link). Mirrors workMenu's in-app jump.
+  revealItem(id) {
+    const it = this.store.getItem(id); if (!it) return;
+    if (it.feed_id) this.selectFeed(it.feed_id);
+    this.select(it.id);
   }
 
   // The "⧉ N sources" badge → the OTHER manifestations of this Work (FRBR). Click one
@@ -17248,6 +17281,9 @@ class App {
     // FRBR: this item is one manifestation of a Work that appears in N sources.
     const wn = it.work_id && this._workCounts ? (this._workCounts.get(it.work_id) || 0) : 0;
     const wbadge = wn > 1 ? `<span class="wbadge" data-work="${escapeHtml(it.work_id)}" title="Same content in ${wn} sources — click to see the others">⧉ ${wn}</span>` : '';
+    // Annotation backlinks: notes that point at this item (W3C target). Closes the loop.
+    const nbl = this._noteBacklinks ? this._noteBacklinks.get(it.id) : null;
+    const nbadge = (nbl && nbl.length) ? `<span class="nbadge" data-noted="${escapeHtml(it.id)}" title="${nbl.length} note${nbl.length > 1 ? 's' : ''} about this — click to open">📝 ${nbl.length}</span>` : '';
 
     let body;
     const isVideo = it.type === 'video';
@@ -17262,9 +17298,9 @@ class App {
       const play = isVideo ? '<span class="playover">▶</span>' : '';
       const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
       const excerpt = (!isVideo && it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
-      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${ddc}${meta}${views} ${tags}${wbadge}</div></div></div>`;
+      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${ddc}${meta}${views} ${tags}${wbadge}${nbadge}</div></div></div>`;
     } else {
-      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${(it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}${wbadge}</div>`;
+      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${(it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}${wbadge}${nbadge}</div>`;
     }
     const actions = `<div class="iactions">`
       + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
@@ -17360,6 +17396,8 @@ class App {
     if (cnEl) { e.stopPropagation(); navigator.clipboard?.writeText(cnEl.dataset.callno).catch(() => {}); this._catStatus(`copied call number ${cnEl.dataset.callno}`); return; }
     const wbEl = e.target.closest('.wbadge');
     if (wbEl) { e.stopPropagation(); this.workMenu(wbEl.dataset.work, id, e.clientX, e.clientY); return; }
+    const nbEl = e.target.closest('.nbadge');
+    if (nbEl) { e.stopPropagation(); this.openNotesFor(nbEl.dataset.noted, e.clientX, e.clientY); return; }
     if (btn) { e.stopPropagation(); this.doAct(btn.dataset.act, id); return; }
     if (e.metaKey || e.ctrlKey) { const it = this.store.getItem(id); if (it?.url) window.open(it.url, '_blank', 'noopener'); return; }
     if (e.target.closest('.iexpand')) return;   // clicks inside the open article (links, text) — leave alone
@@ -19350,6 +19388,10 @@ class NotePane {
       + `</div>`;
     el.querySelectorAll('.np-mode').forEach((b) => b.addEventListener('click', () => this.setMode(b.dataset.m)));
     el.querySelector('.np-save').addEventListener('click', () => this.save());
+    if (t) {   // the target pill links back to the annotated item (note → target)
+      const tg = el.querySelector('.note-tgt');
+      if (tg) { tg.classList.add('clickable'); tg.title = 'jump to the annotated item'; tg.addEventListener('click', () => this.app.revealItem(t.id)); }
+    }
     return el;
   }
   _q(sel) { return this.el.querySelector(sel); }
@@ -19415,7 +19457,7 @@ class NotePane {
       this._q('.np-path').textContent = rec.path;
       if (statusEl) statusEl.textContent = 'saved ✓';
       app.rails?.updateTab?.(this.tabId, { title: '✎ ' + app._shortTitle(rec.title || 'note') });
-      app.renderStacks(); if (app.stackFilter) app.renderStream();
+      app.renderStacks(); app.renderStream();   // refresh so the target's 📝 backlink badge appears
     } catch (e) { if (statusEl) statusEl.textContent = `save failed: ${e.message || e}`; }
   }
   dispose() { clearTimeout(this._pvTimer); }
@@ -20603,7 +20645,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '534d6ee';          // short content hash of the bundle (build id)
+const COMMIT = '5949d3e';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

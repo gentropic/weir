@@ -1336,6 +1336,7 @@ export class App {
     const scrollTop = this.stream.scrollTop;   // preserve scroll across rebuild
     this.items = this.query();
     this._buildWorkCounts();   // work_id → manifestation count, for the "⧉ N sources" badge
+    this._buildNoteBacklinks();// target item id → annotating notes, for the "📝 N" badge
     if (this.selectedId && !this.items.some((x) => x.id === this.selectedId)) this.selectedId = null;
     if (!this.selectedId && this.items.length) this.selectedId = this.items[0].id;
 
@@ -1354,6 +1355,32 @@ export class App {
     const m = new Map();
     for (const it of this.store.items.values()) if (it.work_id) m.set(it.work_id, (m.get(it.work_id) || 0) + 1);
     this._workCounts = m;
+  }
+  // target item id → [annotating note ids] — the backlinks behind the "📝 N" badge.
+  _buildNoteBacklinks() {
+    const m = new Map();
+    for (const it of this.store.items.values()) {
+      if (it.feed_id === 'stacks' && it.target) {
+        const arr = m.get(it.target); if (arr) arr.push(it.id); else m.set(it.target, [it.id]);
+      }
+    }
+    this._noteBacklinks = m;
+  }
+  // Open the note(s) annotating an item: one → straight to its pane; many → a picker.
+  openNotesFor(itemId, x, y) {
+    const ids = (this._noteBacklinks && this._noteBacklinks.get(itemId)) || [];
+    if (!ids.length) return;
+    if (ids.length === 1) { this.openNotePane({ noteId: ids[0] }); return; }
+    showMenu(x, y, ids.map((nid) => {
+      const n = this.store.getItem(nid);
+      return { label: '✎ ' + ((n && (n.title || n.path)) || nid), onClick: () => this.openNotePane({ noteId: nid }) };
+    }));
+  }
+  // Jump to an item in weir (the note→target link). Mirrors workMenu's in-app jump.
+  revealItem(id) {
+    const it = this.store.getItem(id); if (!it) return;
+    if (it.feed_id) this.selectFeed(it.feed_id);
+    this.select(it.id);
   }
 
   // The "⧉ N sources" badge → the OTHER manifestations of this Work (FRBR). Click one
@@ -1576,6 +1603,9 @@ export class App {
     // FRBR: this item is one manifestation of a Work that appears in N sources.
     const wn = it.work_id && this._workCounts ? (this._workCounts.get(it.work_id) || 0) : 0;
     const wbadge = wn > 1 ? `<span class="wbadge" data-work="${escapeHtml(it.work_id)}" title="Same content in ${wn} sources — click to see the others">⧉ ${wn}</span>` : '';
+    // Annotation backlinks: notes that point at this item (W3C target). Closes the loop.
+    const nbl = this._noteBacklinks ? this._noteBacklinks.get(it.id) : null;
+    const nbadge = (nbl && nbl.length) ? `<span class="nbadge" data-noted="${escapeHtml(it.id)}" title="${nbl.length} note${nbl.length > 1 ? 's' : ''} about this — click to open">📝 ${nbl.length}</span>` : '';
 
     let body;
     const isVideo = it.type === 'video';
@@ -1590,9 +1620,9 @@ export class App {
       const play = isVideo ? '<span class="playover">▶</span>' : '';
       const views = it.structured?.views ? `<span class="dot-sep">·</span><span>${fmtCount(it.structured.views)} views</span>` : '';
       const excerpt = (!isVideo && it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : '';
-      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${ddc}${meta}${views} ${tags}${wbadge}</div></div></div>`;
+      body = `<div class="ivideo"><div class="thumb">${thumb}${play}${dur}</div><div class="vbody"><div class="ititle">${saved}${escapeHtml(it.title)}</div>${excerpt}<div class="imeta">${callno}${ddc}${meta}${views} ${tags}${wbadge}${nbadge}</div></div></div>`;
     } else {
-      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${(it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}${wbadge}</div>`;
+      body = `<div class="ititle">${saved}${escapeHtml(it.title)}</div>${(it.excerpt && !it.title_synth) ? `<div class="iexcerpt">${escapeHtml(it.excerpt)}</div>` : ''}<div class="imeta">${callno}${ddc}${meta} ${tags}${wbadge}${nbadge}</div>`;
     }
     const actions = `<div class="iactions">`
       + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
@@ -1688,6 +1718,8 @@ export class App {
     if (cnEl) { e.stopPropagation(); navigator.clipboard?.writeText(cnEl.dataset.callno).catch(() => {}); this._catStatus(`copied call number ${cnEl.dataset.callno}`); return; }
     const wbEl = e.target.closest('.wbadge');
     if (wbEl) { e.stopPropagation(); this.workMenu(wbEl.dataset.work, id, e.clientX, e.clientY); return; }
+    const nbEl = e.target.closest('.nbadge');
+    if (nbEl) { e.stopPropagation(); this.openNotesFor(nbEl.dataset.noted, e.clientX, e.clientY); return; }
     if (btn) { e.stopPropagation(); this.doAct(btn.dataset.act, id); return; }
     if (e.metaKey || e.ctrlKey) { const it = this.store.getItem(id); if (it?.url) window.open(it.url, '_blank', 'noopener'); return; }
     if (e.target.closest('.iexpand')) return;   // clicks inside the open article (links, text) — leave alone
@@ -3678,6 +3710,10 @@ class NotePane {
       + `</div>`;
     el.querySelectorAll('.np-mode').forEach((b) => b.addEventListener('click', () => this.setMode(b.dataset.m)));
     el.querySelector('.np-save').addEventListener('click', () => this.save());
+    if (t) {   // the target pill links back to the annotated item (note → target)
+      const tg = el.querySelector('.note-tgt');
+      if (tg) { tg.classList.add('clickable'); tg.title = 'jump to the annotated item'; tg.addEventListener('click', () => this.app.revealItem(t.id)); }
+    }
     return el;
   }
   _q(sel) { return this.el.querySelector(sel); }
@@ -3743,7 +3779,7 @@ class NotePane {
       this._q('.np-path').textContent = rec.path;
       if (statusEl) statusEl.textContent = 'saved ✓';
       app.rails?.updateTab?.(this.tabId, { title: '✎ ' + app._shortTitle(rec.title || 'note') });
-      app.renderStacks(); if (app.stackFilter) app.renderStream();
+      app.renderStacks(); app.renderStream();   // refresh so the target's 📝 backlink badge appears
     } catch (e) { if (statusEl) statusEl.textContent = `save failed: ${e.message || e}`; }
   }
   dispose() { clearTimeout(this._pvTimer); }

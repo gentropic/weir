@@ -816,6 +816,7 @@ export class Store {
       }, this.feeds.get('stacks') || { id: 'stacks' });
       rec.has_content = true;
       if (Array.isArray(e.links)) rec.links = e.links;   // [[ref]] targets, for backlinks
+      if (e.target != null) rec.target = e.target;        // annotation target (item id) → backlinks
       this.items.set(id, rec);
       this._feedSet('stacks').add(id);
     } else {
@@ -828,6 +829,7 @@ export class Store {
       rec.missing = false;
       rec.has_content = true;
       if (Array.isArray(e.links)) rec.links = e.links;
+      if (e.target != null) rec.target = e.target;
       if (opts.replaceTags) {
         // authoritative save → the given tags are the exact set (keep prior source
         // for surviving tags, 'file' for new; drop the rest)

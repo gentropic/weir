@@ -222,6 +222,8 @@ body {
 .note-pane .note-head { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--sw-bg-raised); border-bottom: 1px solid var(--au-border); }
 .note-pane .note-tgt { display: inline-flex; align-items: center; gap: 6px; font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-soft); max-width: 42%; overflow: hidden; white-space: nowrap; }
 .note-pane .np-tgt-title { overflow: hidden; text-overflow: ellipsis; color: var(--au-fg); }
+.note-pane .note-tgt.clickable { cursor: pointer; }
+.note-pane .note-tgt.clickable:hover .np-tgt-title { color: var(--sw-teal); text-decoration: underline; }
 .note-pane .np-pill { font-family: var(--au-font-mono); font-size: 9px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 999px; color: var(--sw-bg); font-weight: 600; }
 .note-pane .se-body { flex: 1; min-height: 0; }
 .note-pane .np-foot { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: var(--sw-bg-raised); border-top: 1px solid var(--au-border); }
@@ -299,6 +301,8 @@ body {
 .callno { font-family: var(--au-font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.03em; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; margin-right: 7px; cursor: pointer; white-space: nowrap; }
 .wbadge { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-action); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; cursor: pointer; white-space: nowrap; }
 .wbadge:hover { border-color: var(--au-action); }
+.nbadge { font-family: var(--au-font-mono); font-size: 10px; color: var(--sw-teal); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 5px; cursor: pointer; white-space: nowrap; }
+.nbadge:hover { border-color: var(--sw-teal); }
 .callno:hover { border-color: var(--au-action); }
 .ddc { font-family: var(--au-font-mono); font-size: 9px; color: var(--au-fg-soft); border: 1px solid var(--au-border); border-radius: 3px; padding: 0 4px; margin-right: 7px; white-space: nowrap; }
 
