@@ -84,6 +84,41 @@ Glass treats a humanities discipline as an engineering dependency:
 - **The reference interview.** Figuring out what someone *needs* vs. what they
   *asked* — maps onto query decomposition (§8).
 
+### 2.1 Decides vs. proposes — the boundary that replaces "no statistics" **[principle]**
+
+Glass began partly as a reaction to RAG-as-sold (cosine similarity dressed as
+understanding; synthesis with no provenance). That reflex over-corrected into a
+blanket suspicion of *anything* statistical — but glass **isn't a RAG** (there is
+no generation-over-retrieval; it is a *catalog*), and the techniques RAG borrowed —
+embeddings, clustering, dimensionality reduction, IR ranking — are a century of
+information science, not the pathogen. (Full-text search already uses **BM25** —
+pure statistical IR — and nobody flinched. The line was never really "no
+statistics.")
+
+So the governing boundary is **not symbolic vs. statistical. It is *decides* vs.
+*proposes*:**
+
+- A classification **decision** — what term a card carries, what BT/NT/RT relation
+  holds, where something is filed — stays **declared, auditable, and
+  human-ratifiable.** This is the *only* place the "fails loudly" discipline must
+  hold, because it is the only place trust and correctability live.
+- Everything **upstream** of the decision — signals, suggestions, rankings,
+  similarity, maps — **may be as fuzzy as it likes**, because a human (or a declared
+  rule) ratifies before it becomes catalog truth.
+
+This is what lets statistical methods back in without re-importing the mush:
+embeddings that *propose* a merge or a possibly-related pair (the **vocabulary
+doctor**), clustering over facet co-occurrence (the emergent graph's neighborhoods,
+§10), **UMAP** that *draws* a map (a lens — casts no vote), relevance feedback from
+read/saved to tune ranking, and the `needs_review` queue — which is already
+**active learning**. Each *suggests*; a person or rule *ratifies*; nothing files
+itself.
+
+The discipline was right about **authority**, not **utility**. Keep the wall
+exactly at the decision boundary; open every door upstream of it — *reasoned
+boundaries, not reflexes* (a blanket "reject statistics" would be its own
+absolutism; a blanket "embrace everything" walks back into the mush).
+
 ---
 
 ## 3. Where it lives in weir's store
@@ -266,7 +301,8 @@ Each controlled facet carries the classic LIS relations:
 
 This solves what embeddings paper over: synonyms collapse to a preferred term,
 homonyms disambiguate by facet context, and broaden/narrow is a **graph walk on
-declared relations**, not a cosine guess. Lives in `/schema/vocab/<facet>.json`.
+declared relations** — cosine may *propose* an edge, but only a ratified declared
+relation *decides* (§2.1). Lives in `/schema/vocab/<facet>.json`.
 
 ---
 
@@ -305,11 +341,14 @@ stays plain. **Annotations** (a note bound to a specific item) are a second step
 
 There is no graph database. The graph is three things that fall out of a good
 catalog: (1) **facet intersection** (everything sharing a facet value is
-connected — free, from the indexes), (2) **typed `related` edges** (the cataloger
-proposes, you correct — auditable, not cosine), (3) **the thesaurus** (the
-vocabulary graph). A force-directed **visualization** is a welcome late *view*, a
-window onto the catalog — never the substance. Build the catalog well; the graph
-is what it gives back.
+connected — free, from the indexes), (2) **typed `related` edges** (the cataloger —
+or a similarity signal — *proposes*; you *ratify*; only then is it an edge, §2.1),
+(3) **the thesaurus** (the vocabulary graph). Statistical lenses are welcome *over*
+this substance, never *as* it: **clustering** over facet co-occurrence to find
+neighborhoods, **UMAP** (on facet vectors — no embedding model needed) to draw a
+similarity *terrain*, a **force-directed** layout to render explicit relations.
+They visualize and suggest; they cast no vote on what is filed where. Build the
+catalog well; the graph is what it gives back.
 
 ---
 
