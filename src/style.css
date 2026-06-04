@@ -209,6 +209,13 @@ body {
 .pill.track, .pill.issue { background: var(--au-error-soft); color: var(--au-error); }
 .pill.podcast { background: var(--au-warn-soft); color: var(--au-warn); }
 .pill.event { background: var(--au-warn-soft); color: var(--au-warn); }
+.minimap { position: relative; margin: 0 0 12px; max-width: 440px; background: var(--sw-bg); border: 1px solid var(--au-border); border-radius: var(--au-radius); overflow: hidden; }
+.minimap svg { display: block; width: 100%; height: auto; }
+.minimap .mm-land { fill: var(--sw-bg-bright); stroke: var(--au-border); stroke-width: 0.25; }
+.minimap .mm-pin { fill: var(--au-warn); stroke: var(--sw-bg); stroke-width: 0.7; }
+.minimap .mm-ping { fill: none; stroke: var(--au-warn); stroke-width: 0.8; animation: mm-pulse 2.2s ease-out infinite; }
+@keyframes mm-pulse { from { r: 3; opacity: 0.7; } to { r: 11; opacity: 0; } }
+.minimap .mm-coord { position: absolute; right: 6px; bottom: 4px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); background: color-mix(in srgb, var(--sw-bg) 72%, transparent); padding: 0 5px; border-radius: 3px; }
 
 .ibody { min-width: 0; position: relative; }
 

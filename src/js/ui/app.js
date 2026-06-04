@@ -21,6 +21,7 @@ import { assessFeed } from '../health.js';
 import { Store } from '../store/store.js';
 import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle } from '../fsmount.js';
 import { facetsOf, FACETS } from '../glass.js';
+import { WORLD_PATH, WORLD_VIEWBOX } from '../../../vendor/worldmap.js';
 import { getKey, hasKey, saveKey } from '../llmkeys.js';
 import { fetchUsageGauge, listModels } from '../llm.js';
 import { catalogStoreItem } from '../cataloger.js';
@@ -1606,6 +1607,7 @@ export class App {
     if (it.feed_id === 'stacks') return this._stacksExpandedHtml(it);
     let inner = '';
     if (it.type === 'podcast' && it.media?.audio_url) inner += `<audio class="player" controls preload="none" src="${escapeHtml(it.media.audio_url)}"></audio>`;
+    if (it.structured && Array.isArray(it.structured.coords) && it.structured.coords.length >= 2) inner += this._miniMapHtml(it);
 
     const cached = this._content.get(it.id);
     if (cached === undefined && it.has_content) {
@@ -1626,6 +1628,22 @@ export class App {
     inner += '</div>';
     inner += this._backlinksHtml(it);   // notes that reference this item
     return inner;
+  }
+
+  // Offline pin-on-world for any item carrying `structured.coords` ([lon, lat]) — the
+  // gauge's events, today; gazetteer-resolved items later. Vendored equirectangular
+  // world (no tiles, no network); the heavier interactive GIS is the lazy spinifex
+  // layer (ROADMAP).
+  _miniMapHtml(it) {
+    const [lon, lat] = it.structured.coords;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return '';
+    const x = (lon + 180).toFixed(1), y = (90 - lat).toFixed(1);
+    const place = it.structured.place ? escapeHtml(it.structured.place) : '';
+    return `<div class="minimap"${place ? ` title="${place}"` : ''}>`
+      + `<svg viewBox="${WORLD_VIEWBOX}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Location map${place ? `: ${place}` : ''}">`
+      + `<path class="mm-land" d="${WORLD_PATH}"/>`
+      + `<circle class="mm-ping" cx="${x}" cy="${y}" r="3"/><circle class="mm-pin" cx="${x}" cy="${y}" r="3"/>`
+      + `</svg><span class="mm-coord">${lat.toFixed(2)}°, ${lon.toFixed(2)}°</span></div>`;
   }
 
   importReviewHtml() {

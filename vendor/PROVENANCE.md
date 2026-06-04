@@ -49,3 +49,9 @@ milestone arrives:
   `FILES` row, `node tools/sync-vendor.mjs`, add `vendor/librarian.js` to
   `src/js/main.js`, and add a row above.
 - `ext/reader-core` — architecture reference for the render/state pipeline; adapt, don't copy wholesale.
+- `vendor/worldmap.js` — Natural Earth **110m land** (PUBLIC DOMAIN, naturalearthdata.com),
+  pre-projected to a compact equirectangular SVG path (`viewBox "0 0 360 180"`, so
+  `(lon,lat) → (lon+180, 90-lat)`). For the offline card mini-map / map view (gauge
+  events with coords). Regenerate: `curl …/ne_110m_land.json` → `node tools/prep-worldmap.mjs`.
+  ~53 KB raw / ~20 KB gz. The heavier interactive GIS (pan/zoom, basemaps) is the
+  lazy-loaded `@gcu/spinifex` layer (ROADMAP), not this.
