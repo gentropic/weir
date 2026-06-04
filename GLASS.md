@@ -563,6 +563,21 @@ packs likewise feed the Stage-4 holdings shelf.) **Pick two for the tail:** **Wi
 (CC0, universal, carries every other authority's cross-ref ID) + **GeoNames** (CC-BY,
 the containment graph) — both open APIs, both build-time-extractable.
 
+**The gazetteer ships as layered `.gcudat` tiers, not one blob.** gcu-library already
+does this (its `factbook-full` is an *expansion tier* over `factbook`), so the gazetteer
+is the same pattern — opt in by granularity, each tier referencing parents in the one
+below so they **compose** (city → admin1 → country → region). The size curve has a sharp
+knee (GeoNames as yardstick): **countries+capitals ~250 (~6 KB gz) → +admin1 (states/
+provinces) ~3,600 (~70 KB) → +cities≥15k ~26k (~0.7 MB) →** finer floors 5–6× each step
+into MBs/GBs (villages nobody links to). So: weir wants up to **cities≥15k** (~0.7 MB
+gz, a comfortable tier-2 pack) for any-feed coverage, or just a **corpus-keyed extract**
+(~640 actual terms → ~100 KB) for what it holds today. Either way the pack is a **GCU
+asset, not a weir one** — built once (GeoNames → transform → sha256 → registry), reused
+by any tool at whatever granularity it needs; weir/glass shelves the tier it wants. The
+one schema decision the tiers share: a place record `{ id, name, type, parent,
+altNames?, coords? }`, so a city's `parent` resolves cleanly into the country/admin1
+pack beneath it.
+
 ---
 
 The neo-dadaist throughline holds: zero-dependency, single-file, browser-as-runtime,
