@@ -461,6 +461,20 @@ the trigger/query layer on top.
   items on a schedule); this is the "measurement" half — consuming *exotic* sources
   (weirder APIs, sensor/transit/weather data) by **reducing raw flow to discrete
   reviewable events.**
+  - **✅ First source shipped 2026-06-04: USGS earthquakes** — a `usgs` adapter
+    (GeoJSON → `event` items; M4.5+ tier ≈ 10–20/day, volume bounded by the tier you
+    subscribe to) + an **offline card mini-map** (vendored Natural Earth 110m land,
+    equirectangular SVG pin — no tiles, no network; any `structured.coords` item plots).
+    **Map layers still ahead:** (a) a lazy-loaded **`@gcu/spinifex`** interactive GIS
+    *view* (OpenLayers; ~507 KB so loaded on demand, NEVER in core — offline basemap
+    default, online tiles an opt-in toggle) plotting all coords-bearing items, sized by
+    magnitude; (b) **focal-mechanism "beachballs"** (geoscience-deluxe) — needs an
+    *enrichment fetch* of the USGS per-event *detail* GeoJSON (moment tensor / nodal
+    planes — present for many M4.5+, not all), rendered via **`@gcu/stereonet`** /
+    **`@gcu/bearing`**: a beachball = np1/np2 great circles + shaded dilatational/
+    compressional quadrants on an equal-area net (the projection + plane primitives are
+    there; tensor→beachball is the glue). Both are the `derive`-then-visualize layer;
+    the inline mini-map is the always-on offline default.
   - **The fit test (the boundary that matters):** weir ingests **events, not
     telemetry.** Discrete dated things you'd review-and-clear belong; continuous
     state does not. Weather isn't a temperature stream (→ a dashboard, a *different*
