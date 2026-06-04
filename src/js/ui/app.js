@@ -162,6 +162,13 @@ export class App {
       if (t) this.toggleFacet(t.dataset.facet, t.dataset.term);
     });
     { const fs = document.getElementById('facet-search'); fs?.addEventListener('input', () => { this.facetFilter = fs.value; this.renderCatalogFacets(); }); }
+    document.getElementById('facets')?.addEventListener('contextmenu', (e) => {
+      const term = e.target.closest('.facet-term');
+      if (term) { e.preventDefault(); this.facetTermMenu(term.dataset.facet, term.dataset.term, e.clientX, e.clientY); return; }
+      const head = e.target.closest('.facet-head');
+      const fc = head && head.querySelector('.fh-tog')?.dataset.facet;
+      if (fc) { e.preventDefault(); this.facetGroupMenu(fc, e.clientX, e.clientY); }
+    });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
     document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
@@ -940,6 +947,51 @@ export class App {
     set.has(facet) ? set.delete(facet) : set.add(facet);
     this.store.setSettings({ facet_collapsed: [...set] });
     this.renderCatalogFacets();
+  }
+  _setAllFacetsCollapsed(collapse) {
+    this.store.setSettings({ facet_collapsed: collapse ? [...FACETS] : [] });
+    this.renderCatalogFacets();
+  }
+
+  // Apply a vocabulary edit (the thesaurus primitive) from the UI: rewrite a term
+  // across every card in a facet — merge into another term, rename, or drop
+  // (to===''). Persists + re-renders. Mirrors weir_mergeFacetTerm.
+  async _facetMerge(facet, from, to) {
+    const n = this.store.mergeFacetTerm(facet, from, to);
+    if (n) { await this.store.flush(); this.renderAll(); }
+    const sub = document.getElementById('view-sub');
+    if (sub) sub.textContent = to ? `merged “${from}” → “${to}” · ${n} card${n === 1 ? '' : 's'}` : `dropped “${from}” · ${n} card${n === 1 ? '' : 's'}`;
+  }
+
+  // Right-click a facet term → curate it: filter, or the thesaurus actions
+  // (merge / rename / drop) that keep the controlled vocabulary clean.
+  facetTermMenu(facet, term, x, y) {
+    const active = (this.catalog?.filters[facet] || new Set()).has(term);
+    showMenu(x, y, [
+      { label: active ? '✓ Filtering by this' : 'Filter by this', onClick: () => this.toggleFacet(facet, term) },
+      { sep: true },
+      { label: '⤳ Merge into…', onClick: () => { const to = window.prompt(`Merge “${term}” into which ${facet} term?`, ''); if (to && to.trim() && to.trim().toLowerCase() !== term) this._facetMerge(facet, term, to.trim()); } },
+      { label: '✎ Rename…', onClick: () => { const to = window.prompt(`Rename ${facet} term “${term}” to:`, term); if (to != null && to.trim() && to.trim().toLowerCase() !== term) this._facetMerge(facet, term, to.trim()); } },
+      { label: '⎘ Copy term', onClick: () => { navigator.clipboard?.writeText(term).catch(() => {}); } },
+      { sep: true },
+      { label: '⌦ Drop from catalog', onClick: () => { if (confirm(`Drop “${term}” from the ${facet} facet across all cards? Reversible by re-tagging.`)) this._facetMerge(facet, term, ''); } },
+    ]);
+  }
+
+  // Right-click a facet header → sort + collapse controls for that group.
+  facetGroupMenu(facet, x, y) {
+    const mode = this._facetSortMode(facet);
+    const collapsed = new Set(this.store.getSettings().facet_collapsed || []).has(facet);
+    const setSort = (m) => { this.store.setSettings({ facet_sort: { ...(this.store.getSettings().facet_sort || {}), [facet]: m } }); this.renderCatalogFacets(); };
+    showMenu(x, y, [
+      { label: `${mode === 'count' ? '● ' : '○ '}Sort by count`, onClick: () => setSort('count') },
+      { label: `${mode === 'az' ? '● ' : '○ '}Sort A→Z`, onClick: () => setSort('az') },
+      { label: `${mode === 'za' ? '● ' : '○ '}Sort Z→A`, onClick: () => setSort('za') },
+      { sep: true },
+      { label: collapsed ? 'Expand' : 'Collapse', onClick: () => this.toggleFacetCollapse(facet) },
+      { label: 'Collapse all', onClick: () => this._setAllFacetsCollapsed(true) },
+      { label: 'Expand all', onClick: () => this._setAllFacetsCollapsed(false) },
+    ]);
   }
 
   renderCatalogFacets() {
