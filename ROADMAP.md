@@ -101,6 +101,45 @@ the trigger/query layer on top.
     Dec–Feb), so expose month-of-year as the clean axis and treat season as an
     optional derived view behind a hemisphere setting. Pairs naturally with a small
     12-spoke radial / month-histogram viz down the line.
+- **LIS adoption arc — earn the field, in sequence (decides-vs-proposes throughout,
+  GLASS §2.1).** Information science has plenty glass hasn't tapped; almost all of it
+  is zero-dep and feasible, but it *sequences* (literary warrant applies to features
+  too — adopt what the corpus asks for, in order), and two pieces trade a core
+  constraint if done maximally (flags below). Order of attack:
+  1. **SKOS shape — free, do FIRST (it unblocks the thesaurus).** Shape
+     `/schema/vocab/<facet>.json` with SKOS field names (`skos:broader` / `narrower` /
+     `related` / `prefLabel` / `altLabel`) so the vocabulary is a standard — exportable
+     as JSON-LD, and *seedable from* published SKOS vocabularies (LCSH, Getty). A pure
+     schema decision: ~free now, costly to retrofit. BT/NT/RT/UF (§7) already map 1:1.
+  2. **Work-grouping / FRBR — biggest felt inbox win; zero-dep; staged.** Group items
+     that are the same *Work* across *manifestations* (wire-syndication, re-uploads,
+     preprint vs published) — de-dup as **grouping, not discarding** (never-delete: all
+     manifestations kept; the Work is a view over items). Stages, precision-first:
+     exact / resolved-URL (deterministic) → near-dup **SimHash** over content (~100
+     lines, high precision — catches verbatim syndication + re-uploads) → fuzzy
+     same-story (entity-overlap + temporal proximity + title-Jaccard, run as a
+     *proposal*, reuses the `entity` facet) → Work/Expression identifier links
+     (arXiv↔DOI via the shipped biblio enricher). Detailed design is its own note.
+  3. **Entity-typing + curated gazetteer — the thesaurus, getting built.** Cataloger
+     tags each `entity` term person/org/place/topic (splitting named-entities from
+     topics); named-entity authority via the existing curation/merge tools (= UF/USE).
+     Spatial hierarchy from a **curated gazetteer**: ~1,300–1,500 entries (7 continents
+     + ~195 countries + ~50 US states + major sub-national + ~1k top cities) ≈ **~100 KB
+     raw / ~30 KB gzipped — smaller than one embedded font, vendorable, offline.** Build
+     it ONCE by enriching weir's actual ~640 spatial terms from GeoNames/Wikidata at
+     *build time* (generate → ratify → vendor the result), so external data informs a
+     vendored subset, never a runtime dep.
+  4. **Phase relations — late enrichment.** The typed relation *between* a document's
+     subjects ("ml **applied-to** geostatistics"; "influence of X **on** Y") — what
+     post-coordination drops. Cataloger proposes, human ratifies; rides the `related`
+     edges; do once the vocabulary is stable.
+  **Constraint flags:** full Getty TGN / GeoNames / VIAF are millions of rows — too big
+  to vendor, so they stay *optional* enrichment (build-time, or on-demand via the
+  bridge), never a dependency; the curated subset is the offline 95%. **Free / already
+  here** (principles, not code): **literary warrant** (= the descriptive/emergent
+  vocabulary model), **post-coordination** (= facet intersection), **berrypicking** (=
+  the drill-down/chips/saved-views UX). See GLASS §2.1 (decides-vs-proposes), §5.1
+  (facet structure types).
 - **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +
   annotations; webmcp triggers. (Graph/map visualization broken out below.) The
   data model is ready today (`provenance: self`, `type: note` in `glass.js`); the
