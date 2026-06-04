@@ -355,7 +355,7 @@ against the card schema and the vocabulary; on mismatch, retry or `needs_review`
 
 ---
 
-## 7. Controlled vocabulary & thesaurus **[designed]**
+## 7. Controlled vocabulary & thesaurus **[shape shipped; populating it is the work]**
 
 Each controlled facet carries the classic LIS relations:
 
@@ -367,7 +367,22 @@ Each controlled facet carries the classic LIS relations:
 This solves what embeddings paper over: synonyms collapse to a preferred term,
 homonyms disambiguate by facet context, and broaden/narrow is a **graph walk on
 declared relations** — cosine may *propose* an edge, but only a ratified declared
-relation *decides* (§2.1). Lives in `/schema/vocab/<facet>.json`.
+relation *decides* (§2.1).
+
+✅ **The SKOS shape shipped 2026-06-04** (adopted *before* the vocabulary grows, so
+it's a standard, not a format to migrate). One file per facet at
+`/schema/vocab/<facet>.json`; a concept is keyed by its preferred term and holds
+`{ alt (skos:altLabel/UF), broader (BT), narrower (NT), related (RT) }`; inverses are
+maintained (BT↔NT); `vocabExportSkos()` emits **SKOS JSON-LD** (so it's exportable +
+seedable from published SKOS — LCSH, Getty). The vocabulary is **grown bottom-up by
+curation** (literary warrant — §2.1, the descriptive/emergent model): `mergeFacetTerm`
+now records the merged variant as a **synonym (altLabel)** — the merge became
+*non-destructive at the vocabulary level*, the decision remembered not just applied —
+and `weir_relateTerm` / `weir_vocab` (MCP) declare and inspect BT/NT/RT. **Remaining:**
+*populating* the relations — spatial containment from the gazetteer (ROADMAP, GLASS
+§16), entity BT/NT, and the cataloger consulting altLabels before coining (auto-redirect
+known synonyms). The thesaurus is a **byproduct of curation, not a precondition of
+cataloging** — the shape is here; it fills as the corpus is governed.
 
 ---
 
