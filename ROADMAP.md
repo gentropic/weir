@@ -164,6 +164,31 @@ the trigger/query layer on top.
   new surface is a note *composer* — weir becomes the **write** side, not just
   read (the "replace Obsidian" move). Folds in Holocene's **activity log** as
   self-notes on import. Sequence: *after* the catalog base settles.
+- **UI architecture — the workspace shell (`@gcu/rails`), driven by notes** *(decided
+  direction; prototype-first)*. **Note-taking is the real driver, not maps.** Today notes
+  live in a **modal dialog** — a v0.1 stopgap that structurally fights the act of
+  note-taking: a modal *can't show you the thing you're writing about*. The defining
+  workflow is annotate-in-context (read the source on one side, write the note on the
+  other); a dialog makes that impossible, undersells notes as ephemeral when glass treats
+  them as first-class/cataloged (Stage 3), and can't be the write side of a second brain.
+  **Decision: adopt `@gcu/rails`** (the auditable workspace shell — docked tabbed panes/
+  stacks/splitters/floats, ~6 KB gz, zero-dep, GCU) with the **notes pane as the inaugural
+  use**. Rationale: (a) rails' headline property — *panels never reparent, so focused
+  inputs and canvases survive every drag* — is exactly what a persistent **CM6** editor
+  pane needs (and it's the lib's reason for being: AW keeps live CM6 notebook editors in
+  dockable panels, so the property is proven against CM6, not a risk); (b) a general pane
+  shell beats a bespoke "stream | editor" split we'd outgrow — the map/holdings/graph
+  views all want panes too; (c) **the focused inbox stays the default** — weir opens as a
+  single pane (just the stream, like today); the workspace is **opt-in** (summon a notes
+  pane when writing). So this is *weir-can-be-a-workbench-for-knowledge-work*, not
+  *weir-becomes-an-IDE* — no loss of the reader, just the ability to set a note beside it.
+  `@gcu/sideact` (signals + reactive templates, ~16 KB) is the **orthogonal** reactivity
+  axis — pick it up incrementally when the imperative render is the bottleneck; do **not**
+  entangle it with this shell decision. **Plan: prototype rails hosting {stream + a notes
+  pane} first** — that prototype is the go/no-go (does it feel like weir-plus or weir-
+  bloated?), with the single-pane default preserved and the CM6-survives-drag behavior
+  confirmed (expected to just work). The Stage 3 composer, the Stage 4 holdings *view*,
+  and the graph/map views below all become panes in this shell.
 - **Stage 4 — holdings library (the glass endgame).** Extend glass from a *stream
   inbox* to also hold **static, undated holdings** — books (Dewey + Cutter, ready
   to inherit from Holocene), a papers shelf — so it's a literal LIS catalog, not
