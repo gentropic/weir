@@ -178,6 +178,7 @@ export class App {
       document.getElementById('facet-dialog-close')?.addEventListener('click', () => this.closeFacetDialog());
     }
     { const fs = document.getElementById('facet-search'); fs?.addEventListener('input', () => { this.facetFilter = fs.value; this.renderCatalogFacets(); }); }
+    document.getElementById('facets')?.addEventListener('change', (e) => { if (e.target.closest('.fr-from, .fr-to')) this.applyTemporalRange(); });
     document.getElementById('facets')?.addEventListener('contextmenu', (e) => {
       const term = e.target.closest('.facet-term');
       if (term) { e.preventDefault(); this.facetTermMenu(term.dataset.facet, term.dataset.term, e.clientX, e.clientY); return; }
@@ -190,7 +191,7 @@ export class App {
     document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
     document.getElementById('facet-guided')?.addEventListener('click', () => this.toggleFacetGuided());
     document.getElementById('facet-clear')?.addEventListener('click', () => this.clearFacetFilters());
-    document.getElementById('view-sub')?.addEventListener('click', (e) => { const chip = e.target.closest('.fchip'); if (!chip || !this.catalog) return; if (chip.dataset.ex === '1') this.toggleFacetExclude(chip.dataset.facet, chip.dataset.term); else this.toggleFacet(chip.dataset.facet, chip.dataset.term); });
+    document.getElementById('view-sub')?.addEventListener('click', (e) => { const chip = e.target.closest('.fchip'); if (!chip || !this.catalog) return; if (chip.dataset.range === '1') { this.clearFacet(chip.dataset.facet); return; } if (chip.dataset.ex === '1') this.toggleFacetExclude(chip.dataset.facet, chip.dataset.term); else this.toggleFacet(chip.dataset.facet, chip.dataset.term); });
     document.getElementById('facets-head')?.addEventListener('contextmenu', (e) => { if (e.target.closest('button')) return; e.preventDefault(); this.facetsHeaderMenu(e.clientX, e.clientY); });
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
@@ -417,13 +418,24 @@ export class App {
   _renderCatalogSub(n) {
     const el = document.getElementById('view-sub'); if (!el) return;
     const chips = [];
-    for (const [fc, s] of Object.entries(this.catalog.filters)) for (const t of s) chips.push([fc, t, false]);
-    for (const [fc, s] of Object.entries(this.catalog.excludes || {})) for (const t of s) chips.push([fc, t, true]);
+    for (const [fc, s] of Object.entries(this.catalog.filters)) {
+      // Collapse a multi-year temporal selection into one range chip (2018–2022).
+      if (fc === 'temporal') {
+        const ys = [...s].filter((t) => /^\d{3,4}$/.test(t)).map(Number).sort((a, b) => a - b);
+        if (ys.length >= 3) {
+          chips.push(['temporal', `${ys[0]}–${ys[ys.length - 1]}`, false, true]);
+          for (const t of s) if (!/^\d{3,4}$/.test(t)) chips.push(['temporal', t, false, false]);
+          continue;
+        }
+      }
+      for (const t of s) chips.push([fc, t, false, false]);
+    }
+    for (const [fc, s] of Object.entries(this.catalog.excludes || {})) for (const t of s) chips.push([fc, t, true, false]);
     const head = `${n} item${n === 1 ? '' : 's'}`;
     if (!chips.length) { el.classList.remove('chips'); el.textContent = `${head} · pick a facet →`; return; }
     el.classList.add('chips');
-    el.innerHTML = `<span class="vs-count">${head}</span>` + chips.map(([fc, t, ex]) =>
-      `<span class="fchip${ex ? ' ex' : ''}" data-facet="${escapeHtml(fc)}" data-term="${escapeHtml(t)}" data-ex="${ex ? 1 : 0}" title="${ex ? 'Excluded' : 'Filtering'} ${escapeHtml(fc)} — click to remove">${ex ? '−' : ''}${escapeHtml(fc)}:${escapeHtml(t)}<span class="x">✕</span></span>`).join('');
+    el.innerHTML = `<span class="vs-count">${head}</span>` + chips.map(([fc, t, ex, range]) =>
+      `<span class="fchip${ex ? ' ex' : ''}" data-facet="${escapeHtml(fc)}" data-term="${escapeHtml(t)}" data-ex="${ex ? 1 : 0}" data-range="${range ? 1 : 0}" title="${range ? 'Year range' : ex ? 'Excluded' : 'Filtering'} ${escapeHtml(fc)} — click to remove">${ex ? '−' : ''}${escapeHtml(fc)}:${escapeHtml(t)}<span class="x">✕</span></span>`).join('');
   }
 
   feedUnread(id) {
@@ -1036,6 +1048,17 @@ export class App {
   }
   _facetSelN(facet) { const f = this.catalog?.filters[facet], e = this.catalog?.excludes?.[facet]; return (f ? f.size : 0) + (e ? e.size : 0); }
   clearFacetFilters() { if (!this.catalog) return; this.catalog.filters = {}; this.catalog.excludes = {}; this.renderAll(); }
+  // Set the temporal include-set to every existing year in [from, to].
+  applyTemporalRange() {
+    const fromEl = document.querySelector('#facets .fr-from'), toEl = document.querySelector('#facets .fr-to');
+    if (!fromEl || !toEl || !this.catalog) return;
+    let from = Number(fromEl.value), to = Number(toEl.value);
+    if (from > to) [from, to] = [to, from];
+    const years = [...((this._catalogIndex && this._catalogIndex.temporal) || new Map()).keys()].filter((t) => /^\d{3,4}$/.test(t) && Number(t) >= from && Number(t) <= to);
+    if (years.length) this.catalog.filters.temporal = new Set(years); else delete this.catalog.filters.temporal;
+    if (this.catalog.excludes) delete this.catalog.excludes.temporal;   // a range replaces any temporal selection
+    this.renderAll();
+  }
   clearFacet(facet) { if (!this.catalog) return; let n = 0; if (this.catalog.filters[facet]) { delete this.catalog.filters[facet]; n++; } if (this.catalog.excludes && this.catalog.excludes[facet]) { delete this.catalog.excludes[facet]; n++; } if (n) this.renderAll(); }
 
   // Right-click the FACETS header (or empty space in the panel) → panel-wide
@@ -1282,6 +1305,18 @@ export class App {
         + `<button class="facet-sort" type="button" data-facet="${escapeHtml(facet)}" title="Sort: ${mode === 'count' ? 'by count' : mode === 'az' ? 'A→Z' : 'Z→A'} — click to cycle">${SORT[mode]}</button>`
         + `</div>`;
       if (!isCollapsed) {
+        // Temporal is ordered (PMEST's Time): offer a from–to year range, not just
+        // discrete year-chips. Applying it sets the include-set to the in-range
+        // years that exist — reusing the normal facet machinery.
+        if (facet === 'temporal') {
+          const years = [...map.keys()].filter((t) => /^\d{3,4}$/.test(t)).sort((a, b) => Number(a) - Number(b));
+          if (years.length > 2) {
+            const selY = [...sel].filter((t) => /^\d{3,4}$/.test(t)).sort((a, b) => Number(a) - Number(b));
+            const lo = selY[0] || years[0], hi = selY[selY.length - 1] || years[years.length - 1];
+            const opts = (cur) => years.map((y) => `<option${y === cur ? ' selected' : ''}>${y}</option>`).join('');
+            html += `<div class="facet-range"><select class="fr-from" title="From year">${opts(lo)}</select><span class="fr-dash">–</span><select class="fr-to" title="To year">${opts(hi)}</select></div>`;
+          }
+        }
         for (const [term, count] of entries.slice(0, 40)) {
           const cls = sel.has(term) ? ' active' : exSet.has(term) ? ' excluded' : '';
           html += `<div class="facet-term${cls}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`

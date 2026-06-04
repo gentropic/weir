@@ -76,6 +76,10 @@ body {
 .facet-term.active .ft-name { color: var(--au-action); }
 .facet-term .ft-count { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); flex-shrink: 0; }
 .facet-more { padding: 2px 8px 2px 22px; font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); }
+.facet-range { display: flex; align-items: center; gap: 6px; padding: 2px 8px 5px 22px; }
+.facet-range select { flex: 1; min-width: 0; font-family: var(--au-font-mono); font-size: 11px; color: var(--au-fg-muted); background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 1px 4px; }
+.facet-range select:focus { outline: none; border-color: var(--au-action); }
+.facet-range .fr-dash { color: var(--au-fg-soft); font-size: 11px; }
 .facet-group .facet-more { cursor: pointer; }
 .facet-group .facet-more:hover { color: var(--au-action); }
 .panel.facet-dialog { width: min(760px, 94vw); }
