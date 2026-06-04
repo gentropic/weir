@@ -427,7 +427,10 @@ FSA-friendly, glass-compatible; the catalog *card* carries the structure, the bo
 stays plain. **Annotations** (a note bound to a specific item) are a second step.
 
 **Annotation model — adopt the W3C Web Annotation Data Model** (the same "take the
-standard, don't invent" move as SKOS in §7). Shape: `body` (your note/tag, markdown) +
+standard, don't invent" move as SKOS in §7). **✅ Shipped 2026-06-04** (whole-item
+annotations: `n` / ✎ Note binds a note to an item; `target` scalar in frontmatter;
+bidirectional backlinks — `📝 N` badge on the item, target-link in the note pane.
+Selectors/highlights are the next increment). Shape: `body` (your note/tag, markdown) +
 `target` (`source` = a weir item id) + optional `selector` (where in the item). An
 annotation is just *a note that carries a `target`* — so it rides the §9 notes-as-items
 machinery for free. **The selector choice is forced by a weir fact:** the poller *updates*

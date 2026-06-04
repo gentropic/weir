@@ -164,9 +164,18 @@ the trigger/query layer on top.
   new surface is a note *composer* — weir becomes the **write** side, not just
   read (the "replace Obsidian" move). Folds in Holocene's **activity log** as
   self-notes on import. Sequence: *after* the catalog base settles.
-- **UI architecture — the workspace shell (`@gcu/rails`), driven by notes** *(decided
-  direction; prototype-first)*. **Note-taking is the real driver, not maps.** Today notes
-  live in a **modal dialog** — a v0.1 stopgap that structurally fights the act of
+- **UI architecture — the workspace shell (`@gcu/rails`), driven by notes** *(✅ SHIPPED
+  2026-06-04)*. **Shipped:** rails hosts the stream as the default pane (id-preserving
+  trick → stream/reader code untouched); the note editor graduated from the modal into
+  per-instance **NotePane** panes (multi-note, side-by-side, drag-survives-CM6); the modal
+  is retired; annotation-in-context works (`n` / ✎ Note → a note bound to the item's W3C
+  `target`, persisted to frontmatter) with the loop closed both ways (item shows a `📝 N`
+  badge → its notes; note pane's target pill → jumps to the item). Single-pane default
+  still reads like before (a `ws-solo` class hides the strip until a 2nd pane opens).
+  `@gcu/sideact` (reactivity) remains the separate, not-yet-taken axis. Integration
+  gotchas captured in memory `weir-rails-integration`. The history below is kept for the
+  rationale. **Note-taking is the real driver, not maps.** Today notes
+  lived in a **modal dialog** — a v0.1 stopgap that structurally fights the act of
   note-taking: a modal *can't show you the thing you're writing about*. The defining
   workflow is annotate-in-context (read the source on one side, write the note on the
   other); a dialog makes that impossible, undersells notes as ephemeral when glass treats

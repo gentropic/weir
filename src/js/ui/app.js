@@ -1653,11 +1653,13 @@ export class App {
     inner += '<div class="ifooter">';
     if (it.url && !it.full) inner += '<button data-act="fullcontent">load full article ↡</button>';
     if (it.url) inner += '<button data-act="open">open original ↗</button>';
+    inner += '<button data-act="note">✎ note</button>';   // annotate-in-context from the reader
     inner += `<button data-act="save">${it.saved ? 'unsave' : 'save'}</button>`;
     inner += '<button data-act="archive">archive</button>';
     if (suppressed) inner += '<button data-act="images">load images</button>';
     inner += '</div>';
-    inner += this._backlinksHtml(it);   // notes that reference this item
+    inner += this._annotationNotesHtml(it);   // 📝 notes ABOUT this item (annotation targets)
+    inner += this._backlinksHtml(it);         // ← wiki [[ref]] backlinks (a different relation)
     return inner;
   }
 
@@ -1702,6 +1704,8 @@ export class App {
     const onb = e.target.closest('[data-onboard]');
     if (onb) { if (onb.dataset.onboard === 'import') document.getElementById('opml-file')?.click(); return; }
     if (e.target.closest('[data-stack-new]')) { this.openNoteEditor(); return; }
+    const noteBl = e.target.closest('.note-bl');
+    if (noteBl) { e.preventDefault(); e.stopPropagation(); this.openNotePane({ noteId: noteBl.dataset.note }); return; }
     const link = e.target.closest('.wikilink, .backlink');
     if (link) { e.preventDefault(); e.stopPropagation(); if (link.dataset.target) this._openRef(link.dataset.target); return; }
     const imp = e.target.closest('[data-import]');
@@ -1775,6 +1779,7 @@ export class App {
     if (!it) return;
     if (act === 'open') { if (it.url) window.open(it.url, '_blank', 'noopener'); return; }
     if (act === 'editnote') { this.openNoteEditor(id); return; }
+    if (act === 'note') { this.annotateItem(id); return; }
     if (act === 'dlfile') { this.downloadStacksFile(id); return; }
     if (act === 'fullcontent') { this.loadFullContent(id); return; }
     if (act === 'images') { this.loadImages(id); return; }
@@ -3094,6 +3099,16 @@ export class App {
     if (!sources.length) return '';
     const rows = sources.slice(0, 50).map((s) => `<a class="backlink" data-target="${escapeHtml(s.id)}" title="${escapeHtml(s.path || s.feed_id || '')}">${escapeHtml(s.title || s.path || s.id)}</a>`).join('');
     return `<div class="backlinks"><span class="bl-head">← linked from (${sources.length})</span>${rows}</div>`;
+  }
+  // Notes that ANNOTATE this item (W3C target) — distinct from wiki [[ref]] backlinks.
+  _annotationNotesHtml(item) {
+    const ids = (this._noteBacklinks && this._noteBacklinks.get(item.id)) || [];
+    if (!ids.length) return '';
+    const rows = ids.slice(0, 50).map((nid) => {
+      const n = this.store.getItem(nid);
+      return `<a class="backlink note-bl" data-note="${escapeHtml(nid)}" title="open this note">✎ ${escapeHtml((n && (n.title || n.path)) || nid)}</a>`;
+    }).join('');
+    return `<div class="backlinks"><span class="bl-head">📝 notes about this (${ids.length})</span>${rows}</div>`;
   }
   // Open a linked item: a stacks entry opens in the tree; a feed item jumps to its feed.
   _openRef(id) {
