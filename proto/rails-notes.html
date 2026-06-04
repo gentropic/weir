@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>weir × rails — notes-pane prototype</title>
+<!-- real weir design tokens + the vendored rails structural CSS + the vendored CM6 bundle -->
+<link rel="stylesheet" href="../vendor/switchboard/tokens.css">
+<link rel="stylesheet" href="../vendor/rails.css">
+<script src="../vendor/cm6.min.js"></script>
+<style>
+  /* ── PROTOTYPE ONLY — not shipped. Go/no-go feel test for the rails shell. ──
+     Question this answers: does rails hosting {stream + an opt-in notes pane,
+     annotation-in-context, CM6 that survives a drag} feel like weir-PLUS or
+     weir-bloated? Single-pane is the default; the notes pane is summoned. */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+    background: var(--sw-bg); color: var(--sw-text);
+    font-family: var(--au-font-sans, var(--sw-sans)); font-size: 13px; }
+  body { display: flex; flex-direction: column; }
+
+  header { display: flex; gap: 14px; align-items: baseline;
+    padding: 8px 14px; background: var(--sw-bg-raised);
+    border-bottom: 1px solid var(--sw-border); flex-shrink: 0; }
+  header h1 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+  header .hint { color: var(--sw-text-soft); font-size: 11px;
+    font-family: var(--au-font-mono, var(--sw-mono)); }
+  header kbd { font-family: var(--au-font-mono, var(--sw-mono)); font-size: 10px;
+    background: var(--sw-bg-bright); border: 1px solid var(--sw-border);
+    border-radius: 3px; padding: 1px 5px; color: var(--sw-text-mid); }
+  main { flex: 1; position: relative; overflow: hidden; }
+
+  /* Theme the rails-* structural classes with weir tokens (rails.css is unstyled). */
+  .rails-rail { background: var(--sw-bg); }
+  .rails-rail-split, .rails-stack-split { border-left: 1px solid var(--sw-border); }
+  .rails-stack-split { border-left: none; border-top: 1px solid var(--sw-border); }
+  .rails-rail-split:hover, .rails-stack-split:hover { background: var(--sw-indigo-soft); }
+  .rails-strip { background: var(--sw-bg-raised); border-bottom: 1px solid var(--sw-border); }
+  .rails-tab { padding: 6px 12px; color: var(--sw-text-soft);
+    border-right: 1px solid var(--sw-border); gap: 8px; font-size: 12px;
+    font-family: var(--au-font-mono, var(--sw-mono)); transition: color .08s, background .08s; }
+  .rails-tab.rails-active { background: var(--sw-bg); color: var(--sw-text);
+    box-shadow: inset 0 2px 0 var(--sw-indigo); }
+  .rails-tab:hover { color: var(--sw-text); }
+  .rails-x { opacity: .4; width: 12px; text-align: center; }
+  .rails-x:hover { opacity: 1; color: var(--sw-red); }
+  .rails-panel { background: var(--sw-bg); }
+  .rails-ghost { background: var(--sw-bg-raised); border: 1px solid var(--sw-border);
+    padding: 5px 10px; border-radius: var(--sw-radius); box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+  .rails-zone.rails-active { background: var(--sw-indigo-soft); box-shadow: 0 0 0 1px var(--sw-indigo); }
+  .rails-zone.rails-zone-insert.rails-active { background: var(--sw-indigo); box-shadow: none; }
+
+  /* ── stream panel ── */
+  .stream { flex: 1; min-height: 0; overflow: auto; }
+  .srow { display: grid; grid-template-columns: auto 1fr auto; gap: 10px;
+    align-items: baseline; padding: 10px 14px; border-bottom: 1px solid var(--sw-rule);
+    cursor: pointer; }
+  .srow:hover { background: var(--sw-bg-raised); }
+  .srow.focus { background: var(--sw-indigo-soft); box-shadow: inset 3px 0 0 var(--sw-indigo); }
+  .srow .pill { font-family: var(--au-font-mono, var(--sw-mono)); font-size: 9px;
+    text-transform: uppercase; letter-spacing: .06em; padding: 2px 7px;
+    border-radius: 999px; align-self: center; white-space: nowrap;
+    color: var(--sw-bg); font-weight: 600; }
+  .srow .t { font-size: 13px; line-height: 1.4; }
+  .srow .meta { font-family: var(--au-font-mono, var(--sw-mono)); font-size: 10px;
+    color: var(--sw-text-soft); white-space: nowrap; }
+  .srow .noteflag { font-size: 10px; color: var(--sw-teal); margin-left: 6px; }
+  .srow .src { color: var(--sw-text-mid); font-size: 11px;
+    font-family: var(--au-font-mono, var(--sw-mono)); }
+
+  /* ── note panel ── */
+  .note { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .note-head { display: flex; gap: 8px; align-items: center; flex-shrink: 0;
+    padding: 7px 12px; background: var(--sw-bg-raised);
+    border-bottom: 1px solid var(--sw-border);
+    font-family: var(--au-font-mono, var(--sw-mono)); font-size: 11px; color: var(--sw-text-soft); }
+  .note-head .tgt { color: var(--sw-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .note-head .ann { color: var(--sw-teal); }
+  .note-edit { flex: 1; min-height: 0; }
+  .note-edit .cm-editor { height: 100%; }
+
+  .rails-empty { color: var(--sw-text-soft);
+    font-family: var(--au-font-mono, var(--sw-mono)); padding: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>weir × rails</h1>
+  <span class="hint">notes-pane prototype · single-pane default</span>
+  <span style="flex:1"></span>
+  <span class="hint">
+    <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>n</kbd> note this item · then
+    <b style="color:var(--sw-amber)">drag the note tab</b> — cursor &amp; text must survive
+  </span>
+</header>
+<main id="workspace"></main>
+
+<script type="module">
+import { createRails } from '../vendor/rails.js';
+
+// ── mock stream: representative weir item types, mapped to the six accents ──
+const ACCENT = { article:'--sw-indigo', video:'--sw-red', release:'--sw-green',
+                 paper:'--sw-amber', event:'--sw-orange', note:'--sw-teal' };
+const ITEMS = [
+  { id:'art-memex',   type:'article', title:'As We May Think — the memex, revisited', src:'gentropic.org', date:'2d' },
+  { id:'vid-build',   type:'video',   title:'Building a single-file feed reader from scratch', src:'youtube', date:'4d' },
+  { id:'rel-vfs',     type:'release', title:'@gcu/vfs v0.4.0 — FSA-A backend lands', src:'github', date:'5d' },
+  { id:'pap-facet',   type:'paper',   title:'Faceted classification in practice: a 50-year retrospective', src:'arxiv', date:'1w' },
+  { id:'evt-quake',   type:'event',   title:'M 5.2 — 120 km SSW of Somewhere', src:'usgs', date:'1w' },
+  { id:'art-laundry', type:'article', title:'The Stacks: forbidden knowledge, properly catalogued', src:'antipope.org', date:'2w' },
+];
+const noted = new Set();           // item ids that have a note (drives the ◆ flag)
+let focusIdx = 0;
+let streamEl = null;               // the (cached, never-reparented) stream DOM
+
+function buildStream() {
+  const el = document.createElement('div');
+  el.className = 'stream';
+  ITEMS.forEach((it, i) => {
+    const row = document.createElement('div');
+    row.className = 'srow' + (i === focusIdx ? ' focus' : '');
+    row.dataset.idx = i;
+    row.innerHTML =
+      `<span class="pill" style="background:var(${ACCENT[it.type]})">${it.type}</span>`
+    + `<div class="t">${it.title}<span class="noteflag" data-flag>${noted.has(it.id)?'◆ noted':''}</span></div>`
+    + `<span class="meta"><span class="src">${it.src}</span> · ${it.date}</span>`;
+    row.addEventListener('click', () => { setFocus(i); });
+    row.addEventListener('dblclick', () => { setFocus(i); openNote(ITEMS[i]); });
+    el.appendChild(row);
+  });
+  return el;
+}
+function setFocus(i) {
+  focusIdx = Math.max(0, Math.min(ITEMS.length - 1, i));
+  if (!streamEl) return;
+  streamEl.querySelectorAll('.srow').forEach((r, n) =>
+    r.classList.toggle('focus', n === focusIdx));
+  streamEl.querySelector(`.srow[data-idx="${focusIdx}"]`)
+    ?.scrollIntoView({ block: 'nearest' });
+}
+function flagNoted(itemId) {
+  noted.add(itemId);
+  const idx = ITEMS.findIndex(x => x.id === itemId);
+  streamEl?.querySelector(`.srow[data-idx="${idx}"] [data-flag]`)
+    ?.replaceChildren('◆ noted');
+}
+
+// ── CM6 mount — same construction weir uses (_mountCm), proving the real editor
+//    works inside a rails pane and survives reparenting. ──
+function mountCm(host, doc) {
+  const CM = window.CM6;
+  if (!CM || !CM.EditorView) {
+    const ta = document.createElement('textarea');
+    ta.value = doc; ta.spellcheck = false;
+    ta.style.cssText = 'width:100%;height:100%;resize:none;border:none;outline:none;'
+      + 'background:transparent;color:var(--au-fg);font:13px/1.6 var(--au-font-mono);padding:14px 16px;';
+    host.appendChild(ta);
+    return { focus: () => ta.focus() };
+  }
+  const md = CM.markdown ? CM.markdown() : null;
+  const exts = [
+    CM.minimalSetup,
+    md || [],
+    CM.EditorView.lineWrapping,
+    CM.indentWithTab ? CM.keymap.of([CM.indentWithTab]) : [],
+    CM.EditorView.theme({
+      '&': { color: 'var(--au-fg)', backgroundColor: 'transparent', height: '100%', fontSize: '13px' },
+      '.cm-content': { fontFamily: 'var(--au-font-mono)', padding: '14px 16px', caretColor: 'var(--au-fg)' },
+      '.cm-scroller': { lineHeight: '1.6' },
+      '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--au-fg)' },
+      '.cm-gutters': { backgroundColor: 'transparent', border: 'none', color: 'var(--au-fg-soft)' },
+    }, { dark: true }),
+  ];
+  const view = new CM.EditorView({ parent: host,
+    state: CM.EditorState.create({ doc, extensions: exts }) });
+  requestAnimationFrame(() => { view.requestMeasure(); view.focus(); });
+  return { focus: () => view.focus() };
+}
+
+// ── the annotation-in-context note: a W3C-Web-Annotation-shaped stub bound to
+//    the focused item (target.source = item id). This is stance #1's gesture. ──
+function noteSeed(item) {
+  return `---
+type: annotation
+motivation: commenting
+target:
+  source: ${item.id}
+---
+# note on "${item.title}"
+
+`;
+}
+
+let noteStackId = null;            // where subsequent notes append (one notes pane)
+function stackExists(id) {
+  return !!rails && rails.state.rails.some(r => r.stacks.some(s => s.id === id));
+}
+function findStackOfTab(tabId) {
+  for (const r of rails.state.rails)
+    for (const s of r.stacks)
+      if (s.tabs.some(t => t.id === tabId)) return s.id;
+  return null;
+}
+
+let noteN = 0;
+function openNote(item) {
+  const tabId = 'note-' + item.id + '-' + (++noteN);
+  const tab = { id: tabId, kind: 'note', title: '✎ ' + shortTitle(item), item };
+  if (noteStackId && stackExists(noteStackId)) {
+    rails.addTab(tab, { to: 'stack', stackId: noteStackId });   // append to the notes pane
+  } else {
+    rails.addTab(tab, { to: 'new-rail' });                       // first note → open the pane (right)
+    noteStackId = findStackOfTab(tabId);
+  }
+  flagNoted(item.id);
+}
+function shortTitle(it) {
+  return it.title.length > 26 ? it.title.slice(0, 24) + '…' : it.title;
+}
+
+// ── rails ──
+const rails = createRails(document.getElementById('workspace'), {
+  initialState: {
+    // SINGLE-PANE DEFAULT: just the stream. The notes pane is opt-in (press n).
+    rails: [ { id: 'r-stream', flex: 1.4, stacks: [ { id: 's-stream', flex: 1,
+      active: 'stream', tabs: [ { id: 'stream', kind: 'stream', title: 'stream', closeable: false } ] } ] } ],
+    floats: [],
+  },
+  renderPanel(tab) {
+    if (tab.kind === 'stream') { streamEl = buildStream(); return streamEl; }
+    if (tab.kind === 'note') {
+      const it = tab.item;
+      const el = document.createElement('div');
+      el.className = 'note';
+      const head = document.createElement('div');
+      head.className = 'note-head';
+      head.innerHTML = `<span class="ann">annotation ▸</span>`
+        + `<span class="pill" style="background:var(${ACCENT[it.type]});color:var(--sw-bg);`
+        + `font-size:9px;padding:1px 6px;border-radius:999px;font-family:var(--au-font-mono)">${it.type}</span>`
+        + `<span class="tgt">${it.title}</span>`;
+      const edit = document.createElement('div');
+      edit.className = 'note-edit';
+      el.appendChild(head); el.appendChild(edit);
+      mountCm(edit, noteSeed(it));
+      return el;
+    }
+    const d = document.createElement('div'); d.className = 'rails-empty';
+    d.textContent = 'unknown panel'; return d;
+  },
+  renderEmpty() {
+    const el = document.createElement('div'); el.className = 'rails-empty';
+    el.textContent = 'workspace empty';
+    return el;
+  },
+});
+window.rails = rails;   // console poking
+
+// ── keyboard: weir's discipline — single-key shortcuts must NOT leak into CM6 ──
+function isTyping() {
+  const a = document.activeElement;
+  if (!a) return false;
+  if (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable) return true;
+  return !!a.closest?.('.cm-editor');     // CM6's editable surface
+}
+document.addEventListener('keydown', (e) => {
+  if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'j') { setFocus(focusIdx + 1); e.preventDefault(); }
+  else if (e.key === 'k') { setFocus(focusIdx - 1); e.preventDefault(); }
+  else if (e.key === 'n' || e.key === 'Enter') { openNote(ITEMS[focusIdx]); e.preventDefault(); }
+});
+</script>
+</body>
+</html>

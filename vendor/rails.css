@@ -1,0 +1,327 @@
+/*
+ * @gcu/rails — structural stylesheet
+ * Layout, positioning, pointer-events, transitions. Zero colors or fonts.
+ * Decorative styling lives in rails-default.css (optional) or consumer CSS.
+ */
+
+.rails-root {
+  position: relative;
+  overflow: hidden;
+}
+
+/* Chrome layer holds two sublayers: .rails-rails (rails/stacks) and
+   .rails-floats (float frames above rails). Rebuilt on structural mutation. */
+.rails-chrome {
+  position: absolute;
+  inset: 0;
+}
+
+.rails-rails {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+/* .rails-floats is a pure positioning container — NO z-index, so it does
+   not create a stacking context. Each individual float sets its own root-level
+   z-index (100 + float.z * 10), and its panel gets an interleaved z
+   (100 + float.z * 10 + 5) so float windows stack as units without lower
+   floats' chromes painting above higher floats' panels. */
+.rails-floats {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Content layer: panels. Pointer events enabled on individual panels only.
+   No z-index here — each panel sets its own (rail panels at auto; float panels
+   at 10 + float.z) so that float panels paint above rail panels at the same
+   screen area, but below the floats layer (z:100) so the float frame
+   (titlebar/strip/handles) still draws on top. */
+.rails-content {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.rails-panel {
+  position: absolute;
+  pointer-events: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* Transitions are structural — panels slide between positions on layout change.
+     The .rails-dragging class disables transitions during active drags. */
+  transition: left 140ms cubic-bezier(.4,.1,.2,1),
+              top 140ms cubic-bezier(.4,.1,.2,1),
+              width 140ms cubic-bezier(.4,.1,.2,1),
+              height 140ms cubic-bezier(.4,.1,.2,1);
+}
+
+.rails-panel.rails-dragging {
+  transition: none;
+  pointer-events: none;
+}
+
+/* Rail — horizontal column. */
+.rails-rail {
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  overflow: hidden;
+}
+
+/* Collapsed rail: narrow icon strip. */
+.rails-rail.rails-collapsed {
+  min-width: 32px;
+}
+
+/* Collapse button: inline in the first strip-wrap, right of the overflow ⋯.
+   Expand button: inline at the top of a collapsed 32px rail. */
+.rails-rail-collapse-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  padding: 0;
+  user-select: none;
+}
+
+.rails-rail-expand-btn {
+  flex: 0 0 auto;
+  width: 100%;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  padding: 4px 0;
+  user-select: none;
+}
+
+.rails-rail-split {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 2;
+  touch-action: none;
+}
+
+/* Stack — vertical tab group within a rail (or inside a float). */
+.rails-stack {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 100px;
+  overflow: hidden;
+}
+
+.rails-stack-in-float {
+  flex: 1;
+  min-height: 0;
+}
+
+.rails-stack-split {
+  flex: 0 0 6px;
+  cursor: row-resize;
+  position: relative;
+  z-index: 2;
+  touch-action: none;
+}
+
+/* Strip-wrap — holds the scrollable strip + overflow button side-by-side.
+   Only present when tabs are rendered (always, in practice). */
+.rails-strip-wrap {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  min-height: 30px;
+  pointer-events: auto;
+}
+
+/* Strip — the row of tab headers. Lives inside .rails-strip-wrap. */
+.rails-strip {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  pointer-events: auto;
+}
+
+.rails-overflow-btn {
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.rails-overflow-btn[hidden] { display: none; }
+
+.rails-strip:focus { outline: none; }
+
+.rails-tab {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+
+.rails-tab:active { cursor: grabbing; }
+.rails-tab.rails-locked { cursor: default; }
+
+.rails-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rails-tab-badge {
+  flex-shrink: 0;
+}
+
+.rails-x {
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.rails-slot {
+  flex: 1;
+  min-height: 0;
+  /* Pass-through to the panel below (panels live in contentLayer, floats'
+     slots are transparent windows onto that layer). */
+  pointer-events: none;
+}
+
+/* Empty workspace: the consumer's renderEmpty() element sits inside chrome. */
+.rails-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Floats ─────────────────────────────────────────────────────────── */
+
+/* The float itself is pointer-transparent — its opaque children (titlebar,
+   strip, resize handles) re-enable pointer events. This keeps the slot area
+   click-through to the panel that lives in contentLayer behind the float.
+   box-sizing: border-box so width/height from float.w/h include any border
+   from the consumer theme — otherwise the border adds to the float's
+   rendered size and the slot rect ends up offset from what panel positioning
+   expects. */
+.rails-float {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.rails-float.rails-maximized {
+  /* Maximized floats fill workspace — position is set explicitly via inline
+     style by toggleFloatMaximized. No structural CSS change needed here. */
+}
+
+/* Single-tab floats: hide the redundant in-stack strip. The titlebar already
+   shows the tab title, and there are no peers to switch between. As soon as
+   a second tab joins (drop on titlebar), the class is dropped on the next
+   chrome rebuild and the strip reappears. */
+.rails-float.rails-float-single-tab .rails-strip-wrap {
+  display: none;
+}
+
+.rails-titlebar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  cursor: grab;
+  user-select: none;
+  position: relative;
+  z-index: 1;
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.rails-titlebar:active { cursor: grabbing; }
+
+.rails-titlebar-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rails-titlebar-buttons {
+  flex-shrink: 0;
+  display: flex;
+}
+
+.rails-titlebar-buttons button {
+  cursor: pointer;
+}
+
+/* Per-float handles overlay — sibling of .rails-float in floatsLayer, sized
+   to match the float, but at a higher z so it paints above the panel. The
+   overlay itself is pointer-transparent; only the 8 handle strips re-enable
+   pointer events. Hidden when the float is minimized (no resize affordance
+   on a collapsed-to-titlebar float). */
+.rails-float-handles {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.rails-float-handles.rails-minimized {
+  display: none;
+}
+
+/* Resize handles — 8 per float. Edges are 6px thick strips; corners are
+   12×12 squares that overlap the edges and cover the true corners. */
+.rails-resize-handle {
+  position: absolute;
+  touch-action: none;
+  pointer-events: auto;
+}
+.rails-resize-handle-n { top: 0; left: 6px; right: 6px; height: 6px; cursor: ns-resize; }
+.rails-resize-handle-s { bottom: 0; left: 6px; right: 6px; height: 6px; cursor: ns-resize; }
+.rails-resize-handle-e { right: 0; top: 6px; bottom: 6px; width: 6px; cursor: ew-resize; }
+.rails-resize-handle-w { left: 0; top: 6px; bottom: 6px; width: 6px; cursor: ew-resize; }
+.rails-resize-handle-ne { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.rails-resize-handle-nw { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.rails-resize-handle-se { bottom: 0; right: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.rails-resize-handle-sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+
+/* ── Drag UI ────────────────────────────────────────────────────────── */
+
+/* Drag ghost: follows cursor. */
+.rails-ghost {
+  position: absolute;
+  pointer-events: none;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+/* Drop zones: overlays computed at drag start. */
+.rails-zone {
+  position: absolute;
+  pointer-events: none;
+  z-index: 500;
+}
+
+/* Scrim: captures pointer events during drag so iframes/canvases can't swallow them. */
+.rails-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 9500;
+  cursor: grabbing;
+  background: transparent;
+}
