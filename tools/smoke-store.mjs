@@ -6,6 +6,7 @@
 import assert from 'node:assert';
 import { VFS } from '../vendor/vfs.js';
 import { Store } from '../src/js/store/store.js';
+import { simhash, hamming64 } from '../src/js/store/schema.js';
 
 const vfs = await VFS.create();          // memory, persists for this instance
 const store = new Store(vfs);
@@ -379,6 +380,44 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   const s3 = new Store(v); await s3._hydrate();
   assert.equal(s3.getConcept('spatial', '["x","y"]'), null, 'malformed concept dropped on load');
   assert.ok(!s3.getConcept('spatial', 'japan').narrower.includes('["bad","target"]'), 'malformed relation target filtered');
+}
+
+// ── FRBR work-grouping: SimHash, canonical-URL, regroup ──
+{
+  const base = 'the quick brown fox jumps over the lazy dog and then runs far away into the deep dark woods at night';
+  const near = base.replace('woods', 'forest');
+  const far = 'completely unrelated discussion of marine biology and the behaviour of deep sea bioluminescent creatures in the abyss';
+  assert.equal(simhash(base), simhash(base), 'simhash is deterministic');
+  const dNear = hamming64(simhash(base), simhash(near)), dFar = hamming64(simhash(base), simhash(far));
+  assert.ok(dNear < dFar, 'a one-word change is nearer than unrelated text');
+  assert.ok(dFar >= 12, 'unrelated text → large hamming');
+  assert.equal(hamming64('', 'abc'), 64, 'missing/short hash → max distance');
+
+  const v = await VFS.create(); const s = new Store(v); await s._hydrate();
+  // canonical URL: utm + www + trailing slash normalized away, meaningful query kept; distinct ?v= stay distinct
+  assert.equal(s._canonicalUrl('https://www.a.com/story/?utm_source=feed&id=7'), s._canonicalUrl('http://a.com/story?id=7'), 'tracking params/www/slash normalized; real query kept');
+  assert.notEqual(s._canonicalUrl('https://youtube.com/watch?v=AAA'), s._canonicalUrl('https://youtube.com/watch?v=BBB'), 'distinct ?v= stay distinct');
+
+  await s.putFeed({ id: 'f1', name: 'F1', adapter: 'feed', url: 'http://f1/f' });
+  await s.putFeed({ id: 'f2', name: 'F2', adapter: 'feed', url: 'http://f2/f' });
+  await s.upsertItems([
+    { id: 'w-a', feed_id: 'f1', type: 'article', title: 'Big Story', content: `<p>${base}</p>`, url: 'http://news.example/big-story?utm_source=f1' },
+    { id: 'w-b', feed_id: 'f2', type: 'article', title: 'Big Story', content: `<p>${base}</p>`, url: 'http://news.example/big-story' },   // same canonical URL
+    { id: 'w-c', feed_id: 'f2', type: 'article', title: 'Big Story', content: `<p>${base}</p>`, url: 'http://mirror.example/repost' },    // same content, diff URL → simhash
+    { id: 'w-d', feed_id: 'f1', type: 'article', title: 'Sea Life', content: `<p>${far}</p>`, url: 'http://other.example/x' },             // unrelated → singleton
+  ]);
+  const r = await s.regroupWorks();
+  const wid = s.items.get('w-a').work_id;
+  assert.ok(wid, 'w-a grouped into a Work');
+  assert.equal(s.items.get('w-b').work_id, wid, 'same canonical URL joins the Work');
+  assert.equal(s.items.get('w-c').work_id, wid, 'near-dup content joins the Work (different URL)');
+  assert.equal(s.items.get('w-d').work_id, undefined, 'unrelated item stays a singleton (kept, not grouped)');
+  assert.ok(r.works >= 1 && r.manifestations >= 3, 'stats report the multi-manifestation Work');
+  // survives reload; listWorks surfaces it
+  await s.flush();
+  const s2 = new Store(v); await s2._hydrate();
+  assert.equal(s2.items.get('w-c').work_id, wid, 'work_id persists across reload');
+  assert.ok(s2.listWorks(5).some((w) => w.size >= 3), 'listWorks surfaces the cluster');
 }
 
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

@@ -92,6 +92,35 @@ export function hash32(s) {
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return (h >>> 0).toString(16).padStart(8, '0');
 }
+function _fnv32(str, seed) { let h = seed >>> 0; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
+function _popcount(x) { x >>>= 0; x -= (x >>> 1) & 0x55555555; x = (x & 0x33333333) + ((x >>> 2) & 0x33333333); x = (x + (x >>> 4)) & 0x0f0f0f0f; return Math.imul(x, 0x01010101) >>> 24; }
+
+// SimHash → 16 hex chars (64-bit). Near-duplicate fingerprint: two texts whose
+// hashes are a small Hamming distance apart are near-identical (FRBR work-grouping,
+// GLASS §4.1). Word 3-shingles, two 32-bit FNV halves, zero-dep, no BigInt (hot loop
+// stays fast over a big corpus). '' for empty input.
+export function simhash(text) {
+  const norm = String(text || '').toLowerCase().replace(/<[^>]+>/g, ' ').replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!norm) return '';
+  const w = norm.split(' ');
+  const shingles = w.length < 3 ? [norm] : [];
+  for (let i = 0; i + 3 <= w.length; i++) shingles.push(w[i] + ' ' + w[i + 1] + ' ' + w[i + 2]);
+  const v = new Int32Array(64);
+  for (const sh of shingles) {
+    const lo = _fnv32(sh, 0x811c9dc5), hi = _fnv32(sh, 0x7ee3623b);
+    for (let b = 0; b < 32; b++) { v[b] += (lo >>> b) & 1 ? 1 : -1; v[b + 32] += (hi >>> b) & 1 ? 1 : -1; }
+  }
+  let loOut = 0, hiOut = 0;
+  for (let b = 0; b < 32; b++) { if (v[b] > 0) loOut |= 1 << b; if (v[b + 32] > 0) hiOut |= 1 << b; }
+  return (hiOut >>> 0).toString(16).padStart(8, '0') + (loOut >>> 0).toString(16).padStart(8, '0');
+}
+
+// Hamming distance between two SimHashes (0–64; 64 if either is empty/missing).
+export function hamming64(a, b) {
+  if (!a || !b || a.length !== 16 || b.length !== 16) return 64;
+  return _popcount(parseInt(a.slice(0, 8), 16) ^ parseInt(b.slice(0, 8), 16))
+    + _popcount(parseInt(a.slice(8), 16) ^ parseInt(b.slice(8), 16));
+}
 
 // Filesystem-safe key for an arbitrary id. Readable prefix + hash so distinct
 // ids never collide and the result is legal on FSA/Windows (no ':' '/' etc.).
@@ -198,6 +227,8 @@ export function makeItem(raw, feed) {
   if (raw.mime) rec.mime = String(raw.mime);
   if (raw.missing) rec.missing = true;
   if (synthTitle) rec.title_synth = true;
+  if (raw.work_id) rec.work_id = String(raw.work_id);   // FRBR grouping (assigned by regroupWorks; persists across re-fetch)
+  rec.simhash = simhash(`${rec.title} ${rec.excerpt || ''}`);   // near-dup fingerprint (title+excerpt — no content I/O)
   rec.search_text = deriveSearchText(rec);
   rec.expires_at = computeExpiry(rec, feed);
   return rec;

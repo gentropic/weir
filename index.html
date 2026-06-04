@@ -7623,6 +7623,35 @@ function hash32(s) {
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return (h >>> 0).toString(16).padStart(8, '0');
 }
+function _fnv32(str, seed) { let h = seed >>> 0; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
+function _popcount(x) { x >>>= 0; x -= (x >>> 1) & 0x55555555; x = (x & 0x33333333) + ((x >>> 2) & 0x33333333); x = (x + (x >>> 4)) & 0x0f0f0f0f; return Math.imul(x, 0x01010101) >>> 24; }
+
+// SimHash → 16 hex chars (64-bit). Near-duplicate fingerprint: two texts whose
+// hashes are a small Hamming distance apart are near-identical (FRBR work-grouping,
+// GLASS §4.1). Word 3-shingles, two 32-bit FNV halves, zero-dep, no BigInt (hot loop
+// stays fast over a big corpus). '' for empty input.
+function simhash(text) {
+  const norm = String(text || '').toLowerCase().replace(/<[^>]+>/g, ' ').replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!norm) return '';
+  const w = norm.split(' ');
+  const shingles = w.length < 3 ? [norm] : [];
+  for (let i = 0; i + 3 <= w.length; i++) shingles.push(w[i] + ' ' + w[i + 1] + ' ' + w[i + 2]);
+  const v = new Int32Array(64);
+  for (const sh of shingles) {
+    const lo = _fnv32(sh, 0x811c9dc5), hi = _fnv32(sh, 0x7ee3623b);
+    for (let b = 0; b < 32; b++) { v[b] += (lo >>> b) & 1 ? 1 : -1; v[b + 32] += (hi >>> b) & 1 ? 1 : -1; }
+  }
+  let loOut = 0, hiOut = 0;
+  for (let b = 0; b < 32; b++) { if (v[b] > 0) loOut |= 1 << b; if (v[b + 32] > 0) hiOut |= 1 << b; }
+  return (hiOut >>> 0).toString(16).padStart(8, '0') + (loOut >>> 0).toString(16).padStart(8, '0');
+}
+
+// Hamming distance between two SimHashes (0–64; 64 if either is empty/missing).
+function hamming64(a, b) {
+  if (!a || !b || a.length !== 16 || b.length !== 16) return 64;
+  return _popcount(parseInt(a.slice(0, 8), 16) ^ parseInt(b.slice(0, 8), 16))
+    + _popcount(parseInt(a.slice(8), 16) ^ parseInt(b.slice(8), 16));
+}
 
 // Filesystem-safe key for an arbitrary id. Readable prefix + hash so distinct
 // ids never collide and the result is legal on FSA/Windows (no ':' '/' etc.).
@@ -7729,6 +7758,8 @@ function makeItem(raw, feed) {
   if (raw.mime) rec.mime = String(raw.mime);
   if (raw.missing) rec.missing = true;
   if (synthTitle) rec.title_synth = true;
+  if (raw.work_id) rec.work_id = String(raw.work_id);   // FRBR grouping (assigned by regroupWorks; persists across re-fetch)
+  rec.simhash = simhash(`${rec.title} ${rec.excerpt || ''}`);   // near-dup fingerprint (title+excerpt — no content I/O)
   rec.search_text = deriveSearchText(rec);
   rec.expires_at = computeExpiry(rec, feed);
   return rec;
@@ -8687,6 +8718,76 @@ class Store {
     }
     if (removed) { this._markFeedDirty(feedId); this.emit('items', { inserted: 0, updated: 0, skipped: 0, removed }); }
     return { removed };
+  }
+
+  // ── FRBR work-grouping (GLASS §4.1) ──
+  // Canonical URL for syndication identity: drop www, fragment, trailing slash, and
+  // known tracking params — but KEEP meaningful query (a YouTube `?v=`, a WP `?p=`),
+  // so the same article via different feeds collapses while distinct videos don't.
+  _canonicalUrl(u) {
+    if (!u) return '';
+    try {
+      const x = new URL(u);
+      const host = x.hostname.replace(/^www\./, '').toLowerCase();
+      const params = new URLSearchParams(x.search);
+      for (const k of [...params.keys()]) if (/^(utm_.*|fbclid|gclid|mc_eid|mc_cid|ref|ref_src|igshid|si|spm|cmpid)$/i.test(k)) params.delete(k);
+      const q = params.toString();
+      const path = x.pathname.replace(/\/+$/, '') || '/';
+      return host + path + (q ? '?' + q : '');
+    } catch { return ''; }
+  }
+
+  // Assign `work_id` across items so manifestations of one Work group together
+  // (de-dup as GROUPING, never discarding — every item kept; work_id is a reversible
+  // overlay). Two deterministic signals (precision-first, GLASS §4.1 steps 2–3):
+  // (a) identical canonical URL (syndication), (b) SimHash near-duplicate via 4×16-bit
+  // LSH bands. NOT an LLM call. Recompute-from-scratch (clears prior work_ids), so it
+  // self-corrects. Returns { items, works, manifestations, biggest }.
+  async regroupWorks({ maxHamming = 3 } = {}) {
+    const live = [...this.items.values()].filter((i) => !i.archived);
+    for (const it of live) if (it.simhash == null) it.simhash = simhash(`${it.title || ''} ${it.excerpt || ''}`);
+    const parent = new Map(); for (const it of live) parent.set(it.id, it.id);
+    const find = (x) => { let r = x; while (parent.get(r) !== r) r = parent.get(r); while (parent.get(x) !== r) { const n = parent.get(x); parent.set(x, r); x = n; } return r; };
+    const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+    // (a) canonical-URL identity (cap group size — real syndication is a handful, not a sea)
+    const byUrl = new Map();
+    for (const it of live) { const c = this._canonicalUrl(it.url); if (!c) continue; (byUrl.get(c) || byUrl.set(c, []).get(c)).push(it.id); }
+    for (const grp of byUrl.values()) { if (grp.length < 2 || grp.length > 12) continue; for (let i = 1; i < grp.length; i++) union(grp[0], grp[i]); }
+    // (b) SimHash near-dup — 4 bands of 16 bits; compare only within a band bucket
+    const withHash = live.filter((it) => it.simhash && it.simhash.length === 16);
+    for (let band = 0; band < 4; band++) {
+      const buckets = new Map();
+      for (const it of withHash) { const key = it.simhash.slice(band * 4, band * 4 + 4); (buckets.get(key) || buckets.set(key, []).get(key)).push(it); }
+      for (const bucket of buckets.values()) {
+        if (bucket.length < 2 || bucket.length > 200) continue;   // skip huge chance-collision buckets
+        for (let i = 0; i < bucket.length; i++) for (let j = i + 1; j < bucket.length; j++) {
+          if (find(bucket[i].id) !== find(bucket[j].id) && hamming64(bucket[i].simhash, bucket[j].simhash) <= maxHamming) union(bucket[i].id, bucket[j].id);
+        }
+      }
+    }
+    // assign work_id = "w:" + smallest member id, for clusters ≥2; clear singletons
+    const clusters = new Map();
+    for (const it of live) { const r = find(it.id); (clusters.get(r) || clusters.set(r, []).get(r)).push(it); }
+    let works = 0, manifestations = 0, biggest = 0; const touched = new Set();
+    for (const members of clusters.values()) {
+      const wid = members.length >= 2 ? 'w:' + members.map((m) => m.id).reduce((a, b) => (a < b ? a : b)) : undefined;
+      if (members.length >= 2) { works++; manifestations += members.length; if (members.length > biggest) biggest = members.length; }
+      for (const it of members) if (it.work_id !== wid) { it.work_id = wid; touched.add(it.feed_id); }
+    }
+    for (const fid of touched) this._markFeedDirty(fid);
+    if (touched.size) await this.flush();
+    this.emit('works', { works, manifestations });
+    return { items: live.length, works, manifestations, biggest };
+  }
+
+  // Multi-manifestation Works, biggest first — for inspecting grouping precision.
+  listWorks(limit = 20) {
+    const byWork = new Map();
+    for (const it of this.items.values()) { if (!it.work_id) continue; (byWork.get(it.work_id) || byWork.set(it.work_id, []).get(it.work_id)).push(it); }
+    return [...byWork.entries()].map(([work_id, members]) => ({
+      work_id, size: members.length,
+      members: members.map((m) => ({ id: m.id, title: m.title, feed: (this.feeds.get(m.feed_id) || {}).name || m.feed_id })),
+    })).sort((a, b) => b.size - a.size).slice(0, limit);
   }
 
   // ── items ──
@@ -16615,6 +16716,21 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { facet: String(input.facet), term: String(input.term).toLowerCase().trim(), concept: store.getConcept(String(input.facet), String(input.term)) };
   }
 
+  // Inspect (and optionally rebuild) FRBR work-grouping (GLASS §4.1): items that are
+  // the same Work across manifestations (wire-syndication, re-uploads). `regroup:true`
+  // runs the deterministic pass (canonical-URL + SimHash near-dup — NOT an LLM call)
+  // then reports; default reports the current grouping. Returns { stats, works } —
+  // the biggest multi-source clusters with member titles+feeds, to eyeball precision
+  // before any inbox-collapsing UI rides on it. Grouping is a reversible overlay;
+  // nothing is deleted.
+  async function works(input = {}) {
+    let stats = null;
+    if (input.regroup) stats = await store.regroupWorks(input.maxHamming != null ? { maxHamming: Number(input.maxHamming) } : {});
+    const list = store.listWorks(Math.min(Number(input.limit) || 20, 100));
+    if (input.regroup && app && app.renderAll) app.renderAll();
+    return { ...(stats ? { stats } : {}), count: list.length, works: list };
+  }
+
   // List the catalog provider's available models (so Claude can pick one). Named
   // distinctly from the imported llm `listModels` — a local `listModels` would
   // shadow it (and the build strips import aliases, so it can't be aliased).
@@ -16954,7 +17070,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -17237,6 +17353,18 @@ const TOOLS = [
     annotations: { title: 'Declare a thesaurus relation' },
   },
   {
+    name: 'weir_works', fn: 'works',
+    description: 'Inspect (and optionally rebuild) FRBR work-grouping (GLASS §4.1): items that are the same Work across manifestations — wire-syndication, re-uploads, cross-posts. `regroup:true` runs the deterministic grouping pass (identical canonical URL + SimHash near-duplicate; NOT an LLM call) then reports; default reports current grouping. Returns { stats:{items,works,manifestations,biggest}, works:[{work_id,size,members:[{title,feed}]}] } biggest-first — to eyeball precision. De-dup as GROUPING not discarding: nothing is deleted, work_id is a reversible overlay.',
+    inputSchema: {
+      type: 'object', properties: {
+        regroup: { type: 'boolean', description: 'Recompute the grouping before reporting (run this first — the corpus has no work_ids until you do)' },
+        maxHamming: { type: 'integer', description: 'SimHash near-dup threshold in bits (default 3; higher = looser grouping)' },
+        limit: { type: 'integer', description: 'Max example clusters to return (default 20, cap 100)' },
+      },
+    },
+    annotations: { title: 'Work-grouping (FRBR)' },
+  },
+  {
     name: 'weir_listFacets', fn: 'listFacets',
     description: 'Glass catalog facets across the non-archived corpus: each facet → { total, terms:[{term,count}], omitted }, top terms by count (entity alone can be thousands). Facets: domain, entity, process, method, scale, spatial, temporal, form, provenance. Cataloged items contribute LLM facets; the rest contribute deterministic Stage-0 facets. Use facet+limit to drill into one.',
     inputSchema: {
@@ -17375,7 +17503,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '546a17e';          // short content hash of the bundle (build id)
+const COMMIT = '3ded672';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

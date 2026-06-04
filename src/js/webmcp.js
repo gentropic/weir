@@ -390,6 +390,21 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { facet: String(input.facet), term: String(input.term).toLowerCase().trim(), concept: store.getConcept(String(input.facet), String(input.term)) };
   }
 
+  // Inspect (and optionally rebuild) FRBR work-grouping (GLASS §4.1): items that are
+  // the same Work across manifestations (wire-syndication, re-uploads). `regroup:true`
+  // runs the deterministic pass (canonical-URL + SimHash near-dup — NOT an LLM call)
+  // then reports; default reports the current grouping. Returns { stats, works } —
+  // the biggest multi-source clusters with member titles+feeds, to eyeball precision
+  // before any inbox-collapsing UI rides on it. Grouping is a reversible overlay;
+  // nothing is deleted.
+  async function works(input = {}) {
+    let stats = null;
+    if (input.regroup) stats = await store.regroupWorks(input.maxHamming != null ? { maxHamming: Number(input.maxHamming) } : {});
+    const list = store.listWorks(Math.min(Number(input.limit) || 20, 100));
+    if (input.regroup && app && app.renderAll) app.renderAll();
+    return { ...(stats ? { stats } : {}), count: list.length, works: list };
+  }
+
   // List the catalog provider's available models (so Claude can pick one). Named
   // distinctly from the imported llm `listModels` — a local `listModels` would
   // shadow it (and the build strips import aliases, so it can't be aliased).
@@ -729,7 +744,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1010,6 +1025,18 @@ const TOOLS = [
       }, required: ['facet', 'term'],
     },
     annotations: { title: 'Declare a thesaurus relation' },
+  },
+  {
+    name: 'weir_works', fn: 'works',
+    description: 'Inspect (and optionally rebuild) FRBR work-grouping (GLASS §4.1): items that are the same Work across manifestations — wire-syndication, re-uploads, cross-posts. `regroup:true` runs the deterministic grouping pass (identical canonical URL + SimHash near-duplicate; NOT an LLM call) then reports; default reports current grouping. Returns { stats:{items,works,manifestations,biggest}, works:[{work_id,size,members:[{title,feed}]}] } biggest-first — to eyeball precision. De-dup as GROUPING not discarding: nothing is deleted, work_id is a reversible overlay.',
+    inputSchema: {
+      type: 'object', properties: {
+        regroup: { type: 'boolean', description: 'Recompute the grouping before reporting (run this first — the corpus has no work_ids until you do)' },
+        maxHamming: { type: 'integer', description: 'SimHash near-dup threshold in bits (default 3; higher = looser grouping)' },
+        limit: { type: 'integer', description: 'Max example clusters to return (default 20, cap 100)' },
+      },
+    },
+    annotations: { title: 'Work-grouping (FRBR)' },
   },
   {
     name: 'weir_listFacets', fn: 'listFacets',

@@ -15,7 +15,7 @@
 import { VFS } from '../../../vendor/vfs.js';
 import {
   SCHEMA_VERSION, DEFAULT_SETTINGS, DEFAULT_VIEWS, makeItem, makeFeed, makeTombstone,
-  fsKey, hash32, slugify, deriveExcerpt, deriveTitle, deriveSearchText, computeExpiry, now,
+  fsKey, hash32, slugify, simhash, hamming64, deriveExcerpt, deriveTitle, deriveSearchText, computeExpiry, now,
 } from './schema.js';
 import { buildCard, nextGlassId } from '../glass.js';
 import { inputMultiplier } from '../llm.js';
@@ -383,6 +383,76 @@ export class Store {
     }
     if (removed) { this._markFeedDirty(feedId); this.emit('items', { inserted: 0, updated: 0, skipped: 0, removed }); }
     return { removed };
+  }
+
+  // ── FRBR work-grouping (GLASS §4.1) ──
+  // Canonical URL for syndication identity: drop www, fragment, trailing slash, and
+  // known tracking params — but KEEP meaningful query (a YouTube `?v=`, a WP `?p=`),
+  // so the same article via different feeds collapses while distinct videos don't.
+  _canonicalUrl(u) {
+    if (!u) return '';
+    try {
+      const x = new URL(u);
+      const host = x.hostname.replace(/^www\./, '').toLowerCase();
+      const params = new URLSearchParams(x.search);
+      for (const k of [...params.keys()]) if (/^(utm_.*|fbclid|gclid|mc_eid|mc_cid|ref|ref_src|igshid|si|spm|cmpid)$/i.test(k)) params.delete(k);
+      const q = params.toString();
+      const path = x.pathname.replace(/\/+$/, '') || '/';
+      return host + path + (q ? '?' + q : '');
+    } catch { return ''; }
+  }
+
+  // Assign `work_id` across items so manifestations of one Work group together
+  // (de-dup as GROUPING, never discarding — every item kept; work_id is a reversible
+  // overlay). Two deterministic signals (precision-first, GLASS §4.1 steps 2–3):
+  // (a) identical canonical URL (syndication), (b) SimHash near-duplicate via 4×16-bit
+  // LSH bands. NOT an LLM call. Recompute-from-scratch (clears prior work_ids), so it
+  // self-corrects. Returns { items, works, manifestations, biggest }.
+  async regroupWorks({ maxHamming = 3 } = {}) {
+    const live = [...this.items.values()].filter((i) => !i.archived);
+    for (const it of live) if (it.simhash == null) it.simhash = simhash(`${it.title || ''} ${it.excerpt || ''}`);
+    const parent = new Map(); for (const it of live) parent.set(it.id, it.id);
+    const find = (x) => { let r = x; while (parent.get(r) !== r) r = parent.get(r); while (parent.get(x) !== r) { const n = parent.get(x); parent.set(x, r); x = n; } return r; };
+    const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+    // (a) canonical-URL identity (cap group size — real syndication is a handful, not a sea)
+    const byUrl = new Map();
+    for (const it of live) { const c = this._canonicalUrl(it.url); if (!c) continue; (byUrl.get(c) || byUrl.set(c, []).get(c)).push(it.id); }
+    for (const grp of byUrl.values()) { if (grp.length < 2 || grp.length > 12) continue; for (let i = 1; i < grp.length; i++) union(grp[0], grp[i]); }
+    // (b) SimHash near-dup — 4 bands of 16 bits; compare only within a band bucket
+    const withHash = live.filter((it) => it.simhash && it.simhash.length === 16);
+    for (let band = 0; band < 4; band++) {
+      const buckets = new Map();
+      for (const it of withHash) { const key = it.simhash.slice(band * 4, band * 4 + 4); (buckets.get(key) || buckets.set(key, []).get(key)).push(it); }
+      for (const bucket of buckets.values()) {
+        if (bucket.length < 2 || bucket.length > 200) continue;   // skip huge chance-collision buckets
+        for (let i = 0; i < bucket.length; i++) for (let j = i + 1; j < bucket.length; j++) {
+          if (find(bucket[i].id) !== find(bucket[j].id) && hamming64(bucket[i].simhash, bucket[j].simhash) <= maxHamming) union(bucket[i].id, bucket[j].id);
+        }
+      }
+    }
+    // assign work_id = "w:" + smallest member id, for clusters ≥2; clear singletons
+    const clusters = new Map();
+    for (const it of live) { const r = find(it.id); (clusters.get(r) || clusters.set(r, []).get(r)).push(it); }
+    let works = 0, manifestations = 0, biggest = 0; const touched = new Set();
+    for (const members of clusters.values()) {
+      const wid = members.length >= 2 ? 'w:' + members.map((m) => m.id).reduce((a, b) => (a < b ? a : b)) : undefined;
+      if (members.length >= 2) { works++; manifestations += members.length; if (members.length > biggest) biggest = members.length; }
+      for (const it of members) if (it.work_id !== wid) { it.work_id = wid; touched.add(it.feed_id); }
+    }
+    for (const fid of touched) this._markFeedDirty(fid);
+    if (touched.size) await this.flush();
+    this.emit('works', { works, manifestations });
+    return { items: live.length, works, manifestations, biggest };
+  }
+
+  // Multi-manifestation Works, biggest first — for inspecting grouping precision.
+  listWorks(limit = 20) {
+    const byWork = new Map();
+    for (const it of this.items.values()) { if (!it.work_id) continue; (byWork.get(it.work_id) || byWork.set(it.work_id, []).get(it.work_id)).push(it); }
+    return [...byWork.entries()].map(([work_id, members]) => ({
+      work_id, size: members.length,
+      members: members.map((m) => ({ id: m.id, title: m.title, feed: (this.feeds.get(m.feed_id) || {}).name || m.feed_id })),
+    })).sort((a, b) => b.size - a.size).slice(0, limit);
   }
 
   // ── items ──
