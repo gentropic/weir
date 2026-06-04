@@ -69,6 +69,9 @@ body {
 .facet-term { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 8px 3px 22px; border-radius: var(--au-radius); cursor: pointer; }
 .facet-term:hover { background: var(--sw-bg-bright); }
 .facet-term.active { background: var(--sw-bg-bright); box-shadow: inset 2px 0 0 var(--au-action); }
+.facet-term.excluded { box-shadow: inset 2px 0 0 var(--au-error); }
+.facet-term.excluded .ft-name { text-decoration: line-through; color: var(--au-error); opacity: 0.85; }
+.facet-term.excluded .ft-count { color: var(--au-error); opacity: 0.7; }
 .facet-term .ft-name { font-size: 12.5px; color: var(--au-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .facet-term.active .ft-name { color: var(--au-action); }
 .facet-term .ft-count { font-family: var(--au-font-mono); font-size: 10px; color: var(--au-fg-soft); flex-shrink: 0; }
@@ -154,6 +157,14 @@ body {
 .topbar .title { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
 .topbar .title h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
 .topbar .title .sub { font-size: 12px; color: var(--au-fg-soft); font-family: var(--au-font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar .title .sub.chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px 0; white-space: normal; overflow: visible; text-overflow: clip; max-width: 56vw; }
+.sub .vs-count { color: var(--au-fg-soft); margin-right: 6px; }
+.fchip { display: inline-flex; align-items: center; gap: 5px; margin-right: 4px; padding: 1px 5px 1px 8px; font-size: 11px; line-height: 16px; border-radius: 10px; background: var(--sw-bg-bright); color: var(--au-fg-muted); cursor: pointer; border: 1px solid transparent; }
+.fchip:hover { border-color: var(--au-action); color: var(--au-fg); }
+.fchip .x { font-size: 9px; opacity: 0.55; }
+.fchip:hover .x { opacity: 1; }
+.fchip.ex { color: var(--au-error); }
+.fchip.ex:hover { border-color: var(--au-error); }
 .topbar .actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
 .field { font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg); background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 5px 9px; width: 168px; outline: none; }

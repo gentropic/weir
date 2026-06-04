@@ -190,6 +190,7 @@ export class App {
     document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
     document.getElementById('facet-guided')?.addEventListener('click', () => this.toggleFacetGuided());
     document.getElementById('facet-clear')?.addEventListener('click', () => this.clearFacetFilters());
+    document.getElementById('view-sub')?.addEventListener('click', (e) => { const chip = e.target.closest('.fchip'); if (!chip || !this.catalog) return; if (chip.dataset.ex === '1') this.toggleFacetExclude(chip.dataset.facet, chip.dataset.term); else this.toggleFacet(chip.dataset.facet, chip.dataset.term); });
     document.getElementById('facets-head')?.addEventListener('contextmenu', (e) => { if (e.target.closest('button')) return; e.preventDefault(); this.facetsHeaderMenu(e.clientX, e.clientY); });
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
@@ -389,15 +390,18 @@ export class App {
     document.getElementById('view-title').textContent = this.catalog ? 'Catalog' : this.stackFilter ? (this.stackPath ? `Stacks / ${this.stackPath}` : 'Stacks') : this.smartView ? this.smartView.name : this.catFilter != null ? (this.catFilter || 'ungrouped') : this.route ? `#${this.route}` : feed ? feed.name : (VIEW_LABELS[this.view] || this.view);
     const n = this.items.length;
     const feeds = this.store.listFeeds().length;
-    let sub;
+    const subEl = document.getElementById('view-sub');
     if (this.catalog) {
-      const active = Object.entries(this.catalog.filters).flatMap(([fc, s]) => [...s].map((t) => `${fc}:${t}`));
-      sub = `${n} item${n === 1 ? '' : 's'}` + (active.length ? ` · ${active.join(' ∩ ')}` : ' · pick a facet →');
-    } else if (this.stackFilter && !this.searchText) sub = n ? `${n} entr${n === 1 ? 'y' : 'ies'}` : 'empty — ＋ note to start';
-    else if (this.searchText) sub = `${n} match${n === 1 ? '' : 'es'} for “${this.searchText}”`;
-    else if (!feeds) sub = 'no feeds yet';
-    else sub = `${n} item${n === 1 ? '' : 's'}${feed ? '' : ` · ${feeds} source${feeds === 1 ? '' : 's'}`}`;
-    document.getElementById('view-sub').textContent = sub;
+      this._renderCatalogSub(n);
+    } else {
+      let sub;
+      if (this.stackFilter && !this.searchText) sub = n ? `${n} entr${n === 1 ? 'y' : 'ies'}` : 'empty — ＋ note to start';
+      else if (this.searchText) sub = `${n} match${n === 1 ? '' : 'es'} for “${this.searchText}”`;
+      else if (!feeds) sub = 'no feeds yet';
+      else sub = `${n} item${n === 1 ? '' : 's'}${feed ? '' : ` · ${feeds} source${feeds === 1 ? '' : 's'}`}`;
+      subEl.classList.remove('chips');
+      subEl.textContent = sub;
+    }
     const ub = document.getElementById('btn-unread');
     if (ub) {
       const unread = this.items.reduce((a, i) => a + (i.read ? 0 : 1), 0);
@@ -406,6 +410,20 @@ export class App {
       ub.title = this.unreadOnly ? 'Showing only unread — click to show all (u)' : 'Show only unread (u)';
     }
     this._reflectSearch();
+  }
+
+  // Catalog subtitle = the active drill-down as removable chips (include + the
+  // struck-through excludes). Click a chip to drop that one constraint.
+  _renderCatalogSub(n) {
+    const el = document.getElementById('view-sub'); if (!el) return;
+    const chips = [];
+    for (const [fc, s] of Object.entries(this.catalog.filters)) for (const t of s) chips.push([fc, t, false]);
+    for (const [fc, s] of Object.entries(this.catalog.excludes || {})) for (const t of s) chips.push([fc, t, true]);
+    const head = `${n} item${n === 1 ? '' : 's'}`;
+    if (!chips.length) { el.classList.remove('chips'); el.textContent = `${head} · pick a facet →`; return; }
+    el.classList.add('chips');
+    el.innerHTML = `<span class="vs-count">${head}</span>` + chips.map(([fc, t, ex]) =>
+      `<span class="fchip${ex ? ' ex' : ''}" data-facet="${escapeHtml(fc)}" data-term="${escapeHtml(t)}" data-ex="${ex ? 1 : 0}" title="${ex ? 'Excluded' : 'Filtering'} ${escapeHtml(fc)} — click to remove">${ex ? '−' : ''}${escapeHtml(fc)}:${escapeHtml(t)}<span class="x">✕</span></span>`).join('');
   }
 
   feedUnread(id) {
@@ -539,7 +557,8 @@ export class App {
 
   // ── glass catalog: faceted browse (GLASS.md §8 facet intersection) ──
   setCatalog() {
-    this.catalog = this.catalog || { filters: {} };
+    this.catalog = this.catalog || { filters: {}, excludes: {} };
+    if (!this.catalog.excludes) this.catalog.excludes = {};
     this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null;
     this.selectedId = null; this.expandedId = null;
     this.renderAll();
@@ -913,6 +932,10 @@ export class App {
     let ids;
     if (!unions.length) ids = new Set([...this.store.items.values()].filter((i) => !i.archived).map((i) => i.id));
     else { ids = unions[0]; for (let k = 1; k < unions.length; k++) ids = new Set([...ids].filter((id) => unions[k].has(id))); }
+    // Exclusions (NOT): drop any item carrying an excluded term.
+    for (const [facet, terms] of Object.entries(this.catalog.excludes || {})) {
+      for (const t of terms) for (const id of (idx[facet].get(t) || [])) ids.delete(id);
+    }
     const needle = this.searchText ? this.searchText.toLowerCase() : null;
     const out = [];
     for (const id of ids) { const it = this.store.items.get(id); if (it && (!needle || it.search_text.includes(needle))) out.push(it); }
@@ -947,16 +970,33 @@ export class App {
     const f = this.catalog.filters;
     if (!f[facet]) f[facet] = new Set();
     if (f[facet].has(term)) { f[facet].delete(term); if (!f[facet].size) delete f[facet]; }
-    else f[facet].add(term);
+    else { f[facet].add(term); this._unexclude(facet, term); }   // include + exclude are mutually exclusive
     this.renderAll();
   }
+  // Exclude (NOT) a term: items carrying it drop out of the result entirely.
+  toggleFacetExclude(facet, term) {
+    const ex = this.catalog.excludes || (this.catalog.excludes = {});
+    if (!ex[facet]) ex[facet] = new Set();
+    if (ex[facet].has(term)) { ex[facet].delete(term); if (!ex[facet].size) delete ex[facet]; }
+    else {
+      ex[facet].add(term);
+      const inc = this.catalog.filters[facet]; if (inc) { inc.delete(term); if (!inc.size) delete this.catalog.filters[facet]; }
+    }
+    this.renderAll();
+  }
+  _unexclude(facet, term) { const ex = this.catalog.excludes && this.catalog.excludes[facet]; if (ex) { ex.delete(term); if (!ex.size) delete this.catalog.excludes[facet]; } }
   toggleFacetGuided() {
     this.store.setSettings({ facet_guided: this.store.getSettings().facet_guided === false });
     this.renderCatalogFacets();
   }
-  _activeFacets() { return this.catalog ? Object.keys(this.catalog.filters).filter((f) => this.catalog.filters[f] && this.catalog.filters[f].size) : []; }
-  clearFacetFilters() { if (!this.catalog) return; this.catalog.filters = {}; this.renderAll(); }
-  clearFacet(facet) { if (this.catalog && this.catalog.filters[facet]) { delete this.catalog.filters[facet]; this.renderAll(); } }
+  _activeFacets() {
+    if (!this.catalog) return [];
+    const f = this.catalog.filters, e = this.catalog.excludes || {};
+    return [...new Set([...Object.keys(f), ...Object.keys(e)])].filter((k) => (f[k] && f[k].size) || (e[k] && e[k].size));
+  }
+  _facetSelN(facet) { const f = this.catalog?.filters[facet], e = this.catalog?.excludes?.[facet]; return (f ? f.size : 0) + (e ? e.size : 0); }
+  clearFacetFilters() { if (!this.catalog) return; this.catalog.filters = {}; this.catalog.excludes = {}; this.renderAll(); }
+  clearFacet(facet) { if (!this.catalog) return; let n = 0; if (this.catalog.filters[facet]) { delete this.catalog.filters[facet]; n++; } if (this.catalog.excludes && this.catalog.excludes[facet]) { delete this.catalog.excludes[facet]; n++; } if (n) this.renderAll(); }
 
   // Right-click the FACETS header (or empty space in the panel) → panel-wide
   // controls: clear the selection, the narrow toggle, collapse/expand all, and a
@@ -984,10 +1024,16 @@ export class App {
   _facetCounts(filters) {
     const out = {}; for (const f of FACETS) out[f] = new Map();
     const active = Object.keys(filters).filter((f) => filters[f] && filters[f].size);
+    const excludes = this.catalog.excludes || {};
+    const exActive = Object.keys(excludes).filter((f) => excludes[f] && excludes[f].size);
     const total = active.length;
     for (const item of this.store.items.values()) {
       if (item.archived) continue;
       const ff = (this._cardFacets && this._cardFacets.get(item.id)) || facetsOf(item, this.store.getFeed(item.feed_id));
+      // excluded items are out of the result entirely (NOT)
+      let dropped = false;
+      for (const xf of exActive) { for (const t of (ff[xf] || [])) if (excludes[xf].has(t)) { dropped = true; break; } if (dropped) break; }
+      if (dropped) continue;
       let matched = 0, missFacet = null;
       for (const af of active) {
         const sel = filters[af]; let hit = false;
@@ -1084,6 +1130,7 @@ export class App {
     if (!terms.length) { body.innerHTML = '<div class="hint">No terms match.</div>'; return; }
     const facet = this._facetDialog;
     const sel = this.catalog?.filters[facet] || new Set();
+    const exSet = this.catalog?.excludes?.[facet] || new Set();
     const ROW_H = 24, COL_W = 230, BUF = 6;
     if (resetScroll) body.scrollTop = 0;
     const perRow = Math.max(1, Math.floor((body.clientWidth || 720) / COL_W));
@@ -1094,7 +1141,8 @@ export class App {
     let rows = '';
     for (let i = firstRow * perRow; i < Math.min(terms.length, lastRow * perRow); i++) {
       const [term, set] = terms[i];
-      rows += `<div class="facet-term${sel.has(term) ? ' active' : ''}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}"><span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`;
+      const cls = sel.has(term) ? ' active' : exSet.has(term) ? ' excluded' : '';
+      rows += `<div class="facet-term${cls}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}"><span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`;
     }
     body.innerHTML = `<div class="fd-sizer" style="height:${nRows * ROW_H}px"><div class="fd-rows" style="transform:translateY(${firstRow * ROW_H}px);grid-template-columns:repeat(${perRow},minmax(0,1fr))">${rows}</div></div>`;
   }
@@ -1103,8 +1151,10 @@ export class App {
   // (merge / rename / drop) that keep the controlled vocabulary clean.
   facetTermMenu(facet, term, x, y) {
     const active = (this.catalog?.filters[facet] || new Set()).has(term);
+    const excluded = (this.catalog?.excludes?.[facet] || new Set()).has(term);
     showMenu(x, y, [
       { label: active ? '✓ Filtering by this' : 'Filter by this', onClick: () => this.toggleFacet(facet, term) },
+      { label: excluded ? '⊘ Excluded — click to un-exclude' : '⊘ Exclude this', onClick: () => this.toggleFacetExclude(facet, term) },
       { sep: true },
       { label: '⤳ Merge into…', onClick: () => { const to = window.prompt(`Merge “${term}” into which ${facet} term?`, ''); if (to && to.trim() && to.trim().toLowerCase() !== term) this._facetMerge(facet, term, to.trim()); } },
       { label: '✎ Rename…', onClick: () => { const to = window.prompt(`Rename ${facet} term “${term}” to:`, term); if (to != null && to.trim() && to.trim().toLowerCase() !== term) this._facetMerge(facet, term, to.trim()); } },
@@ -1120,10 +1170,10 @@ export class App {
     const collapsed = new Set(this.store.getSettings().facet_collapsed || []).has(facet);
     const setSort = (m) => { this.store.setSettings({ facet_sort: { ...(this.store.getSettings().facet_sort || {}), [facet]: m } }); this.renderCatalogFacets(); };
     const count = (this._catalogIndex && this._catalogIndex[facet] && this._catalogIndex[facet].size) || 0;
-    const sel = (this.catalog && this.catalog.filters[facet]) || null;
+    const selN = this._facetSelN(facet);
     showMenu(x, y, [
-      sel && sel.size && { label: `✕ Clear ${facet} (${sel.size})`, onClick: () => this.clearFacet(facet) },
-      sel && sel.size && { sep: true },
+      selN && { label: `✕ Clear ${facet} (${selN})`, onClick: () => this.clearFacet(facet) },
+      selN && { sep: true },
       { label: `⋯ Browse all ${count} terms…`, onClick: () => this.openFacetDialog(facet) },
       { sep: true },
       { label: `${mode === 'count' ? '● ' : '○ '}Sort by count`, onClick: () => setSort('count') },
@@ -1152,21 +1202,24 @@ export class App {
     // browse-all dialog stays global — curation wants the whole vocabulary.)
     const guided = this.store.getSettings().facet_guided !== false;
     const active = Object.keys(this.catalog.filters).filter((f) => this.catalog.filters[f] && this.catalog.filters[f].size);
-    const scoped = (guided && active.length) ? this._facetCounts(this.catalog.filters) : null;
+    const exAny = Object.keys(this.catalog.excludes || {}).some((f) => this.catalog.excludes[f] && this.catalog.excludes[f].size);
+    const scoped = (guided && (active.length || exAny)) ? this._facetCounts(this.catalog.filters) : null;
     { const gb = document.getElementById('facet-guided'); if (gb) gb.classList.toggle('active', guided); }
-    { const cb = document.getElementById('facet-clear'); if (cb) cb.hidden = !active.length; }
+    { const cb = document.getElementById('facet-clear'); if (cb) cb.hidden = !(active.length || exAny); }
     let html = '';
     for (const facet of order) {
       const map = this._catalogIndex[facet];
       if (!map || !map.size) continue;   // empty facets (un-enriched in Stage 0) stay hidden
       const sel = this.catalog.filters[facet] || new Set();
+      const exSet = (this.catalog.excludes && this.catalog.excludes[facet]) || new Set();
       // term → count: scoped to the selection (guided) or global
       let entries;
       if (scoped) {
         const sc = scoped[facet] || new Map();
         entries = [];
-        for (const [t, c] of sc) if (c > 0 || sel.has(t)) entries.push([t, c]);
-        for (const t of sel) if (!sc.has(t)) entries.push([t, 0]);   // keep a selected term visible even if it scoped to 0
+        for (const [t, c] of sc) if (c > 0 || sel.has(t) || exSet.has(t)) entries.push([t, c]);
+        for (const t of sel) if (!sc.has(t)) entries.push([t, 0]);    // keep selected terms visible
+        for (const t of exSet) if (!sc.has(t)) entries.push([t, 0]);  // keep excluded terms visible (to un-exclude)
       } else {
         entries = [...map.entries()].map(([t, s]) => [t, s.size]);
       }
@@ -1180,17 +1233,17 @@ export class App {
       // A collapsed group hides its terms — so surface any selection inside it as
       // a badge (count + the terms in the tooltip), and tint the header, so you can
       // fold facets without losing track of what's still filtering.
-      const hidSel = isCollapsed && sel.size;
-      const selBadge = hidSel ? `<span class="facet-selbadge" title="${escapeHtml([...sel].join(', '))}">${sel.size}</span>` : '';
-      html += `<div class="facet-group${isCollapsed ? ' collapsed' : ''}${hidSel ? ' has-sel' : ''}">`
+      const hidN = isCollapsed ? sel.size + exSet.size : 0;
+      const selBadge = hidN ? `<span class="facet-selbadge" title="${escapeHtml([...sel, ...[...exSet].map((t) => '−' + t)].join(', '))}">${hidN}</span>` : '';
+      html += `<div class="facet-group${isCollapsed ? ' collapsed' : ''}${hidN ? ' has-sel' : ''}">`
         + `<div class="facet-head">`
         + `<span class="fh-tog" data-facet="${escapeHtml(facet)}"><span class="fchev">${isCollapsed ? '▸' : '▾'}</span><span class="ico">${ICONS[facet] || '·'}</span>${escapeHtml(facet)}${selBadge}</span>`
         + `<button class="facet-sort" type="button" data-facet="${escapeHtml(facet)}" title="Sort: ${mode === 'count' ? 'by count' : mode === 'az' ? 'A→Z' : 'Z→A'} — click to cycle">${SORT[mode]}</button>`
         + `</div>`;
       if (!isCollapsed) {
         for (const [term, count] of entries.slice(0, 40)) {
-          const isSel = sel.has(term) ? ' active' : '';
-          html += `<div class="facet-term${isSel}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`
+          const cls = sel.has(term) ? ' active' : exSet.has(term) ? ' excluded' : '';
+          html += `<div class="facet-term${cls}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}">`
             + `<span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${count}</span></div>`;
         }
         if (entries.length > 40) html += `<div class="facet-more" data-facet="${escapeHtml(facet)}">+ ${entries.length - 40} more</div>`;
