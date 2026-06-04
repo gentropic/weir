@@ -373,10 +373,17 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // similarity signal may *propose*, but a relation exists only once declared here.
   async function relateTerm(input = {}) {
     if (input.facet == null || input.term == null) throw new Error('pass facet, term, and at least one of broader/narrower/related/alt');
+    // Coerce: a relation value may arrive as a list, a single term, or — depending on
+    // the MCP transport — a JSON-stringified array. Normalize all three to an array.
+    const coerce = (x) => {
+      if (Array.isArray(x)) return x;
+      if (typeof x === 'string') { const t = x.trim(); if (t[0] === '[') { try { const p = JSON.parse(t); if (Array.isArray(p)) return p; } catch { /* not JSON */ } } return [x]; }
+      return x == null ? [] : [x];
+    };
     let touched = 0;
     for (const rel of ['broader', 'narrower', 'related', 'alt']) {
       if (input[rel] == null) continue;
-      store.setVocabRelation(String(input.facet), String(input.term), rel, input[rel]); touched++;
+      store.setVocabRelation(String(input.facet), String(input.term), rel, coerce(input[rel])); touched++;
     }
     if (!touched) throw new Error('pass at least one of broader / narrower / related / alt');
     await store.flush();

@@ -8445,8 +8445,27 @@ class Store {
       if (!f.endsWith('.json')) continue;
       const facet = f.replace(/\.json$/, '');
       const v = await this._readJSON(`/schema/vocab/${f}`, null);
-      if (v && typeof v === 'object') this.vocab[facet] = v.concepts || v;   // tolerate {concepts:{…}} or a bare map
+      if (v && typeof v === 'object') {
+        const { clean, changed } = this._sanitizeVocab(v.concepts || v);   // self-heal malformed terms (e.g. a stringified-array target)
+        this.vocab[facet] = clean;
+        if (changed) this._markVocabDirty(facet);
+      }
     }
+  }
+  // A valid term is a plain label — never JSON punctuation. Drop malformed concept
+  // keys and relation targets (defends the vocab against a bad write upstream).
+  _sanitizeVocab(concepts) {
+    const bad = (s) => typeof s !== 'string' || /[\[\]"{}]/.test(s);
+    const clean = {}; let changed = false;
+    for (const [term, c] of Object.entries(concepts || {})) {
+      if (bad(term)) { changed = true; continue; }
+      const out = { alt: [], broader: [], narrower: [], related: [] };
+      for (const k of ['alt', 'broader', 'narrower', 'related']) {
+        for (const t of (c && c[k]) || []) { if (bad(t)) { changed = true; } else if (!out[k].includes(t)) out[k].push(t); }
+      }
+      clean[term] = out;
+    }
+    return { clean, changed };
   }
   _vocabPath(facet) { return `/schema/vocab/${String(facet).replace(/[^a-z0-9_-]/gi, '')}.json`; }   // facets are simple enumerated names
   _markVocabDirty(facet) { this._dirtyVocab.add(facet); this._scheduleFlush(); }
@@ -16579,10 +16598,17 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // similarity signal may *propose*, but a relation exists only once declared here.
   async function relateTerm(input = {}) {
     if (input.facet == null || input.term == null) throw new Error('pass facet, term, and at least one of broader/narrower/related/alt');
+    // Coerce: a relation value may arrive as a list, a single term, or — depending on
+    // the MCP transport — a JSON-stringified array. Normalize all three to an array.
+    const coerce = (x) => {
+      if (Array.isArray(x)) return x;
+      if (typeof x === 'string') { const t = x.trim(); if (t[0] === '[') { try { const p = JSON.parse(t); if (Array.isArray(p)) return p; } catch { /* not JSON */ } } return [x]; }
+      return x == null ? [] : [x];
+    };
     let touched = 0;
     for (const rel of ['broader', 'narrower', 'related', 'alt']) {
       if (input[rel] == null) continue;
-      store.setVocabRelation(String(input.facet), String(input.term), rel, input[rel]); touched++;
+      store.setVocabRelation(String(input.facet), String(input.term), rel, coerce(input[rel])); touched++;
     }
     if (!touched) throw new Error('pass at least one of broader / narrower / related / alt');
     await store.flush();
@@ -17349,7 +17375,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'b3eadf7';          // short content hash of the bundle (build id)
+const COMMIT = '546a17e';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

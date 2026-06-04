@@ -243,6 +243,9 @@ await assert.rejects(tools.recover({ id: 'f' }), /only available/, 'recover need
   const skos = await vt.vocab({ facet: 'spatial', export: true });
   assert.ok(skos['@graph'] && skos['@context'].skos, 'weir_vocab export → SKOS JSON-LD');
   await assert.rejects(vt.relateTerm({ facet: 'spatial', term: 'x' }), /broader/, 'relateTerm needs a relation');
+  // a JSON-stringified-array argument (MCP transport quirk) is coerced back to a list
+  await vt.relateTerm({ facet: 'spatial', term: 'north america', narrower: '["united states", "canada"]' });
+  assert.deepEqual((await vt.vocab({ facet: 'spatial', term: 'north america' })).concept.narrower.sort(), ['canada', 'united states'], 'stringified-array narrower coerced');
 }
 
 // ── catalog control (mock app) ──

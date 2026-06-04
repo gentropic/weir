@@ -141,8 +141,27 @@ export class Store {
       if (!f.endsWith('.json')) continue;
       const facet = f.replace(/\.json$/, '');
       const v = await this._readJSON(`/schema/vocab/${f}`, null);
-      if (v && typeof v === 'object') this.vocab[facet] = v.concepts || v;   // tolerate {concepts:{…}} or a bare map
+      if (v && typeof v === 'object') {
+        const { clean, changed } = this._sanitizeVocab(v.concepts || v);   // self-heal malformed terms (e.g. a stringified-array target)
+        this.vocab[facet] = clean;
+        if (changed) this._markVocabDirty(facet);
+      }
     }
+  }
+  // A valid term is a plain label — never JSON punctuation. Drop malformed concept
+  // keys and relation targets (defends the vocab against a bad write upstream).
+  _sanitizeVocab(concepts) {
+    const bad = (s) => typeof s !== 'string' || /[\[\]"{}]/.test(s);
+    const clean = {}; let changed = false;
+    for (const [term, c] of Object.entries(concepts || {})) {
+      if (bad(term)) { changed = true; continue; }
+      const out = { alt: [], broader: [], narrower: [], related: [] };
+      for (const k of ['alt', 'broader', 'narrower', 'related']) {
+        for (const t of (c && c[k]) || []) { if (bad(t)) { changed = true; } else if (!out[k].includes(t)) out[k].push(t); }
+      }
+      clean[term] = out;
+    }
+    return { clean, changed };
   }
   _vocabPath(facet) { return `/schema/vocab/${String(facet).replace(/[^a-z0-9_-]/gi, '')}.json`; }   // facets are simple enumerated names
   _markVocabDirty(facet) { this._dirtyVocab.add(facet); this._scheduleFlush(); }

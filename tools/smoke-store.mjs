@@ -372,6 +372,13 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   const s2 = new Store(v); await s2._hydrate();
   assert.deepEqual(s2.getConcept('spatial', 'united states').alt.sort(), ['u.s.', 'usa'], 'vocab survives reload');
   assert.deepEqual(s2.getConcept('spatial', 'japan').narrower, ['tokyo'], 'relations survive reload');
+  // self-heal: a malformed concept / relation target (e.g. a stringified-array) is dropped on load
+  s2.vocab.spatial['["x","y"]'] = { alt: [], broader: [], narrower: [], related: [] };
+  s2.vocab.spatial.japan.narrower.push('["bad","target"]');
+  s2._markVocabDirty('spatial'); await s2.flush();
+  const s3 = new Store(v); await s3._hydrate();
+  assert.equal(s3.getConcept('spatial', '["x","y"]'), null, 'malformed concept dropped on load');
+  assert.ok(!s3.getConcept('spatial', 'japan').narrower.includes('["bad","target"]'), 'malformed relation target filtered');
 }
 
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));
