@@ -667,8 +667,12 @@ body {
 .workspace { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 /* the stream lives inside a rails panel now; fill it (rails-panel is flex-column) */
 .rails-panel .stream { min-height: 0; }
-/* single-pane default: no tab strip until a second pane/tab exists — reads like before */
-.workspace.ws-solo .rails-strip { display: none; }
+/* single-pane default: no tab strip until a second pane/tab exists — reads like before.
+   Hide the whole strip-WRAP (it carries min-height:30px) so no phantom band remains. */
+.workspace.ws-solo .rails-strip-wrap { display: none; }
+/* the statusbar is position:absolute over the bottom of .main; keep it above the rails
+   content panels (which now fill the workspace and would otherwise cover it). */
+.statusbar { z-index: 20; }
 /* theme rails' structural classes with weir tokens (rails.css ships unstyled) */
 .rails-rail { background: var(--sw-bg); }
 .rails-panel { background: var(--sw-bg); }
@@ -18425,6 +18429,7 @@ class App {
       const s = document.createElement('div'); s.className = 'stream'; s.id = 'stream'; host.appendChild(s);
       return;
     }
+    host.classList.add('ws-solo');   // single-pane default from the FIRST measure → no phantom strip band
     this.rails = createRails(host, {
       initialState: { rails: [ { id: 'r-main', flex: 1, stacks: [ { id: 's-main', flex: 1,
         active: 'stream', tabs: [ { id: 'stream', kind: 'stream', title: 'stream', closeable: false, draggable: false } ] } ] } ], floats: [] },
@@ -20480,7 +20485,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '6f8f733';          // short content hash of the bundle (build id)
+const COMMIT = '828f206';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

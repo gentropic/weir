@@ -2747,6 +2747,7 @@ export class App {
       const s = document.createElement('div'); s.className = 'stream'; s.id = 'stream'; host.appendChild(s);
       return;
     }
+    host.classList.add('ws-solo');   // single-pane default from the FIRST measure → no phantom strip band
     this.rails = createRails(host, {
       initialState: { rails: [ { id: 'r-main', flex: 1, stacks: [ { id: 's-main', flex: 1,
         active: 'stream', tabs: [ { id: 'stream', kind: 'stream', title: 'stream', closeable: false, draggable: false } ] } ] } ], floats: [] },
