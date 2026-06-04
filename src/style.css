@@ -165,6 +165,7 @@ body {
 .fchip:hover .x { opacity: 1; }
 .fchip.ex { color: var(--au-error); }
 .fchip.ex:hover { border-color: var(--au-error); }
+#smart-views { max-height: 32vh; overflow-y: auto; }
 .topbar .actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
 .field { font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg); background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 5px 9px; width: 168px; outline: none; }

@@ -549,10 +549,50 @@ export class App {
   setSmartView(id) {
     const v = this.store.getViews().find((x) => x.id === id);
     if (!v) return;
+    if (v.query && v.query.catalog) return this.applyFacetView(v);   // a saved facet drill-down
     this.smartView = v;
     this.view = null; this.feedFilter = null; this.route = null; this.catFilter = null; this.catalog = null; this.stackFilter = null; this.stackPath = null;
     this.selectedId = null; this.expandedId = null;
     this.renderAll();
+  }
+
+  // Does the live catalog selection equal this saved facet view? Derived (not
+  // tracked) so the rail highlight follows the selection automatically — change a
+  // term and it stops matching.
+  _sameFacetView(v) {
+    if (!this.catalog || !v.query || !v.query.catalog) return false;
+    const norm = (filters, excludes) => JSON.stringify({
+      f: Object.fromEntries(Object.entries(filters || {}).filter(([, a]) => a && (a.size || a.length)).map(([k, a]) => [k, [...a].sort()]).sort()),
+      e: Object.fromEntries(Object.entries(excludes || {}).filter(([, a]) => a && (a.size || a.length)).map(([k, a]) => [k, [...a].sort()]).sort()),
+    });
+    return norm(this.catalog.filters, this.catalog.excludes) === norm(v.query.catalog.filters, v.query.catalog.excludes);
+  }
+
+  // Apply a saved facet view: re-enter catalog mode with its filters/excludes.
+  applyFacetView(v) {
+    this.setCatalog();
+    const c = (v.query && v.query.catalog) || {};
+    this.catalog.filters = {}; this.catalog.excludes = {};
+    for (const [f, arr] of Object.entries(c.filters || {})) this.catalog.filters[f] = new Set(arr);
+    for (const [f, arr] of Object.entries(c.excludes || {})) this.catalog.excludes[f] = new Set(arr);
+    this.renderAll();
+  }
+
+  // Save the current facet drill-down (includes + excludes) as a reusable smart
+  // view. Stored as { query: { catalog: { filters, excludes } } } — Sets → arrays.
+  async saveFacetView() {
+    if (!this.catalog || !this._activeFacets().length) return;
+    const ser = (m) => { const o = {}; for (const [f, s] of Object.entries(m || {})) if (s && s.size) o[f] = [...s]; return o; };
+    const terms = []; for (const s of Object.values(this.catalog.filters)) for (const t of s) terms.push(t);
+    const name = prompt('Save this drill-down as a view named:', terms.slice(0, 3).join(' · ') || 'facet view');
+    if (name === null || !name.trim()) return;
+    const query = { catalog: { filters: ser(this.catalog.filters), excludes: ser(this.catalog.excludes) } };
+    const views = this.store.getViews();
+    const base = 'fv-' + (name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'view');
+    let id = base, i = 2; while (views.some((v) => v.id === id)) id = `${base}-${i++}`;
+    views.push({ id, name: name.trim(), query });
+    await this.store.saveViews(views);
+    this.renderViews();
   }
 
   // ── glass catalog: faceted browse (GLASS.md §8 facet intersection) ──
@@ -1005,6 +1045,7 @@ export class App {
     const active = this._activeFacets();
     const guided = this.store.getSettings().facet_guided !== false;
     showMenu(x, y, [
+      active.length && { label: `⊕ Save as view…`, onClick: () => this.saveFacetView() },
       active.length && { label: `✕ Clear selection (${active.length} facet${active.length === 1 ? '' : 's'})`, onClick: () => this.clearFacetFilters() },
       active.length && { sep: true },
       { label: `${guided ? '● ' : '○ '}Narrow to selection`, onClick: () => this.toggleFacetGuided() },
@@ -2945,6 +2986,12 @@ export class App {
     const ICONS = { video: '▶', article: '☰', paper: '✦', release: '⬡', track: '♪', search: '⌕' };
     const rows = [];
     for (const v of this.store.getViews()) {
+      if (v.query && v.query.catalog) {                  // saved facet drill-down (catalog query)
+        const act = this.catalog && this.smartView == null && this._sameFacetView(v) ? ' active' : '';
+        rows.push(`<div class="navrow view${act}" data-view-id="${escapeHtml(v.id)}" title="${escapeHtml(this.viewSummary(v))}">`
+          + `<span class="lbl"><span class="ico">◈</span> ${escapeHtml(v.name)}</span><span class="count"></span></div>`);
+        continue;
+      }
       const items = this.store.query(v.query);
       if (v.builtin && items.length === 0) continue;     // empty type default → hide
       const unread = items.reduce((n, i) => n + (i.read ? 0 : 1), 0);
@@ -2958,6 +3005,12 @@ export class App {
 
   viewSummary(v) {
     const q = v.query || {};
+    if (q.catalog) {
+      const p = [];
+      for (const [fc, arr] of Object.entries(q.catalog.filters || {})) p.push(`${fc}: ${(arr || []).join('/')}`);
+      for (const [fc, arr] of Object.entries(q.catalog.excludes || {})) p.push(`−${fc}: ${(arr || []).join('/')}`);
+      return p.join(' · ') || 'facet view';
+    }
     const parts = [];
     if (q.type) parts.push(`type: ${q.type}`);
     if (q.text) parts.push(`search: “${q.text}”`);
