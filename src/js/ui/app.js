@@ -956,6 +956,7 @@ export class App {
   }
   _activeFacets() { return this.catalog ? Object.keys(this.catalog.filters).filter((f) => this.catalog.filters[f] && this.catalog.filters[f].size) : []; }
   clearFacetFilters() { if (!this.catalog) return; this.catalog.filters = {}; this.renderAll(); }
+  clearFacet(facet) { if (this.catalog && this.catalog.filters[facet]) { delete this.catalog.filters[facet]; this.renderAll(); } }
 
   // Right-click the FACETS header (or empty space in the panel) → panel-wide
   // controls: clear the selection, the narrow toggle, collapse/expand all, and a
@@ -1119,7 +1120,10 @@ export class App {
     const collapsed = new Set(this.store.getSettings().facet_collapsed || []).has(facet);
     const setSort = (m) => { this.store.setSettings({ facet_sort: { ...(this.store.getSettings().facet_sort || {}), [facet]: m } }); this.renderCatalogFacets(); };
     const count = (this._catalogIndex && this._catalogIndex[facet] && this._catalogIndex[facet].size) || 0;
+    const sel = (this.catalog && this.catalog.filters[facet]) || null;
     showMenu(x, y, [
+      sel && sel.size && { label: `✕ Clear ${facet} (${sel.size})`, onClick: () => this.clearFacet(facet) },
+      sel && sel.size && { sep: true },
       { label: `⋯ Browse all ${count} terms…`, onClick: () => this.openFacetDialog(facet) },
       { sep: true },
       { label: `${mode === 'count' ? '● ' : '○ '}Sort by count`, onClick: () => setSort('count') },
@@ -1129,7 +1133,7 @@ export class App {
       { label: collapsed ? 'Expand' : 'Collapse', onClick: () => this.toggleFacetCollapse(facet) },
       { label: 'Collapse all', onClick: () => this._setAllFacetsCollapsed(true) },
       { label: 'Expand all', onClick: () => this._setAllFacetsCollapsed(false) },
-    ]);
+    ].filter(Boolean));
   }
 
   renderCatalogFacets() {
