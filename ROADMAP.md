@@ -57,6 +57,27 @@ the trigger/query layer on top.
 - **Stage 2 — the query side.** Facet-intersection + thesaurus broaden/narrow (this
   *is* search v2 — ✅ the BM25F engine shipped; the facet-intersection/thesaurus
   *layer over it* is the remaining work); navigable emergent graph.
+- **Structured facets — honor the order/containment PMEST already implies.** Two of
+  weir's facets are Ranganathan's **Space** and **Time** (PMEST = Personality·Matter·
+  Energy·**Space**·**Time**), and they — plus `scale` — carry intrinsic structure the
+  flat nominal facets don't: **temporal is totally ordered**, **spatial is
+  containment-hierarchical**, **scale is an ordinal ladder**. The flat term-list
+  treatment throws that away. ✅ **Temporal range shipped 2026-06-03** (a from–to
+  year control → in-range year-set; multi-year selection collapses to one "2018–2022"
+  chip). **Remaining — spatial hierarchy** (the high-value one): a containment
+  roll-up so selecting *Japan* also catches *Tokyo*, and you can drill continent →
+  country → city. weir's spatial terms are freeform LLM strings ("tokyo", "japan",
+  "california") with **no encoded nesting**, so this needs a *source of containment*:
+  cheapest is a **small curated continent→country(+major-city) table** (the spatial
+  facet is ~600 terms but dominated by ~40 countries + a few cities — hand-coverable);
+  fuller is a **GeoNames / Wikidata lookup** (via the bridge; adds fetch + place-name
+  disambiguation). **Strategic framing:** spatial containment *is* a **broader/
+  narrower-term (BT/NT)** relation — the *geographic special case* of the controlled-
+  vocabulary **thesaurus** already planned for Stage 2 (seed BT/NT/RT from LCSH). So
+  building it isn't a detour: it's the **first concrete instance of hierarchical
+  vocabulary** in weir, the thing that turns a flat facet list into a classified
+  tree. Scale's ordinal ladder (global>national>regional>local>personal) is a cheap
+  companion (sort/range by rank). Do spatial as the opening move of the thesaurus.
 - **Stage 3 — notes & graph view.** Notes-as-items (`form: note`, markdown) +
   annotations; webmcp triggers. (Graph/map visualization broken out below.) The
   data model is ready today (`provenance: self`, `type: note` in `glass.js`); the
