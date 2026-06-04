@@ -134,8 +134,9 @@ function buildCss() {
   let tokens = fs.readFileSync(path.join(VENDOR, 'switchboard', 'tokens.css'), 'utf8');
   // Drop the url()-based @font-face rules; we re-add them base64-inlined.
   tokens = tokens.replace(/@font-face\s*\{[^}]*\}\s*/g, '');
+  const railsCss = fs.readFileSync(path.join(VENDOR, 'rails.css'), 'utf8');   // structural; the .rails-* theme lives in style.css
   const style = fs.readFileSync(path.join(SRC, 'style.css'), 'utf8');
-  return [buildFontFaceCss(), tokens.trim(), style.trim()].join('\n\n');
+  return [buildFontFaceCss(), tokens.trim(), railsCss.trim(), style.trim()].join('\n\n');
 }
 
 // ── Vendored-licenses note (OFL attribution travels with the fonts) ─────────

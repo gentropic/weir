@@ -191,6 +191,28 @@ body {
 
 .stream { flex: 1; overflow-y: auto; padding: 0 0 44px; }
 
+/* ── workspace shell (@gcu/rails) — hosts the stream + notes panes ── */
+.workspace { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+/* the stream lives inside a rails panel now; fill it (rails-panel is flex-column) */
+.rails-panel .stream { min-height: 0; }
+/* single-pane default: no tab strip until a second pane/tab exists — reads like before */
+.workspace.ws-solo .rails-strip { display: none; }
+/* theme rails' structural classes with weir tokens (rails.css ships unstyled) */
+.rails-rail { background: var(--sw-bg); }
+.rails-panel { background: var(--sw-bg); }
+.rails-rail-split { border-left: 1px solid var(--au-border); }
+.rails-stack-split { border-top: 1px solid var(--au-border); }
+.rails-rail-split:hover, .rails-stack-split:hover { background: var(--au-action-soft); }
+.rails-strip { background: var(--sw-bg-raised); border-bottom: 1px solid var(--au-border); scrollbar-width: thin; }
+.rails-tab { padding: 6px 12px; color: var(--au-fg-soft); border-right: 1px solid var(--au-border); gap: 8px; font-family: var(--au-font-mono); font-size: 12px; transition: color .08s, background .08s; }
+.rails-tab.rails-active { background: var(--sw-bg); color: var(--au-fg); box-shadow: inset 0 2px 0 var(--au-action); }
+.rails-tab:hover { color: var(--au-fg); }
+.rails-x { opacity: .4; width: 12px; text-align: center; }
+.rails-x:hover { opacity: 1; color: var(--au-error); }
+.rails-ghost { background: var(--sw-bg-raised); border: 1px solid var(--au-border); padding: 5px 10px; border-radius: var(--au-radius); box-shadow: 0 6px 20px rgba(0,0,0,.5); }
+.rails-zone.rails-active { background: var(--au-action-soft); box-shadow: 0 0 0 1px var(--au-action); }
+.rails-zone.rails-zone-insert.rails-active { background: var(--au-action); box-shadow: none; }
+
 /* ── Item rows ── */
 .item { display: grid; grid-template-columns: 92px 1fr; gap: 14px; padding: 14px 22px; border-bottom: 1px solid var(--au-border); cursor: pointer; transition: background 0.1s; position: relative; }
 .item:hover { background: var(--sw-bg-raised); }

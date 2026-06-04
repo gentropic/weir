@@ -3,6 +3,7 @@
 // re-render on store events (fine at v0.1 scale); selection/expansion are app
 // state, content is cached to avoid re-reading on every keystroke.
 
+import { createRails } from '../../../vendor/rails.js';   // dev-time clarity; build inlines rails.js → global createRails
 import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, fmtBytes, dailyCounts, sparkPoints } from './format.js';
 import { parseOpml, buildOpml } from '../opml.js';
 import { detectImport, isWrappedUrl, isSkippedUrl } from '../importers.js';
@@ -72,6 +73,7 @@ export class App {
   }
 
   mount() {
+    this._initWorkspace();                              // rails: creates the stream pane (#stream) before we cache it
     this.stream = document.getElementById('stream');
     this.sources = document.getElementById('sources');
     this.searchEl = document.getElementById('search-input');
@@ -2733,6 +2735,47 @@ export class App {
 
   _setRailWidth(px) { document.documentElement.style.setProperty('--rail-w', `${Math.round(px)}px`); }
   _setDensity(v) { document.documentElement.dataset.density = v === 'compact' ? 'compact' : 'comfortable'; }
+
+  // ── workspace shell (@gcu/rails) ──────────────────────────────────────────
+  // The stream is the single default pane; notes (and later catalog/map/graph)
+  // open as additional panes. The stream panel keeps id="stream", so the whole
+  // stream/reader render path is untouched — rails only relocates where it lives.
+  _initWorkspace() {
+    const host = document.getElementById('workspace');
+    if (!host) return;
+    if (typeof createRails !== 'function') {            // graceful fallback: no rails → a plain stream div
+      const s = document.createElement('div'); s.className = 'stream'; s.id = 'stream'; host.appendChild(s);
+      return;
+    }
+    this.rails = createRails(host, {
+      initialState: { rails: [ { id: 'r-main', flex: 1, stacks: [ { id: 's-main', flex: 1,
+        active: 'stream', tabs: [ { id: 'stream', kind: 'stream', title: 'stream', closeable: false, draggable: false } ] } ] } ], floats: [] },
+      renderPanel: (tab) => this._renderPanel(tab),
+      renderEmpty: () => { const d = document.createElement('div'); d.className = 'rails-empty'; return d; },
+    });
+    // "solo" = just the stream, nothing else open → hide the tab strip so the
+    // single-pane default reads exactly like before. The strip returns the moment
+    // a second pane/tab exists.
+    const reflectSolo = () => {
+      const rs = this.rails.state.rails;
+      const solo = rs.length === 1 && rs[0].stacks.length === 1 && rs[0].stacks[0].tabs.length === 1
+        && (rs[0].stacks[0].tabs[0].kind === 'stream');
+      host.classList.toggle('ws-solo', solo);
+    };
+    this.rails.on('layout:change', reflectSolo);
+    reflectSolo();
+  }
+  // rails calls this once per tab; the returned element is cached and never
+  // reparented (that's how a focused CM6 editor survives a drag).
+  _renderPanel(tab) {
+    if (tab.kind === 'stream') {
+      let s = document.getElementById('stream');
+      if (!s) { s = document.createElement('div'); s.className = 'stream'; s.id = 'stream'; }
+      return s;
+    }
+    // note panes arrive in Move 2.
+    const d = document.createElement('div'); d.className = 'rails-empty'; d.textContent = '—'; return d;
+  }
 
   _initRailResize() {
     this._setRailWidth(this.store.getSettings().rail_width || 240);

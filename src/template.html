@@ -80,7 +80,10 @@
       </div>
     </div>
 
-    <div class="stream" id="stream"></div>
+    <!-- rails workspace: the stream is the default (single) pane; notes/catalog/map
+         open as additional panes. The stream panel's content keeps id="stream", so the
+         stream/reader render path is unchanged — rails just hosts it. -->
+    <div class="workspace" id="workspace"></div>
 
     <div class="statusbar">
       <div class="left">

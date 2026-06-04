@@ -14,6 +14,7 @@ import '../../vendor/librarian.js';      // → Librarian (BM25F/CSR search engi
 import '../../vendor/yaml.js';           // → parse, emit, scalar/mapNode/seqNode (@gcu/yaml strict subset; for stacks frontmatter)
 import '../../vendor/cm6.min.js';        // → window.CM6 (CodeMirror 6 IIFE bundle; the stacks note editor)
 import '../../vendor/worldmap.js';       // → WORLD_PATH, WORLD_VIEWBOX (offline equirectangular world; the gauge mini-map)
+import '../../vendor/rails.js';          // → createRails, findTab/Stack/Rail, emptyState, … (docked workspace shell; hosts the stream + notes panes)
 import './store/schema.js';              // data model + helpers (before store)
 import './affinity.js';                  // → channelIdOf, affinityScore (before store)
 import './glass.js';                     // → buildCard, nextGlassId (glass catalog; before store)
