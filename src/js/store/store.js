@@ -426,6 +426,9 @@ export class Store {
       for (const bucket of buckets.values()) {
         if (bucket.length < 2 || bucket.length > 200) continue;   // skip huge chance-collision buckets
         for (let i = 0; i < bucket.length; i++) for (let j = i + 1; j < bucket.length; j++) {
+          // A Work spans DIFFERENT feeds (syndication/cross-post). Same-feed near-dup
+          // titles are a *series*, not one Work — never near-dup-group within a feed.
+          if (bucket[i].feed_id === bucket[j].feed_id) continue;
           if (find(bucket[i].id) !== find(bucket[j].id) && hamming64(bucket[i].simhash, bucket[j].simhash) <= maxHamming) union(bucket[i].id, bucket[j].id);
         }
       }

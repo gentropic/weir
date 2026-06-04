@@ -103,8 +103,9 @@ export function simhash(text) {
   const norm = String(text || '').toLowerCase().replace(/<[^>]+>/g, ' ').replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!norm) return '';
   const w = norm.split(' ');
-  const shingles = w.length < 3 ? [norm] : [];
+  const shingles = [];
   for (let i = 0; i + 3 <= w.length; i++) shingles.push(w[i] + ' ' + w[i + 1] + ' ' + w[i + 2]);
+  if (shingles.length < 5) return '';   // too little text to fingerprint reliably — title-less/short items skip near-dup grouping
   const v = new Int32Array(64);
   for (const sh of shingles) {
     const lo = _fnv32(sh, 0x811c9dc5), hi = _fnv32(sh, 0x7ee3623b);

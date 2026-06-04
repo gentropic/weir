@@ -7634,8 +7634,9 @@ function simhash(text) {
   const norm = String(text || '').toLowerCase().replace(/<[^>]+>/g, ' ').replace(/[^a-z0-9\s]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (!norm) return '';
   const w = norm.split(' ');
-  const shingles = w.length < 3 ? [norm] : [];
+  const shingles = [];
   for (let i = 0; i + 3 <= w.length; i++) shingles.push(w[i] + ' ' + w[i + 1] + ' ' + w[i + 2]);
+  if (shingles.length < 5) return '';   // too little text to fingerprint reliably — title-less/short items skip near-dup grouping
   const v = new Int32Array(64);
   for (const sh of shingles) {
     const lo = _fnv32(sh, 0x811c9dc5), hi = _fnv32(sh, 0x7ee3623b);
@@ -8761,6 +8762,9 @@ class Store {
       for (const bucket of buckets.values()) {
         if (bucket.length < 2 || bucket.length > 200) continue;   // skip huge chance-collision buckets
         for (let i = 0; i < bucket.length; i++) for (let j = i + 1; j < bucket.length; j++) {
+          // A Work spans DIFFERENT feeds (syndication/cross-post). Same-feed near-dup
+          // titles are a *series*, not one Work — never near-dup-group within a feed.
+          if (bucket[i].feed_id === bucket[j].feed_id) continue;
           if (find(bucket[i].id) !== find(bucket[j].id) && hamming64(bucket[i].simhash, bucket[j].simhash) <= maxHamming) union(bucket[i].id, bucket[j].id);
         }
       }
@@ -17503,7 +17507,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '3ded672';          // short content hash of the bundle (build id)
+const COMMIT = '2d79a20';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
