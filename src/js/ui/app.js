@@ -49,6 +49,8 @@ export class App {
     this.facetFilter = '';      // facet-browser search box (filters terms within each facet group)
     this._facetDialog = null;   // facet whose full-term dialog is open (the long-tail browser), or null
     this._facetDialogFilter = '';
+    this._facetDialogSort = 'count';   // dialog-only sort (seeded from the rail's, then independent)
+    this._fdTerms = [];                // the dialog's current (filtered+sorted) term list, for the virtual scroller
     this.layout = 'list';       // stream layout: 'list' | 'gallery'
     this.collapsedCats = new Set();
     this.sourceFilter = '';          // rail source-filter query (narrows the Sources list by name/folder)
@@ -167,10 +169,12 @@ export class App {
     });
     {
       const fdb = document.getElementById('facet-dialog-body');
-      fdb?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) { this.toggleFacet(t.dataset.facet, t.dataset.term); this.renderFacetDialog(); } });
+      fdb?.addEventListener('click', (e) => { const t = e.target.closest('.facet-term'); if (t) { this.toggleFacet(t.dataset.facet, t.dataset.term); this._renderFacetWindow(false); } });
       fdb?.addEventListener('contextmenu', (e) => { const t = e.target.closest('.facet-term'); if (t) { e.preventDefault(); this.facetTermMenu(t.dataset.facet, t.dataset.term, e.clientX, e.clientY); } });
-      const fds = document.getElementById('facet-dialog-search'); fds?.addEventListener('input', () => { this._facetDialogFilter = fds.value; this.renderFacetDialog(); });
-      document.getElementById('facet-dialog-sort')?.addEventListener('click', () => { if (this._facetDialog) { this.cycleFacetSort(this._facetDialog); this.renderFacetDialog(); } });
+      let fdRaf = 0;
+      fdb?.addEventListener('scroll', () => { if (fdRaf) return; fdRaf = requestAnimationFrame(() => { fdRaf = 0; this._renderFacetWindow(false); }); });
+      const fds = document.getElementById('facet-dialog-search'); fds?.addEventListener('input', () => { this._facetDialogFilter = fds.value; this.renderFacetDialog(true); });
+      document.getElementById('facet-dialog-sort')?.addEventListener('click', () => this.cycleFacetDialogSort());
       document.getElementById('facet-dialog-close')?.addEventListener('click', () => this.closeFacetDialog());
     }
     { const fs = document.getElementById('facet-search'); fs?.addEventListener('input', () => { this.facetFilter = fs.value; this.renderCatalogFacets(); }); }
@@ -981,33 +985,61 @@ export class App {
   // header menu — the rail caps at 40, this is "see all".
   openFacetDialog(facet) {
     this._facetDialog = facet; this._facetDialogFilter = '';
+    this._facetDialogSort = this._facetSortMode(facet);   // seed from the rail, then independent
     const s = document.getElementById('facet-dialog-search'); if (s) s.value = '';
     document.getElementById('facet-overlay').hidden = false;
-    this.renderFacetDialog();
+    this.renderFacetDialog(true);
     if (s) setTimeout(() => s.focus(), 0);
   }
   closeFacetDialog() { document.getElementById('facet-overlay').hidden = true; this._facetDialog = null; }
-  renderFacetDialog() {
+  cycleFacetDialogSort() {
+    this._facetDialogSort = { count: 'az', az: 'za', za: 'count' }[this._facetDialogSort] || 'count';
+    this.renderFacetDialog(true);
+  }
+
+  // Recompute the dialog's term list (filter + the dialog-only sort), then paint
+  // the virtual window. `resetScroll` jumps to the top (new filter/sort/open).
+  renderFacetDialog(resetScroll) {
     const facet = this._facetDialog; if (!facet) return;
     this.buildCatalogIndex();
     const map = this._catalogIndex[facet] || new Map();
     const filter = (this._facetDialogFilter || '').trim().toLowerCase();
     let terms = [...map.entries()];
     if (filter) terms = terms.filter(([t]) => t.toLowerCase().includes(filter));
-    const mode = this._facetSortMode(facet);
+    const mode = this._facetDialogSort;
     if (mode === 'az') terms.sort((a, b) => a[0].localeCompare(b[0]));
     else if (mode === 'za') terms.sort((a, b) => b[0].localeCompare(a[0]));
     else terms.sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]));
-    const sel = this.catalog?.filters[facet] || new Set();
-    const CAP = 1500;
-    let html = terms.slice(0, CAP).map(([term, set]) =>
-      `<div class="facet-term${sel.has(term) ? ' active' : ''}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}"><span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`).join('');
-    if (!terms.length) html = '<div class="hint">No terms match.</div>';
-    else if (terms.length > CAP) html += `<div class="facet-more">+ ${terms.length - CAP} more — narrow with the filter above</div>`;
-    document.getElementById('facet-dialog-body').innerHTML = html;
+    this._fdTerms = terms;
     const title = document.getElementById('facet-dialog-title');
     if (title) title.textContent = `${facet} — ${map.size} term${map.size === 1 ? '' : 's'}${filter ? ` · ${terms.length} matching` : ''}`;
     const sb = document.getElementById('facet-dialog-sort'); if (sb) sb.textContent = mode === 'count' ? '#' : mode === 'az' ? 'a–z' : 'z–a';
+    this._renderFacetWindow(resetScroll);
+  }
+
+  // Fixed-height grid virtualization: only the visible rows (+ a buffer) are in
+  // the DOM, a full-height sizer gives the scrollbar its real extent, and the
+  // window is translated into place — so a 15k-term facet scrolls smoothly with
+  // ~30 rows mounted. Rows are a fixed 24px (ROW_H), columns fit the panel width.
+  _renderFacetWindow(resetScroll) {
+    const body = document.getElementById('facet-dialog-body'); if (!body || !this._facetDialog) return;
+    const terms = this._fdTerms || [];
+    if (!terms.length) { body.innerHTML = '<div class="hint">No terms match.</div>'; return; }
+    const facet = this._facetDialog;
+    const sel = this.catalog?.filters[facet] || new Set();
+    const ROW_H = 24, COL_W = 230, BUF = 6;
+    if (resetScroll) body.scrollTop = 0;
+    const perRow = Math.max(1, Math.floor((body.clientWidth || 720) / COL_W));
+    const nRows = Math.ceil(terms.length / perRow);
+    const viewH = body.clientHeight || 420;
+    const firstRow = Math.max(0, Math.floor(body.scrollTop / ROW_H) - BUF);
+    const lastRow = Math.min(nRows, Math.ceil((body.scrollTop + viewH) / ROW_H) + BUF);
+    let rows = '';
+    for (let i = firstRow * perRow; i < Math.min(terms.length, lastRow * perRow); i++) {
+      const [term, set] = terms[i];
+      rows += `<div class="facet-term${sel.has(term) ? ' active' : ''}" data-facet="${escapeHtml(facet)}" data-term="${escapeHtml(term)}"><span class="ft-name">${escapeHtml(term)}</span><span class="ft-count">${set.size}</span></div>`;
+    }
+    body.innerHTML = `<div class="fd-sizer" style="height:${nRows * ROW_H}px"><div class="fd-rows" style="transform:translateY(${firstRow * ROW_H}px);grid-template-columns:repeat(${perRow},minmax(0,1fr))">${rows}</div></div>`;
   }
 
   // Right-click a facet term → curate it: filter, or the thesaurus actions
