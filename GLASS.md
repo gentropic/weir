@@ -206,6 +206,71 @@ One JSON file per cataloged document. Three blocks: Dublin Core, facets, glass m
 - `cataloger` records *who* cataloged it (a model id, or `stage0-rules` for the
   deterministic pass) — provenance of the classification itself.
 
+### 4.1 Work-grouping (FRBR) — dedup the never-delete way **[designed]**
+
+weir's current dedup is **discard-on-collision** (same id → drop the newcomer). FRBR
+inverts it: **keep every copy, group what is the same.** The same content arrives
+through many pipes — wire stories carried by ten outlets, cross-posted blogs (an
+Akamai post syndicated through the *Linode* feed is a real case in the corpus),
+arXiv-then-published papers, re-uploaded videos. FRBR's four levels name the
+distinction:
+
+| FRBR | weir |
+|---|---|
+| **Work** — the abstract content | the story / idea ("the MS-RPC writeup") |
+| **Expression** — a version | preprint vs published; 720p vs 4K; a translation |
+| **Manifestation** — a publication | *this* item, from *this* feed, at *this* URL |
+| **Item** | weir collapses Manifestation↔Item (one stored record) |
+
+The grouping is an **overlay, not a merge** — a nullable `work_id` on items, never a
+deletion or rewrite — so it *compounds* weir's commitments instead of fighting them:
+**never-delete** (no manifestation discarded), **provenance preserved** (each item
+keeps its `feed_id`; the archival *respect des fonds* — group across fonds without
+erasing origin), **reversible** (ungroup any time). Dedup, done the never-delete way.
+
+**The precision-first staircase.** Five cases, increasing fuzziness; climb only as
+far as quality holds, and the fuzzy steps *propose*, they don't decide (§2.1):
+
+1. **Exact id** — already handled (insert dedup).
+2. **Resolved-URL identity** — same *resolved* URL (the link resolver already
+   unwraps wrappers/shorteners). Deterministic → auto-group.
+3. **Near-duplicate text** — **SimHash** (64-bit content fingerprint; Hamming ≤3–4
+   bits = same). ~100 lines, zero-dep, computed once at insert + stored; LSH-bucketed
+   to scale. Catches verbatim syndication + re-uploads. High precision → auto-group.
+4. **Same story, different words** — combine **shared named-entities (from the
+   `entity` facet — the catalog feeds the grouping), temporal proximity, title
+   Jaccard**. Score → threshold → *propose* (low-confidence, splittable). Never
+   auto-collapse on this alone.
+5. **Work/Expression links** — identifier bridges (arXiv↔DOI via the biblio
+   enricher) + explicit "same work as".
+
+Grouping is **not an LLM call** — a deterministic/statistical **background
+reconciliation pass** (so a late-arriving manifestation can still join), idempotent
+and reversible. Bias **precision over recall, hard**: a false group (two different
+stories merged) is far worse than a missed one. Microblog cold-start (little text →
+weak SimHash) → lean on URL/entity, or skip grouping (low syndication risk anyway).
+
+**Data model:** item gains `work_id` (nullable) + `simhash` (u64); a Work is the set
+of items sharing `work_id`, carrying a **`confirmed` vs `proposed`** flag (steps 2–3
+confirm; step 4 proposes). An optional `/works/<id>.json` records the chosen primary
+manifestation (most-complete content, tie-break newest; a source-preference ranking
+comes later).
+
+**State semantics — resolved, and the asymmetry *is* the confidence gate:**
+- **`read` → Work-level** ("I've seen this story; hide the other sources"), with
+  expand to read a specific manifestation. Applies even to *proposed* groups — a
+  wrong read-group is cheap and recoverable.
+- **`saved` → keeps ALL manifestations of a *confirmed* Work** — link-rot insurance
+  at the Work level (one source dies; the saved thing survives in its other copies —
+  the never-delete instinct lifted from item to Work). For a *proposed* Work, save
+  keeps the manifestation you saw and **offers** the siblings, never sweeps them onto
+  the durable shelf on a guess. A wrong save-group is sticky, so it's gated on
+  confidence — decides-vs-proposes (§2.1) applied to the save action.
+
+**Staging:** ship steps 2–3 first (deterministic, high-precision — collapses the most
+annoying duplication at near-zero false-positive risk); step 4 as a tunable proposal
+layer once 2–3 are trusted; step 5 opportunistically. (ROADMAP: LIS adoption arc.)
+
 ---
 
 ## 5. The facet scheme **[designed]** — and what weir pre-fills for free
