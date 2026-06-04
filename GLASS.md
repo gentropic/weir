@@ -494,6 +494,62 @@ Each stage is useful alone; stop at any prefix.
 
 ---
 
+## 16. Authority data — sources, tiers & the build-time-extract pattern **[reference]**
+
+Sourcing for the LIS arc's gazetteer + named-entity authority (§7, ROADMAP).
+**"Local" is three tiers:** (1) **vendored in the single file** (KB — only
+curated/extracted subsets); (2) a **local data pack** in the FSA/OPFS store
+(MB–GB, downloaded once, queried offline — *separate from the shipped artifact*,
+like the catalog); (3) **API-only** (the full GB–TB sources — query on demand or
+extract at build time).
+
+| Source | Covers | Scale | License | Local tier |
+|---|---|---|---|---|
+| **Wikidata** ⭐ | everything; the cross-ID hub | ~110M items | **CC0** | subset (full ~100 GB+) |
+| **GeoNames** | places + containment | ~12M | **CC-BY** | `cities15000` ~5 MB / subset |
+| **CIA World Factbook** | 254 countries: `region`, `capital`, coords | 254 | **CC0** | **already packed — `../gcu-library`** |
+| **Getty TGN** | hierarchical gazetteer | ~4M | ODC-BY | subset / API |
+| **LCSH** | subjects (BT/NT) | ~430k | **public domain** | trimmed pack |
+| **LCNAF / VIAF** | names | ~10M / ~30M | PD / ODC-BY | subset / API |
+| **ORCID** | researchers | ~20M | **CC0** | subset / API |
+| **MeSH / AGROVOC** | medical / agriculture | ~30k / ~40k | PD / CC-BY | pack |
+| ~~**DDC**~~ | classification | — | ⛔ proprietary (OCLC) | — |
+| ~~**GeoRef**~~ | geoscience thesaurus | — | ⛔ subscription (AGI) | — |
+
+*(Sizes/licenses are ballparks — verify VIAF/ISNI terms before relying.)*
+
+**Licensing is the real gate, not size.** CC0 (Wikidata, ORCID, CIA Factbook) and
+US-gov public-domain (LCSH/LCNAF/MeSH) are freely embeddable; CC-BY / ODC-BY
+(GeoNames, Getty, AGROVOC, VIAF) just need an attributions note (we already carry
+one for fonts). **DDC and GeoRef are paywalled — route around them** (glass already
+treats DDC as display-only, never the organizing system; the CC0/PD sources cover
+the need).
+
+**The pattern that dissolves size: build-time extraction keyed to the corpus.** You
+never resolve *the world* — you resolve *what weir holds* (~15k `entity` terms, ~640
+`spatial` terms). Look each up once against an open API, keep label + cross-IDs + the
+BT/NT or containment chain, **vendor the small result.** The full source is a
+build-time *input*, never a runtime dependency — the gazetteer pattern, generalized.
+
+**The GCU already provides tier 2 — and the gazetteer's backbone.** `../gcu-library`
+is a registry of CC0/PD **data packs** (`.gcudat` + sha256 integrity + `std.data("…")`
+access) — *exactly* the local-data-pack mechanism, same org. It already ships the
+**CIA World Factbook** pack (CC0): **254 countries with `region` (continent grouping),
+`capital`, and coordinates** — i.e. the *country→region* and *capital→country*
+containment edges, **the upper tiers of the spatial gazetteer, already local.** So:
+
+> **gazetteer = factbook pack** (countries / regions / capitals — free, local, sibling
+> repo) **+ a build-time GeoNames/Wikidata extract for the city long-tail +
+> sub-national** (US states, provinces, non-capital cities — the bulk of weir's actual
+> ~640 spatial terms, which the factbook's country/capital set doesn't reach).
+
+weir starts the gazetteer from a sibling pack, not from zero. (The library's **book**
+packs likewise feed the Stage-4 holdings shelf.) **Pick two for the tail:** **Wikidata**
+(CC0, universal, carries every other authority's cross-ref ID) + **GeoNames** (CC-BY,
+the containment graph) — both open APIs, both build-time-extractable.
+
+---
+
 The neo-dadaist throughline holds: zero-dependency, single-file, browser-as-runtime,
 local-first, auditable by construction, never-delete. Glass is that ethos applied
 to **memory itself** — a knowledge base whose every classification decision is
