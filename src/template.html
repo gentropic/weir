@@ -243,6 +243,12 @@
         <input type="file" id="backup-file" accept=".json,application/json" hidden>
         <div class="hint">Export a full backup — every feed, item, and its content in one file — your safety net against the browser clearing IndexedDB. Restore replaces weir's current data with the backup, then reloads.</div>
       </section>
+      <section class="set-group">
+        <h4>Courier — collaborator exchange</h4>
+        <div class="set-row"><span>folder: <b id="set-courier-loc">not connected</b></span><span id="set-courier-actions"></span></div>
+        <div class="set-row"><span id="set-courier-status" class="hint">—</span></div>
+        <div class="hint"><b>Optional.</b> An FS-backed exchange with an external collaborator (e.g. <b>Laney</b>): weir publishes a curated slice into <code>out/</code> (your vocabulary + recent captures) and ingests dispatches from <code>in/</code> as <code>author</code>-tagged notes. Point this at the folder you sync (Syncthing, …) — how it's shared is up to you; weir just reads the folder. Its <code>README.md</code> documents the protocol for the collaborator.</div>
+      </section>
     </div>
     <div class="panel-foot">
       <button class="btn" id="settings-save">Save</button>

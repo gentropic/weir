@@ -233,6 +233,7 @@ export class App {
     document.getElementById('set-restore-backup')?.addEventListener('click', () => backupFile?.click());
     backupFile?.addEventListener('change', async () => { const f = backupFile.files[0]; if (f) await this.restoreBackup(await f.text()); backupFile.value = ''; });
     document.getElementById('set-storage-actions')?.addEventListener('click', (e) => this.onMountAction(e));
+    document.getElementById('set-courier-actions')?.addEventListener('click', (e) => this.onCourierAction(e));
     document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
     document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
     document.getElementById('bridge-recheck')?.addEventListener('click', () => this.checkBridge());
@@ -3358,6 +3359,7 @@ export class App {
     document.getElementById('affinity-status').textContent = aff ? `watch data on ${aff} feeds` : 'no watch data loaded';
     this._refreshStorageInfo();
     this.renderStorageMount();
+    this.renderCourierSettings();
     document.getElementById('settings-overlay').hidden = false;
   }
 
@@ -3483,6 +3485,70 @@ export class App {
     if (!confirm('Forget the mounted folder and keep using the browser copy? The folder is left untouched; any changes made there stay in the folder.')) return;
     await clearHandle();
     location.reload();
+  }
+
+  // ── Courier (collaborator exchange) settings ──────────────────────────────
+  onCourierAction(e) {
+    const b = e.target.closest('[data-courier]'); if (!b) return;
+    const a = b.dataset.courier;
+    if (a === 'connect') this.connectCourier();
+    else if (a === 'publish') this.publishCourierNow();
+    else if (a === 'ingest') this.ingestCourierNow();
+    else if (a === 'disconnect') this.disconnectCourier();
+  }
+  _courierKey() { return 'courier:' + (this.courier?.config?.id || 'laney'); }
+  async connectCourier() {
+    if (!this.courier) return;
+    const msg = document.getElementById('settings-msg');
+    let handle;
+    try { handle = await pickDirectory('weir-courier'); }
+    catch (e) { if (e && e.name === 'AbortError') return; if (msg) msg.textContent = e.message; return; }
+    try {
+      await this.courier.mount(handle);          // scaffolds out/ in/ README in the folder
+      await saveHandle(handle, this._courierKey());
+      await this.courier.publish();              // first publish so out/ isn't empty
+      if (msg) msg.textContent = '';
+    } catch (e) { if (msg) msg.textContent = `courier failed: ${e.message}`; }
+    this.renderCourierSettings();
+  }
+  async disconnectCourier() {
+    if (!this.courier) return;
+    if (!confirm('Disconnect the Courier folder? The folder and everything in it is left untouched.')) return;
+    this.courier.unmount();
+    await clearHandle(this._courierKey());
+    this.renderCourierSettings();
+  }
+  async publishCourierNow() {
+    const st = document.getElementById('set-courier-status');
+    try { const r = await this.courier.publish(); if (st) st.textContent = `published ${r.written.length} export(s) ✓`; }
+    catch (e) { if (st) st.textContent = `publish failed: ${e.message}`; }
+    setTimeout(() => this.renderCourierSettings(), 1200);
+  }
+  async ingestCourierNow() {
+    const st = document.getElementById('set-courier-status');
+    try {
+      const r = await this.courier.ingest();
+      if (r.ingested > 0) { await this.store.flush(); this.renderStacks(); this.renderStream(); }
+      if (st) st.textContent = r.ingested ? `ingested ${r.ingested} dispatch(es) ✓` : 'nothing new in in/';
+    } catch (e) { if (st) st.textContent = `ingest failed: ${e.message}`; }
+    setTimeout(() => this.renderCourierSettings(), 1200);
+  }
+  async renderCourierSettings() {
+    const loc = document.getElementById('set-courier-loc');
+    const acts = document.getElementById('set-courier-actions');
+    const st = document.getElementById('set-courier-status');
+    if (!loc || !acts) return;
+    const c = this.courier;
+    const fsaOk = typeof window !== 'undefined' && !!window.showDirectoryPicker;
+    if (c && c.mounted) {
+      loc.textContent = (c.handle?.name || 'folder') + ' ✓';
+      acts.innerHTML = '<button class="btn-link" data-courier="publish">publish now</button> &nbsp; <button class="btn-link" data-courier="ingest">ingest now</button> &nbsp; <button class="btn-link" data-courier="disconnect">disconnect</button>';
+      try { const s = await c.status(); if (st) st.textContent = `${s.name} · exports: ${s.exports.join(', ')} · in/: ${s.pendingIn} pending · ${s.ingested} done`; } catch { /* status best-effort */ }
+    } else {
+      loc.textContent = 'not connected';
+      acts.innerHTML = fsaOk ? '<button class="btn-link" data-courier="connect">connect a folder…</button>' : '<span class="hint">needs Edge/Chrome</span>';
+      if (st) st.textContent = '—';
+    }
   }
 
   async saveSettings() {

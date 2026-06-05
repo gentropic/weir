@@ -149,6 +149,7 @@ export class Courier {
     this.handle = null; this.vfs = null;
   }
   get mounted() { return !!this.vfs; }
+  unmount() { this.vfs = null; this.handle = null; }
   _now() { return new Date().toISOString(); }
 
   // Mount an FSA directory handle (the exchange folder) and scaffold the layout.
