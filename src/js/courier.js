@@ -53,12 +53,13 @@ export function formatSavedRecent(ctx) {
   for (const it of pool) { if (seen.has(it.id)) continue; seen.add(it.id); items.push(it); if (items.length >= limit) break; }
   const fm = `---\nkind: saved-recent\ngenerated_at: ${ctx.now}\ncount: ${items.length}\n---\n\n`;
   const head = `# Recent deliberate captures (${items.length})\n\n`
-    + `Shared links + ★saved, newest first — the high-signal slice of what ${ownerName(ctx.config)} actually grabbed.\n\n`;
+    + `Shared links + ★saved, newest first — the high-signal slice of what ${ownerName(ctx.config)} actually grabbed.\n`
+    + `Each line starts with the weir item **id** in backticks — pass it as \`target:\` (to annotate that item) or \`[[id|label]]\` (to link it) in a dispatch.\n\n`;
   const rows = items.map((it) => {
     const d = it.published_at ? new Date(it.published_at).toISOString().slice(0, 10) : '—';
     const t = escMd(it.title || it.url || it.id);
     const tail = it.type ? ` · ${it.type}` : '';
-    return `- ${d} · [${t}](${it.url || ''})${tail}`;
+    return `- \`${it.id}\` · ${d} · [${t}](${it.url || ''})${tail}`;
   }).join('\n');
   return fm + head + (rows || '_(nothing captured yet)_') + '\n';
 }
@@ -81,6 +82,8 @@ anything but \`in/\`, and you only need to write there.
   so your work aligns with their taxonomy.
 - \`saved-recent.md\` — ${owner}'s recent deliberate captures (shared links + saved), newest
   first. The high-signal slice of what they actually care about — a good thing to work on.
+  Each entry begins with the item's **id** in backticks; that's the handle you put in
+  \`target:\` to annotate it, or in \`[[id|label]]\` to link it.
 - \`manifest.json\` — machine index: what's here and when it was written. Read this first.
 
 ## in/  (you → weir)

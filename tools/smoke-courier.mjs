@@ -48,6 +48,7 @@ assert.match(md, /kind: saved-recent/, 'frontmatter');
 assert.equal((md.match(/Kriging primer/g) || []).length, 1, 'dedup s1 across both queries');
 assert.match(md, /Saved video/); assert.match(md, /ESP32/);
 assert.ok(md.indexOf('Saved video') < md.indexOf('Kriging primer'), 'newest first (06-03 before 06-01)');
+assert.match(md, /`v1` ·/, 'each entry carries the item id (for target:/wikilinks)');
 assert.ok(md.indexOf('Kriging primer') < md.indexOf('ESP32'), 'then 06-01 before 05-20');
 
 // ── 2. splitFm ──────────────────────────────────────────────────────────────
