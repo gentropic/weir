@@ -59,7 +59,7 @@ assert.deepEqual(splitFm('no frontmatter here').data, {}, 'bare body → empty d
 
 // ── 3. README + manifest ────────────────────────────────────────────────────
 assert.match(formatReadme(DEFAULT_COURIER), /Courier — Laney/);
-assert.match(formatReadme(DEFAULT_COURIER), /authored by \*\*laney\*\*/);
+assert.match(formatReadme(DEFAULT_COURIER), /authored by\s+\*\*laney\*\*/);   // tolerate a line wrap
 assert.ok(!/Arthur/.test(formatReadme(DEFAULT_COURIER)), 'owner name is NOT hardcoded');
 assert.match(formatReadme(DEFAULT_COURIER), /the owner's/, 'neutral fallback when owner unset');
 assert.match(formatReadme({ ...DEFAULT_COURIER, owner: 'Testname' }), /Testname's SKOS/, 'owner name is config-driven');

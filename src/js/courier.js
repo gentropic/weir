@@ -108,8 +108,7 @@ target: <weir-item-id>            # optional — binds the note as an ANNOTATION
 Your note, in Markdown. [[id|label]] links to other items work too.
 \`\`\`
 
-You don't need to sign dispatches — weir files each one as a note **authored by
-${config.author}** automatically, so it's always attributable to you.
+You don't need to sign dispatches — weir files each one as a note authored by **${config.author}** automatically, so it's always attributable to you.
 
 ### Dispatch types (\`type:\`)
 - **note** (default) — a finding, brief, or annotation. Filed into ${owner}'s stream. With
