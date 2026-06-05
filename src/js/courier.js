@@ -24,7 +24,7 @@ export const DEFAULT_COURIER = {
   id: 'laney', name: 'Laney', author: 'laney',
   owner: '',                            // the weir user's display name (config — NEVER hardcoded);
                                         // '' → a neutral "the owner" in generated text.
-  exports: ['vocab', 'saved-recent'],   // the trust gradient — start narrow, widen later
+  exports: ['vocab', 'saved-recent', 'your-notes'],  // trust gradient — your-notes is HER own work mirrored back
   savedRecentLimit: 60,
 };
 const ownerName = (config) => (config && config.owner) || 'the owner';
@@ -38,7 +38,32 @@ export const EXPORT_WRITERS = {
   'saved-recent'(ctx) {
     return { path: 'out/saved-recent.md', text: formatSavedRecent(ctx) };
   },
+  // The collaborator's OWN notes, mirrored back so they can read/build-on/revise them.
+  // Async (it reads each note's body from the store). Single file → no stale-orphan files.
+  async 'your-notes'(ctx) {
+    return { path: 'out/your-notes.md', text: await formatYourNotes(ctx) };
+  },
 };
+
+export async function formatYourNotes(ctx) {
+  const author = ctx.config.author;
+  const notes = [...ctx.store.items.values()]
+    .filter((it) => it.feed_id === 'stacks' && it.type === 'note' && it.author === author)
+    .sort((a, b) => String(a.path || '').localeCompare(String(b.path || '')));
+  const parts = [];
+  for (const it of notes) {
+    let body = '';
+    try { body = ctx.stacks ? (await ctx.stacks.readNote(it)) || '' : ''; } catch { /* unreadable → skip body */ }
+    parts.push(`## ${escMd(it.title || it.path || it.id)}\n\n`
+      + `\`${it.id}\` · path \`${it.path || ''}\` · tags: ${(it.tags || []).join(', ') || '—'}\n\n`
+      + `${String(body).trim()}\n`);
+  }
+  const head = `---\nkind: your-notes\ngenerated_at: ${ctx.now}\ncount: ${notes.length}\n---\n\n`
+    + `# Your notes (${notes.length})\n\n`
+    + `Everything you've sent, as weir holds it — each with its canonical **id**. Use these to\n`
+    + `build on past work, link them (\`[[id]]\`), or revise one (\`update: <id>\` in a new dispatch).\n\n`;
+  return head + (parts.join('\n---\n\n') || '_(nothing yet)_') + '\n';
+}
 
 // ── pure formatters (no I/O — unit-testable) ────────────────────────────────
 function escMd(s) { return String(s == null ? '' : s).replace(/\n/g, ' ').replace(/\]/g, '\\]').trim(); }
@@ -91,6 +116,8 @@ anything but \`in/\`, and you only need to write there.
   first. The high-signal slice of what they actually care about — a good thing to work on.
   Each entry begins with the item's **id** in backticks; that's the handle you put in
   \`target:\` to annotate it, or in \`[[id|label]]\` to link it.
+- \`your-notes.md\` — **everything you've sent**, as weir holds it, each with its canonical
+  id. Read it to build on past work, link notes (\`[[id]]\`), or revise one (\`update:\` below).
 - \`manifest.json\` — machine index: what's here and when it was written. Read this first.
 
 ## in/  (you → weir)
@@ -112,6 +139,9 @@ Your note, in Markdown. [[id|label]] links to other items work too.
 Use \`folder:\` to keep your work tidy — it nests under your own \`${config.author}/\` space
 (e.g. \`folder: agents\` → \`stacks/${config.author}/agents/\`), created as needed. Everything
 you send stays namespaced to you; ${owner} can rearrange it in the stacks tree anytime.
+
+To **revise** one of your earlier notes instead of adding a new one, put its id (from
+\`your-notes.md\`) in \`update: <id>\` — weir edits that note in place.
 
 You don't need to sign dispatches — weir files each one as a note authored by **${config.author}** automatically, so it's always attributable to you.
 
@@ -215,11 +245,11 @@ export class Courier {
   // Publish the configured exports into out/, refresh the manifest + README.
   async publish(now = this._now()) {
     if (!this.vfs) throw new Error('courier: not mounted');
-    const ctx = { store: this.store, config: this.config, now };
+    const ctx = { store: this.store, stacks: this.stacks, config: this.config, now };
     const written = [];
     for (const key of this.config.exports) {
       const w = EXPORT_WRITERS[key]; if (!w) continue;
-      const { path, text } = w(ctx);
+      const { path, text } = await w(ctx);   // writers may be async (e.g. your-notes reads bodies)
       await this._write('/' + path, text);
       written.push({ name: path, updated: now });
     }
@@ -262,8 +292,17 @@ export class Courier {
         if (type !== 'note' && this.handlers[type]) {
           disposition = (await this.handlers[type]({ data, body, name })) || `queued (${type})`;
         } else {
-          await this._fileAsNote(data, body, name);
-          disposition = type === 'note' ? 'filed as note' : `filed as note (unknown type "${type}")`;
+          // `update: <id>` revises an existing note in place (saveNote); else a new note.
+          const updId = (typeof data.update === 'string' && data.update.trim()) || null;
+          const it = updId ? this.store.getItem(updId) : null;
+          if (it && it.feed_id === 'stacks') {
+            await this.stacks.saveNote(it, body, { title: data.title || it.title, tags: Array.isArray(data.tags) ? data.tags : undefined });
+            disposition = `updated note ${updId}`;
+          } else {
+            await this._fileAsNote(data, body, name);
+            disposition = updId ? `filed as new note (update target "${updId}" not found)`
+              : (type === 'note' ? 'filed as note' : `filed as note (unknown type "${type}")`);
+          }
         }
         try { await this.vfs.rename('/in/' + name, '/in/.done/' + name); } catch { /* leave if move fails */ }
       } catch (e) {

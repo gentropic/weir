@@ -6,7 +6,12 @@ import assert from 'node:assert';
 import { Courier, formatSavedRecent, formatReadme, formatManifest, splitFm, DEFAULT_COURIER } from '../src/js/courier.js';
 
 // ── mocks ────────────────────────────────────────────────────────────────
+const noteItems = new Map([
+  ['stacks:n1', { id: 'stacks:n1', feed_id: 'stacks', type: 'note', author: 'laney', title: 'My first note', path: 'laney/my-first-note.md', tags: ['idea'] }],
+]);
 const store = {
+  items: noteItems,
+  getItem: (id) => noteItems.get(id),
   vocabExportSkos: () => ({ '@context': { skos: 'x' }, '@graph': [{ '@id': 'weir:domain/geostatistics', 'skos:prefLabel': 'geostatistics' }] }),
   query: (opts) => {
     if (opts.feed_id === 'saved') return [
@@ -20,8 +25,12 @@ const store = {
     return [];
   },
 };
-const writes = [];
-const stacks = { writeNote: async (o) => { writes.push(o); return { id: 'stacks:' + writes.length, path: `stacks/laney/${o.title}.md`, ...o }; } };
+const writes = []; const saves = [];
+const stacks = {
+  writeNote: async (o) => { writes.push(o); return { id: 'stacks:' + writes.length, path: `stacks/laney/${o.title}.md`, ...o }; },
+  saveNote: async (it, md, opts) => { saves.push({ id: it.id, md, opts }); return it; },
+  readNote: async (it) => `body of ${it.title}`,
+};
 
 // minimal in-memory VFS implementing just what Courier uses
 function memVfs() {
@@ -71,10 +80,13 @@ const c = new Courier({ store, stacks, config: DEFAULT_COURIER });
 await c.mountVfs(memVfs());
 
 const pub = await c.publish('2026-06-05T00:00:00Z');
-assert.deepEqual(pub.written.map((w) => w.name), ['out/vocab.jsonld', 'out/saved-recent.md'], 'both exports written');
+assert.deepEqual(pub.written.map((w) => w.name), ['out/vocab.jsonld', 'out/saved-recent.md', 'out/your-notes.md'], 'three exports written');
 assert.match(await c._read('/out/vocab.jsonld'), /geostatistics/, 'vocab content');
 assert.match(await c._read('/manifest.json'), /vocab\.jsonld/, 'manifest indexes it');
 assert.match(await c._read('/README.md'), /## in\//, 'README generated');
+// your-notes mirrors her own namespace back (id + body) so she can build on/revise it
+assert.match(await c._read('/out/your-notes.md'), /stacks:n1/, 'your-notes carries the canonical id');
+assert.match(await c._read('/out/your-notes.md'), /body of My first note/, 'your-notes includes the note body');
 
 // plant a dispatch in in/ → ingest → becomes an author:laney note → moved to .done
 await c.vfs.writeFile('/in/finding-1.md', '---\ntitle: A connection\ntarget: stacks:k1\ntags: [geostatistics]\n---\n\nThese two relate.');
@@ -106,4 +118,11 @@ await c.vfs.writeFile('/in/esc.md', '---\ntitle: Escapee\nfolder: ../../etc\n---
 await c.ingest('t-esc');
 assert.equal(writes.find((w) => w.title === 'Escapee').folder, 'laney/etc', 'folder: cannot escape the namespace (.. stripped)');
 
-console.log('courier smoke ok:', JSON.stringify({ published: pub.written.length, ingested: ing.ingested, routed: 'feed→handler', subfolder: 'laney/research/ai' }));
+// ── 7. update: revise an existing note in place (saveNote, not a new note) ───
+await c.vfs.writeFile('/in/revise.md', '---\nupdate: stacks:n1\ntitle: My first note (rev)\n---\n\nrevised body');
+await c.ingest('t-upd');
+assert.equal(saves.length, 1, 'update: routed to saveNote');
+assert.equal(saves[0].id, 'stacks:n1', 'updated the right note');
+assert.match(saves[0].md, /revised body/, 'new body passed to saveNote');
+
+console.log('courier smoke ok:', JSON.stringify({ published: pub.written.length, ingested: ing.ingested, routed: 'feed→handler', subfolder: 'laney/research/ai', mirror: 'your-notes', updated: saves.length }));
