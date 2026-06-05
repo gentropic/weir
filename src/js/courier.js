@@ -24,7 +24,7 @@ export const DEFAULT_COURIER = {
   id: 'laney', name: 'Laney', author: 'laney',
   owner: '',                            // the weir user's display name (config — NEVER hardcoded);
                                         // '' → a neutral "the owner" in generated text.
-  exports: ['vocab', 'saved-recent', 'your-notes'],  // trust gradient — your-notes is HER own work mirrored back
+  exports: ['vocab', 'saved-recent', 'notes'],       // trust gradient — `notes` mirrors HER own work back as a tree
   savedRecentLimit: 60,
 };
 const ownerName = (config) => (config && config.owner) || 'the owner';
@@ -38,31 +38,16 @@ export const EXPORT_WRITERS = {
   'saved-recent'(ctx) {
     return { path: 'out/saved-recent.md', text: formatSavedRecent(ctx) };
   },
-  // The collaborator's OWN notes, mirrored back so they can read/build-on/revise them.
-  // Async (it reads each note's body from the store). Single file → no stale-orphan files.
-  async 'your-notes'(ctx) {
-    return { path: 'out/your-notes.md', text: await formatYourNotes(ctx) };
-  },
+  // NB: `notes` (the collaborator's own work, mirrored back as a TREE under out/notes/) is
+  // multi-file + reconciling, so it's handled in publish() via Courier._mirrorNotes(), not here.
 };
 
-export async function formatYourNotes(ctx) {
-  const author = ctx.config.author;
-  const notes = [...ctx.store.items.values()]
-    .filter((it) => it.feed_id === 'stacks' && it.type === 'note' && it.author === author)
-    .sort((a, b) => String(a.path || '').localeCompare(String(b.path || '')));
-  const parts = [];
-  for (const it of notes) {
-    let body = '';
-    try { body = ctx.stacks ? (await ctx.stacks.readNote(it)) || '' : ''; } catch { /* unreadable → skip body */ }
-    parts.push(`## ${escMd(it.title || it.path || it.id)}\n\n`
-      + `\`${it.id}\` · path \`${it.path || ''}\` · tags: ${(it.tags || []).join(', ') || '—'}\n\n`
-      + `${String(body).trim()}\n`);
-  }
-  const head = `---\nkind: your-notes\ngenerated_at: ${ctx.now}\ncount: ${notes.length}\n---\n\n`
-    + `# Your notes (${notes.length})\n\n`
-    + `Everything you've sent, as weir holds it — each with its canonical **id**. Use these to\n`
-    + `build on past work, link them (\`[[id]]\`), or revise one (\`update: <id>\` in a new dispatch).\n\n`;
-  return head + (parts.join('\n---\n\n') || '_(nothing yet)_') + '\n';
+// Index for the out/notes/ mirror — cheap discovery so she reads ONE note, not all of them.
+export function formatNotesIndex(rows, now) {
+  return `---\nkind: notes-index\ngenerated_at: ${now}\ncount: ${rows.length}\n---\n\n`
+    + `# Your notes (${rows.length})\n\nFind a note here, then open just that file under \`notes/\` — don't read them all.\n`
+    + `Each note's frontmatter carries its **id**; use it in \`update:\`, \`target:\`, or \`[[id]]\`.\n\n`
+    + (rows.join('\n') || '_(nothing yet)_') + '\n';
 }
 
 // ── pure formatters (no I/O — unit-testable) ────────────────────────────────
@@ -116,8 +101,10 @@ anything but \`in/\`, and you only need to write there.
   first. The high-signal slice of what they actually care about — a good thing to work on.
   Each entry begins with the item's **id** in backticks; that's the handle you put in
   \`target:\` to annotate it, or in \`[[id|label]]\` to link it.
-- \`your-notes.md\` — **everything you've sent**, as weir holds it, each with its canonical
-  id. Read it to build on past work, link notes (\`[[id]]\`), or revise one (\`update:\` below).
+- \`notes/\` — **your own notes**, mirrored back as a tree (your folder structure preserved).
+  Read \`notes/INDEX.md\` to find one, then open just that file — don't read them all. Each
+  carries its canonical **id** in frontmatter; build on them, link them (\`[[id]]\`), or revise
+  one (\`update:\` below).
 - \`manifest.json\` — machine index: what's here and when it was written. Read this first.
 
 ## in/  (you → weir)
@@ -248,14 +235,46 @@ export class Courier {
     const ctx = { store: this.store, stacks: this.stacks, config: this.config, now };
     const written = [];
     for (const key of this.config.exports) {
+      if (key === 'notes') { await this._mirrorNotes(now); written.push({ name: 'out/notes/INDEX.md', updated: now }); continue; }
       const w = EXPORT_WRITERS[key]; if (!w) continue;
-      const { path, text } = await w(ctx);   // writers may be async (e.g. your-notes reads bodies)
+      const { path, text } = await w(ctx);
       await this._write('/' + path, text);
       written.push({ name: path, updated: now });
     }
     await this._write('/manifest.json', formatManifest(written, ctx));
     await this._write('/README.md', formatReadme(this.config));
     return { written };
+  }
+
+  // Mirror the collaborator's OWN notes back as a TREE under out/notes/, preserving her
+  // folder structure (one file per note, id in frontmatter) + an INDEX for cheap discovery.
+  // Reconciling: files no longer backed by a live note are removed (no stale orphans).
+  async _mirrorNotes(now = this._now()) {
+    const author = this.config.author;
+    const notes = [...this.store.items.values()].filter((it) => it.feed_id === 'stacks' && it.type === 'note' && it.author === author);
+    const wanted = new Set(); const rows = [];
+    const prefix = new RegExp('^' + author.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/');
+    for (const it of notes) {
+      const rel = String(it.path || '').replace(prefix, '') || (String(it.id).replace(/[^\w.-]/g, '_') + '.md');
+      const mpath = '/out/notes/' + rel;
+      let body = ''; try { body = (await this.stacks.readNote(it)) || ''; } catch { /* unreadable → empty */ }
+      const fm = `---\nid: ${it.id}\ntitle: ${JSON.stringify(String(it.title || ''))}\ntags: [${(it.tags || []).join(', ')}]\n---\n\n`;
+      await this._write(mpath, fm + String(body).trim() + '\n');
+      wanted.add(mpath);
+      rows.push(`- \`${it.id}\` · [${escMd(it.title || rel)}](${rel}) · ${(it.tags || []).join(', ') || '—'}`);
+    }
+    await this._write('/out/notes/INDEX.md', formatNotesIndex(rows, now));
+    wanted.add('/out/notes/INDEX.md');
+    await this._reconcileDir('/out/notes', wanted);
+  }
+  async _reconcileDir(dir, wanted) {
+    let names; try { names = await this.vfs.readdir(dir); } catch { return; }
+    for (const name of names) {
+      const p = dir + '/' + name;
+      let st; try { st = await this.vfs.stat(p); } catch { continue; }
+      if (st && st.type === 'directory') await this._reconcileDir(p, wanted);
+      else if (!wanted.has(p)) { try { await this.vfs.rm(p); } catch { /* best-effort orphan cleanup */ } }
+    }
   }
 
   // Ingest in/ dispatches, routed by `type:`. `note` (default) → an author-tagged

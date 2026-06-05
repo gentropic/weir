@@ -47,6 +47,7 @@ function memVfs() {
     },
     async stat(p) { p = norm(p); if (dirs.has(p)) return { type: 'directory' }; if (files.has(p)) return { type: 'file' }; const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; },
     async rename(a, b) { a = norm(a); b = norm(b); if (files.has(a)) { files.set(b, files.get(a)); files.delete(a); } },
+    async rm(p) { files.delete(norm(p)); },
     async exists(p) { p = norm(p); return files.has(p) || dirs.has(p); },
   };
 }
@@ -80,13 +81,19 @@ const c = new Courier({ store, stacks, config: DEFAULT_COURIER });
 await c.mountVfs(memVfs());
 
 const pub = await c.publish('2026-06-05T00:00:00Z');
-assert.deepEqual(pub.written.map((w) => w.name), ['out/vocab.jsonld', 'out/saved-recent.md', 'out/your-notes.md'], 'three exports written');
+assert.deepEqual(pub.written.map((w) => w.name), ['out/vocab.jsonld', 'out/saved-recent.md', 'out/notes/INDEX.md'], 'three exports written');
 assert.match(await c._read('/out/vocab.jsonld'), /geostatistics/, 'vocab content');
 assert.match(await c._read('/manifest.json'), /vocab\.jsonld/, 'manifest indexes it');
 assert.match(await c._read('/README.md'), /## in\//, 'README generated');
-// your-notes mirrors her own namespace back (id + body) so she can build on/revise it
-assert.match(await c._read('/out/your-notes.md'), /stacks:n1/, 'your-notes carries the canonical id');
-assert.match(await c._read('/out/your-notes.md'), /body of My first note/, 'your-notes includes the note body');
+// her notes mirrored back as a TREE (index for discovery + one file per note, id in frontmatter)
+assert.match(await c._read('/out/notes/INDEX.md'), /stacks:n1/, 'notes INDEX lists her note id');
+assert.match(await c._read('/out/notes/my-first-note.md'), /id: stacks:n1/, 'note mirrored to the tree with its id');
+assert.match(await c._read('/out/notes/my-first-note.md'), /body of My first note/, 'mirrored note carries the body');
+// reconcile: a stale mirror file (no live note) is removed on the next publish
+await c.vfs.writeFile('/out/notes/orphan.md', 'stale');
+await c.publish('t-repub');
+assert.equal(await c._read('/out/notes/orphan.md'), null, 'orphan mirror file removed on reconcile');
+assert.match(await c._read('/out/notes/my-first-note.md'), /stacks:n1/, 'live note survives reconcile');
 
 // plant a dispatch in in/ → ingest → becomes an author:laney note → moved to .done
 await c.vfs.writeFile('/in/finding-1.md', '---\ntitle: A connection\ntarget: stacks:k1\ntags: [geostatistics]\n---\n\nThese two relate.');
