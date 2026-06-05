@@ -194,6 +194,23 @@ async function boot() {
   if (store.getSettings().telegram_enabled && await getKey('telegram')) { telegram.start(); runner.kick('telegram'); }
   app.renderTelegramStatus(telegram.status);   // reflect enabled/polling in the footer from the start
 
+  // Courier auto-loops — so the exchange works hands-off (no manual ingest/publish), which
+  // is the mode the collaborator's skills assume. Both gated on a mounted courier.
+  runner.add({
+    name: 'courier-ingest', intervalMs: 25_000,
+    enabled: () => !!(app.courier && app.courier.mounted),
+    tick: async () => {
+      const r = await app.courier.ingest();
+      if (r.results && r.results.length) { await store.flush(); app.renderStacks(); app.renderStream(); app.renderCourierBar(); }
+      if (r.ingested > 0) await app.courier.publish().catch(() => {});   // refresh out/notes so her new note shows up
+    },
+  });
+  runner.add({
+    name: 'courier-publish', intervalMs: 90_000,
+    enabled: () => !!(app.courier && app.courier.mounted && app._courierDirty),
+    tick: async () => { app._courierDirty = false; await app.courier.publish().catch(() => {}); },
+  });
+
   window.__weir = { store, poller, router, drip, retainer, linkResolver, stacks, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();

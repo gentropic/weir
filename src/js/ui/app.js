@@ -83,8 +83,8 @@ export class App {
 
     // Counts update live (cheap, no flicker); the rail+stream rebuild is debounced
     // so a burst of poll inserts doesn't tear the rows out from under the cursor.
-    for (const ev of ['items', 'prune']) this.store.on(ev, () => { this.renderCounts(); this._scheduleRender(); });
-    this.store.on('item', () => this.renderCounts());   // single state changes refresh their row in-place via doAct
+    for (const ev of ['items', 'prune']) this.store.on(ev, () => { this.renderCounts(); this._scheduleRender(); this._courierDirty = true; });
+    this.store.on('item', () => { this.renderCounts(); this._courierDirty = true; });   // single state changes refresh their row in-place via doAct
     this.store.on('feed', () => this._scheduleRender());
     this.poller.on('polled', (e) => {
       this.renderPollStatus();
@@ -3549,7 +3549,7 @@ export class App {
     if (c && c.mounted) {
       loc.textContent = (c.handle?.name || 'folder') + ' ✓';
       acts.innerHTML = '<button class="btn-link" data-courier="publish">publish now</button> &nbsp; <button class="btn-link" data-courier="ingest">ingest now</button> &nbsp; <button class="btn-link" data-courier="disconnect">disconnect</button>';
-      try { const s = await c.status(); if (st) st.textContent = `${s.name} · exports: ${s.exports.join(', ')} · in/: ${s.pendingIn} pending · ${s.ingested} done`; } catch { /* status best-effort */ }
+      try { const s = await c.status(); if (st) st.textContent = `${s.name} · auto ✓ · in/: ${s.pendingIn} pending · ${s.ingested} done · exports: ${s.exports.join(', ')}`; } catch { /* status best-effort */ }
     } else {
       loc.textContent = 'not connected';
       acts.innerHTML = fsaOk ? '<button class="btn-link" data-courier="connect">connect a folder…</button>' : '<span class="hint">needs Edge/Chrome</span>';

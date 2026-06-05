@@ -13026,8 +13026,10 @@ The rule for everything beyond a plain note: **you propose, ${owner} decides.** 
 vocabulary suggestions, item relations, slice requests — are coming; they all work this way.)
 
 ### Feedback
-After each ingest, weir writes **\`out/receipts.md\`** — check it to see what each file became:
-*filed as note* · *queued (a proposal)* · or *error* (left in \`in/\` for you to fix).
+weir ingests \`in/\` **automatically** (about every 25s while connected), then writes
+**\`out/receipts.md\`** — so after dropping a dispatch, give it a moment, then read receipts
+to see what each file became: *filed as note* · *queued (a proposal)* · *error* (left in
+\`in/\` for you to fix). Your new notes appear under \`out/notes/\` right after ingest.
 
 Write atomically (temp file, then rename into \`in/\`). Processed dispatches move to
 \`in/.done/\` — never deleted.
@@ -16140,8 +16142,8 @@ class App {
 
     // Counts update live (cheap, no flicker); the rail+stream rebuild is debounced
     // so a burst of poll inserts doesn't tear the rows out from under the cursor.
-    for (const ev of ['items', 'prune']) this.store.on(ev, () => { this.renderCounts(); this._scheduleRender(); });
-    this.store.on('item', () => this.renderCounts());   // single state changes refresh their row in-place via doAct
+    for (const ev of ['items', 'prune']) this.store.on(ev, () => { this.renderCounts(); this._scheduleRender(); this._courierDirty = true; });
+    this.store.on('item', () => { this.renderCounts(); this._courierDirty = true; });   // single state changes refresh their row in-place via doAct
     this.store.on('feed', () => this._scheduleRender());
     this.poller.on('polled', (e) => {
       this.renderPollStatus();
@@ -19606,7 +19608,7 @@ class App {
     if (c && c.mounted) {
       loc.textContent = (c.handle?.name || 'folder') + ' ✓';
       acts.innerHTML = '<button class="btn-link" data-courier="publish">publish now</button> &nbsp; <button class="btn-link" data-courier="ingest">ingest now</button> &nbsp; <button class="btn-link" data-courier="disconnect">disconnect</button>';
-      try { const s = await c.status(); if (st) st.textContent = `${s.name} · exports: ${s.exports.join(', ')} · in/: ${s.pendingIn} pending · ${s.ingested} done`; } catch { /* status best-effort */ }
+      try { const s = await c.status(); if (st) st.textContent = `${s.name} · auto ✓ · in/: ${s.pendingIn} pending · ${s.ingested} done · exports: ${s.exports.join(', ')}`; } catch { /* status best-effort */ }
     } else {
       loc.textContent = 'not connected';
       acts.innerHTML = fsaOk ? '<button class="btn-link" data-courier="connect">connect a folder…</button>' : '<span class="hint">needs Edge/Chrome</span>';
@@ -21168,7 +21170,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '9147023';          // short content hash of the bundle (build id)
+const COMMIT = 'c5904c0';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -21332,6 +21334,23 @@ async function boot() {
   runner.add({ name: 'telegram', intervalMs: telegram.intervalMs, tick: () => telegram.tick(), enabled: () => telegram.enabled() });
   if (store.getSettings().telegram_enabled && await getKey('telegram')) { telegram.start(); runner.kick('telegram'); }
   app.renderTelegramStatus(telegram.status);   // reflect enabled/polling in the footer from the start
+
+  // Courier auto-loops — so the exchange works hands-off (no manual ingest/publish), which
+  // is the mode the collaborator's skills assume. Both gated on a mounted courier.
+  runner.add({
+    name: 'courier-ingest', intervalMs: 25_000,
+    enabled: () => !!(app.courier && app.courier.mounted),
+    tick: async () => {
+      const r = await app.courier.ingest();
+      if (r.results && r.results.length) { await store.flush(); app.renderStacks(); app.renderStream(); app.renderCourierBar(); }
+      if (r.ingested > 0) await app.courier.publish().catch(() => {});   // refresh out/notes so her new note shows up
+    },
+  });
+  runner.add({
+    name: 'courier-publish', intervalMs: 90_000,
+    enabled: () => !!(app.courier && app.courier.mounted && app._courierDirty),
+    tick: async () => { app._courierDirty = false; await app.courier.publish().catch(() => {}); },
+  });
 
   window.__weir = { store, poller, router, drip, retainer, linkResolver, stacks, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {

@@ -144,8 +144,10 @@ The rule for everything beyond a plain note: **you propose, ${owner} decides.** 
 vocabulary suggestions, item relations, slice requests — are coming; they all work this way.)
 
 ### Feedback
-After each ingest, weir writes **\`out/receipts.md\`** — check it to see what each file became:
-*filed as note* · *queued (a proposal)* · or *error* (left in \`in/\` for you to fix).
+weir ingests \`in/\` **automatically** (about every 25s while connected), then writes
+**\`out/receipts.md\`** — so after dropping a dispatch, give it a moment, then read receipts
+to see what each file became: *filed as note* · *queued (a proposal)* · *error* (left in
+\`in/\` for you to fix). Your new notes appear under \`out/notes/\` right after ingest.
 
 Write atomically (temp file, then rename into \`in/\`). Processed dispatches move to
 \`in/.done/\` — never deleted.
