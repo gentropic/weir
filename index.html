@@ -1145,6 +1145,7 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
         <span id="telegram-status" class="clickable" title="Telegram capture bot"></span>
         <span id="health-status" title="Feeds that may be hijacked, dead, or stale — click to review"></span>
         <span id="review-status" title="Catalog cards the librarian flagged low-confidence — click to confirm/correct"></span>
+        <span id="courier-status" title="Proposals from your Courier collaborator — click to review (you decide)"></span>
         <span id="catalog-status"></span>
         <span id="notify-status"></span>
       </div>
@@ -1344,6 +1345,18 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
     <div class="panel-foot">
       <span class="hint">j/k move · a approve · e edit facets · r re-catalog · x discard · o open · Esc close</span>
       <button class="btn" id="review-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Courier proposals — decides-vs-proposes: the collaborator suggests, you ratify -->
+<div class="overlay" id="courier-prop-overlay" hidden>
+  <div class="panel">
+    <div class="panel-head"><span>Courier proposals</span></div>
+    <div class="review-body" id="courier-prop-body"></div>
+    <div class="panel-foot">
+      <span class="hint">Your Courier proposes · you decide — approve to act, dismiss to discard.</span>
+      <button class="btn" id="courier-prop-close">Close</button>
     </div>
   </div>
 </div>
@@ -10399,6 +10412,7 @@ const DEFAULT_SETTINGS = {
   owner_name: '',                        // your display name — used by the Courier's README/exports (NEVER hardcoded; '' → neutral "the owner")
   courier_name: 'Laney',                 // the Courier collaborator's display name
   courier_author: 'laney',               // author tag stamped on dispatches ingested from the Courier
+  courier_proposals: [],                 // pending Courier proposals (feed suggestions, …) awaiting the user's ratify (decides-vs-proposes)
   mcp_allow_feed_removal: true,          // let the weir_removeFeed MCP tool hard-delete a feed (+ its items); off = Claude can't prune feeds
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
@@ -12936,6 +12950,13 @@ function formatManifest(files, ctx) {
   return JSON.stringify({ courier: 'weir', name: ctx.config.name, generated_at: ctx.now, files }, null, 1);
 }
 
+// Receipt of the last ingest — so the collaborator knows what landed and what didn't.
+function formatReceipts(results, now) {
+  const head = `---\nkind: receipts\ngenerated_at: ${now}\n---\n\n# Last ingest (${results.length})\n\n`
+    + `What weir did with each file in in/: **filed as note** = it's in the stream · **queued (...)** = a proposal awaiting approval · **error** = left in in/ for you to fix.\n\n`;
+  return head + results.map((r) => `- \`${r.name}\` → ${r.disposition}`).join('\n') + '\n';
+}
+
 // The self-describing skill — this IS the collaborator's interface + the live protocol spec.
 function formatReadme(config) {
   const owner = ownerName(config);
@@ -13022,6 +13043,10 @@ class Courier {
     this.store = store; this.stacks = stacks;
     this.config = { ...DEFAULT_COURIER, ...(config || {}) };
     this.handle = null; this.vfs = null;
+    // dispatch-type handlers (type → async ({data,body,name}) → dispositionString).
+    // `note` is built in (→ a stacks note); the app registers structural types
+    // (feed/vocab/relate/…) that land as PROPOSALS the user ratifies (decides-vs-proposes).
+    this.handlers = {};
   }
   get mounted() { return !!this.vfs; }
   unmount() { this.vfs = null; this.handle = null; }
@@ -13064,32 +13089,46 @@ class Courier {
     return { written };
   }
 
-  // Ingest in/ dispatches → weir stacks notes (author-tagged), then move each to in/.done.
-  async ingest() {
-    if (!this.vfs || !this.stacks) return { ingested: 0, items: [] };
-    let names; try { names = await this.vfs.readdir('/in'); } catch { return { ingested: 0, items: [] }; }
-    const items = [];
+  // Ingest in/ dispatches, routed by `type:`. `note` (default) → an author-tagged
+  // stacks note; other types → a registered handler (a PROPOSAL the user ratifies).
+  // Processed files move to in/.done (never-delete); a receipt is written to out/.
+  async _fileAsNote(data, body, name) {
+    return this.stacks.writeNote({
+      folder: this.config.id,                   // → stacks/<id>/ (e.g. stacks/laney/)
+      title: data.title || name.replace(/\.md$/i, ''),
+      markdown: body,
+      tags: Array.isArray(data.tags) ? data.tags : [],
+      source: this.config.author,               // → author: laney (attribution)
+      target: data.target || undefined,         // optional → annotation backlink on a weir item
+    });
+  }
+  async ingest(now = this._now()) {
+    if (!this.vfs || !this.stacks) return { ingested: 0, results: [] };
+    let names; try { names = await this.vfs.readdir('/in'); } catch { return { ingested: 0, results: [] }; }
+    const results = [];
     for (const name of names) {
       if (name.startsWith('.') || !/\.md$/i.test(name)) continue;
       let st; try { st = await this.vfs.stat('/in/' + name); } catch { continue; }
       if (st && st.type === 'directory') continue;
       const text = await this._read('/in/' + name); if (text == null) continue;
       const { data, body } = splitFm(text);
+      const type = String(data.type || 'note').toLowerCase();
+      let disposition;
       try {
-        const rec = await this.stacks.writeNote({
-          folder: this.config.id,                 // → stacks/<id>/ (e.g. stacks/laney/)
-          title: data.title || name.replace(/\.md$/i, ''),
-          markdown: body,
-          tags: Array.isArray(data.tags) ? data.tags : [],
-          source: this.config.author,             // → author: laney (attribution)
-          target: data.target || undefined,       // optional → annotation backlink on a weir item
-        });
-        items.push(rec);
-        // never-delete: move the processed dispatch aside, don't remove it.
-        try { await this.vfs.rename('/in/' + name, '/in/.done/' + name); } catch { /* leave in place if move fails */ }
-      } catch (e) { /* skip a bad dispatch; leave it in in/ for a retry */ }
+        if (type !== 'note' && this.handlers[type]) {
+          disposition = (await this.handlers[type]({ data, body, name })) || `queued (${type})`;
+        } else {
+          await this._fileAsNote(data, body, name);
+          disposition = type === 'note' ? 'filed as note' : `filed as note (unknown type "${type}")`;
+        }
+        try { await this.vfs.rename('/in/' + name, '/in/.done/' + name); } catch { /* leave if move fails */ }
+      } catch (e) {
+        disposition = `error: ${e.message || e}`;   // leave the file in in/ for a retry
+      }
+      results.push({ name, type, disposition });
     }
-    return { ingested: items.length, items };
+    if (results.length) { try { await this._write('/out/receipts.md', formatReceipts(results, now)); } catch { /* best-effort */ } }
+    return { ingested: results.filter((r) => !r.disposition.startsWith('error')).length, results };
   }
 
   // Snapshot for the UI / weir_courier tool.
@@ -16182,6 +16221,9 @@ class App {
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
     document.getElementById('resolver-status')?.addEventListener('click', () => { this.catFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.feedFilter = 'saved'; this.renderAll(); });
     document.getElementById('review-status')?.addEventListener('click', () => this.openReview());
+    document.getElementById('courier-status')?.addEventListener('click', () => this.openCourierProposals());
+    document.getElementById('courier-prop-close')?.addEventListener('click', () => { const o = document.getElementById('courier-prop-overlay'); if (o) o.hidden = true; });
+    document.getElementById('courier-prop-body')?.addEventListener('click', (e) => this._courierPropAction(e));
     document.getElementById('telegram-status')?.addEventListener('click', () => this.openSettings());
     document.getElementById('review-close')?.addEventListener('click', () => this._reviewClose());
     document.getElementById('review-body')?.addEventListener('click', (e) => {
@@ -16279,7 +16321,7 @@ class App {
     return this.store.query({ ...opts, text: text || undefined });   // cursor-scan fallback
   }
 
-  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); }
+  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); this.renderCourierBar(); }
 
   // The rail's Tags section — every tag in use, with its color + item count,
   // click to filter (a transient tag view). The discoverable home for tags; the
@@ -18401,7 +18443,7 @@ class App {
     if (e.key === 'Escape') {
       // a note pane isn't a modal — Esc just blurs its editor so stream nav (j/k) resumes.
       if (npEl) { e.preventDefault(); if (e.target.blur) e.target.blur(); return; }
-      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay', 'facet-overlay']) {
+      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay', 'facet-overlay', 'courier-prop-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; if (id === 'facet-overlay') this._facetDialog = null; return; }
       }
@@ -19485,6 +19527,54 @@ class App {
       acts.innerHTML = fsaOk ? '<button class="btn-link" data-courier="connect">connect a folder…</button>' : '<span class="hint">needs Edge/Chrome</span>';
       if (st) st.textContent = '—';
     }
+  }
+
+  // ── Courier PROPOSALS (decides-vs-proposes) ───────────────────────────────
+  // A structural dispatch (feed suggestion, …) becomes a proposal the user ratifies.
+  // Returns a disposition string for the ingest receipt. Called from courier.handlers.
+  courierPropose(kind, payload) {
+    if (!this._courierProposals) this._courierProposals = [];
+    if (kind === 'feed' && !payload?.url) return 'ignored (no url)';
+    if (kind === 'feed' && this._courierProposals.some((x) => x.kind === 'feed' && x.url === payload.url)) return 'queued (already pending)';
+    const p = { id: 'cp-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), kind, ...payload, from: this.courier?.config?.author || 'laney', ts: new Date().toISOString() };
+    this._courierProposals.push(p);
+    this._saveCourierProposals();
+    this.renderCourierBar();
+    return `queued (${kind} proposal — awaiting your approval)`;
+  }
+  _saveCourierProposals() { this.store.setSettings({ courier_proposals: this._courierProposals }); }
+  renderCourierBar() {
+    const el = document.getElementById('courier-status'); if (!el) return;
+    const n = (this._courierProposals || []).length;
+    el.textContent = n ? `✦ ${n} from ${this.courier?.config?.name || 'Laney'}` : '';
+    el.classList.toggle('clickable', n > 0);
+  }
+  openCourierProposals() {
+    const body = document.getElementById('courier-prop-body'); if (!body) return;
+    const ps = this._courierProposals || [];
+    body.innerHTML = ps.length ? ps.map((p) => this._courierPropHtml(p)).join('') : '<div class="hint">No pending proposals from your Courier.</div>';
+    document.getElementById('courier-prop-overlay').hidden = false;
+  }
+  _courierPropHtml(p) {
+    if (p.kind === 'feed') {
+      return `<div class="rv-row" data-cp="${escapeHtml(p.id)}"><div class="rv-head"><span class="pill release">＋ feed</span>`
+        + `<span class="rv-name">${escapeHtml(p.name || p.url)}</span><span class="rv-feed">${escapeHtml(p.from)}</span></div>`
+        + `<div class="rv-facets"><a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.url)}</a>${p.why ? ' — ' + escapeHtml(p.why) : ''}</div>`
+        + `<div class="rv-actions"><button data-cpact="approve">✓ Follow</button><button data-cpact="reject">✕ Dismiss</button></div></div>`;
+    }
+    return `<div class="rv-row" data-cp="${escapeHtml(p.id)}"><div class="rv-head"><span class="pill">${escapeHtml(p.kind)}</span><span class="rv-name">${escapeHtml(String(p.why || p.url || '').slice(0, 120))}</span><span class="rv-feed">${escapeHtml(p.from)}</span></div>`
+      + `<div class="rv-actions"><button data-cpact="reject">✕ Dismiss</button></div></div>`;
+  }
+  async _courierPropAction(e) {
+    const btn = e.target.closest('[data-cpact]'); if (!btn) return;
+    const row = e.target.closest('[data-cp]'); if (!row) return;
+    const p = (this._courierProposals || []).find((x) => x.id === row.dataset.cp); if (!p) return;
+    if (btn.dataset.cpact === 'approve' && p.kind === 'feed') { try { await this.addFeed(p.url); } catch (err) { console.error('approve feed failed', err); } }
+    this._courierProposals = this._courierProposals.filter((x) => x.id !== p.id);
+    this._saveCourierProposals();
+    row.remove();
+    this.renderCourierBar();
+    if (!this._courierProposals.length) { const o = document.getElementById('courier-prop-overlay'); if (o) o.hidden = true; }
   }
 
   async saveSettings() {
@@ -20993,7 +21083,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '73d256a';          // short content hash of the bundle (build id)
+const COMMIT = 'e4405e1';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -21081,6 +21171,11 @@ async function boot() {
   // The Courier — weir's optional FS-backed collaborator exchange (the Laney bridge).
   // Created unmounted; the user attaches an exchange folder from the UI (a gesture).
   { const cs = store.getSettings(); app.courier = new Courier({ store, stacks, config: { ...DEFAULT_COURIER, owner: cs.owner_name || '', name: cs.courier_name || DEFAULT_COURIER.name, author: cs.courier_author || DEFAULT_COURIER.author } }); }
+  // Structural dispatch types land as PROPOSALS the user ratifies (decides-vs-proposes).
+  app._courierProposals = store.getSettings().courier_proposals || [];
+  app.courier.handlers = {
+    feed: async ({ data, body }) => app.courierPropose('feed', { url: data.url, name: data.name, why: ((data.why || body || '').toString()).trim().slice(0, 280) }),
+  };
   // Silently re-attach a previously-connected exchange folder if permission survives
   // (no prompt — handlePermission without request only queries; else reconnect via Settings).
   (async () => {

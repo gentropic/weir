@@ -87,4 +87,15 @@ assert.match(writes[0].markdown, /These two relate/, 'body ingested');
 assert.equal(await c._read('/in/finding-1.md'), null, 'dispatch removed from in/');
 assert.match(await c._read('/in/.done/finding-1.md'), /These two relate/, 'moved to .done (never-delete)');
 
-console.log('courier smoke ok:', JSON.stringify({ published: pub.written.length, ingested: ing.ingested }));
+// ── 5. dispatch-type routing: a `feed` proposal hits the handler, not a note ─
+let proposed = null;
+c.handlers = { feed: async ({ data }) => { proposed = data.url; return 'queued (feed proposal)'; } };
+await c.vfs.writeFile('/in/feed-1.md', '---\ntype: feed\nurl: https://blog.example/feed.xml\nwhy: matches your geostats interest\n---\n');
+const ing2 = await c.ingest('t2');
+assert.equal(proposed, 'https://blog.example/feed.xml', 'feed dispatch routed to the handler (data.url)');
+assert.equal(writes.length, 1, 'feed dispatch did NOT become a note');
+assert.match(ing2.results.find((r) => r.name === 'feed-1.md').disposition, /queued/, 'disposition records the proposal');
+assert.match(await c._read('/out/receipts.md'), /feed-1\.md/, 'receipt written to out/');
+assert.match(await c._read('/in/.done/feed-1.md'), /type: feed/, 'feed dispatch moved to .done');
+
+console.log('courier smoke ok:', JSON.stringify({ published: pub.written.length, ingested: ing.ingested, routed: 'feed→handler' }));

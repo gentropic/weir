@@ -68,6 +68,13 @@ export function formatManifest(files, ctx) {
   return JSON.stringify({ courier: 'weir', name: ctx.config.name, generated_at: ctx.now, files }, null, 1);
 }
 
+// Receipt of the last ingest — so the collaborator knows what landed and what didn't.
+export function formatReceipts(results, now) {
+  const head = `---\nkind: receipts\ngenerated_at: ${now}\n---\n\n# Last ingest (${results.length})\n\n`
+    + `What weir did with each file in in/: **filed as note** = it's in the stream · **queued (...)** = a proposal awaiting approval · **error** = left in in/ for you to fix.\n\n`;
+  return head + results.map((r) => `- \`${r.name}\` → ${r.disposition}`).join('\n') + '\n';
+}
+
 // The self-describing skill — this IS the collaborator's interface + the live protocol spec.
 export function formatReadme(config) {
   const owner = ownerName(config);
@@ -154,6 +161,10 @@ export class Courier {
     this.store = store; this.stacks = stacks;
     this.config = { ...DEFAULT_COURIER, ...(config || {}) };
     this.handle = null; this.vfs = null;
+    // dispatch-type handlers (type → async ({data,body,name}) → dispositionString).
+    // `note` is built in (→ a stacks note); the app registers structural types
+    // (feed/vocab/relate/…) that land as PROPOSALS the user ratifies (decides-vs-proposes).
+    this.handlers = {};
   }
   get mounted() { return !!this.vfs; }
   unmount() { this.vfs = null; this.handle = null; }
@@ -196,32 +207,46 @@ export class Courier {
     return { written };
   }
 
-  // Ingest in/ dispatches → weir stacks notes (author-tagged), then move each to in/.done.
-  async ingest() {
-    if (!this.vfs || !this.stacks) return { ingested: 0, items: [] };
-    let names; try { names = await this.vfs.readdir('/in'); } catch { return { ingested: 0, items: [] }; }
-    const items = [];
+  // Ingest in/ dispatches, routed by `type:`. `note` (default) → an author-tagged
+  // stacks note; other types → a registered handler (a PROPOSAL the user ratifies).
+  // Processed files move to in/.done (never-delete); a receipt is written to out/.
+  async _fileAsNote(data, body, name) {
+    return this.stacks.writeNote({
+      folder: this.config.id,                   // → stacks/<id>/ (e.g. stacks/laney/)
+      title: data.title || name.replace(/\.md$/i, ''),
+      markdown: body,
+      tags: Array.isArray(data.tags) ? data.tags : [],
+      source: this.config.author,               // → author: laney (attribution)
+      target: data.target || undefined,         // optional → annotation backlink on a weir item
+    });
+  }
+  async ingest(now = this._now()) {
+    if (!this.vfs || !this.stacks) return { ingested: 0, results: [] };
+    let names; try { names = await this.vfs.readdir('/in'); } catch { return { ingested: 0, results: [] }; }
+    const results = [];
     for (const name of names) {
       if (name.startsWith('.') || !/\.md$/i.test(name)) continue;
       let st; try { st = await this.vfs.stat('/in/' + name); } catch { continue; }
       if (st && st.type === 'directory') continue;
       const text = await this._read('/in/' + name); if (text == null) continue;
       const { data, body } = splitFm(text);
+      const type = String(data.type || 'note').toLowerCase();
+      let disposition;
       try {
-        const rec = await this.stacks.writeNote({
-          folder: this.config.id,                 // → stacks/<id>/ (e.g. stacks/laney/)
-          title: data.title || name.replace(/\.md$/i, ''),
-          markdown: body,
-          tags: Array.isArray(data.tags) ? data.tags : [],
-          source: this.config.author,             // → author: laney (attribution)
-          target: data.target || undefined,       // optional → annotation backlink on a weir item
-        });
-        items.push(rec);
-        // never-delete: move the processed dispatch aside, don't remove it.
-        try { await this.vfs.rename('/in/' + name, '/in/.done/' + name); } catch { /* leave in place if move fails */ }
-      } catch (e) { /* skip a bad dispatch; leave it in in/ for a retry */ }
+        if (type !== 'note' && this.handlers[type]) {
+          disposition = (await this.handlers[type]({ data, body, name })) || `queued (${type})`;
+        } else {
+          await this._fileAsNote(data, body, name);
+          disposition = type === 'note' ? 'filed as note' : `filed as note (unknown type "${type}")`;
+        }
+        try { await this.vfs.rename('/in/' + name, '/in/.done/' + name); } catch { /* leave if move fails */ }
+      } catch (e) {
+        disposition = `error: ${e.message || e}`;   // leave the file in in/ for a retry
+      }
+      results.push({ name, type, disposition });
     }
-    return { ingested: items.length, items };
+    if (results.length) { try { await this._write('/out/receipts.md', formatReceipts(results, now)); } catch { /* best-effort */ } }
+    return { ingested: results.filter((r) => !r.disposition.startsWith('error')).length, results };
   }
 
   // Snapshot for the UI / weir_courier tool.

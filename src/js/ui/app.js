@@ -249,6 +249,9 @@ export class App {
     document.getElementById('health-status')?.addEventListener('click', () => this.openHealth());
     document.getElementById('resolver-status')?.addEventListener('click', () => { this.catFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.feedFilter = 'saved'; this.renderAll(); });
     document.getElementById('review-status')?.addEventListener('click', () => this.openReview());
+    document.getElementById('courier-status')?.addEventListener('click', () => this.openCourierProposals());
+    document.getElementById('courier-prop-close')?.addEventListener('click', () => { const o = document.getElementById('courier-prop-overlay'); if (o) o.hidden = true; });
+    document.getElementById('courier-prop-body')?.addEventListener('click', (e) => this._courierPropAction(e));
     document.getElementById('telegram-status')?.addEventListener('click', () => this.openSettings());
     document.getElementById('review-close')?.addEventListener('click', () => this._reviewClose());
     document.getElementById('review-body')?.addEventListener('click', (e) => {
@@ -346,7 +349,7 @@ export class App {
     return this.store.query({ ...opts, text: text || undefined });   // cursor-scan fallback
   }
 
-  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); }
+  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); this.renderCourierBar(); }
 
   // The rail's Tags section — every tag in use, with its color + item count,
   // click to filter (a transient tag view). The discoverable home for tags; the
@@ -2468,7 +2471,7 @@ export class App {
     if (e.key === 'Escape') {
       // a note pane isn't a modal — Esc just blurs its editor so stream nav (j/k) resumes.
       if (npEl) { e.preventDefault(); if (e.target.blur) e.target.blur(); return; }
-      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay', 'facet-overlay']) {
+      for (const id of ['help-overlay', 'settings-overlay', 'rules-overlay', 'feededit-overlay', 'health-overlay', 'reorder-overlay', 'tags-overlay', 'facet-overlay', 'courier-prop-overlay']) {
         const ov = document.getElementById(id);
         if (ov && !ov.hidden) { ov.hidden = true; if (id === 'facet-overlay') this._facetDialog = null; return; }
       }
@@ -3552,6 +3555,54 @@ export class App {
       acts.innerHTML = fsaOk ? '<button class="btn-link" data-courier="connect">connect a folder…</button>' : '<span class="hint">needs Edge/Chrome</span>';
       if (st) st.textContent = '—';
     }
+  }
+
+  // ── Courier PROPOSALS (decides-vs-proposes) ───────────────────────────────
+  // A structural dispatch (feed suggestion, …) becomes a proposal the user ratifies.
+  // Returns a disposition string for the ingest receipt. Called from courier.handlers.
+  courierPropose(kind, payload) {
+    if (!this._courierProposals) this._courierProposals = [];
+    if (kind === 'feed' && !payload?.url) return 'ignored (no url)';
+    if (kind === 'feed' && this._courierProposals.some((x) => x.kind === 'feed' && x.url === payload.url)) return 'queued (already pending)';
+    const p = { id: 'cp-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), kind, ...payload, from: this.courier?.config?.author || 'laney', ts: new Date().toISOString() };
+    this._courierProposals.push(p);
+    this._saveCourierProposals();
+    this.renderCourierBar();
+    return `queued (${kind} proposal — awaiting your approval)`;
+  }
+  _saveCourierProposals() { this.store.setSettings({ courier_proposals: this._courierProposals }); }
+  renderCourierBar() {
+    const el = document.getElementById('courier-status'); if (!el) return;
+    const n = (this._courierProposals || []).length;
+    el.textContent = n ? `✦ ${n} from ${this.courier?.config?.name || 'Laney'}` : '';
+    el.classList.toggle('clickable', n > 0);
+  }
+  openCourierProposals() {
+    const body = document.getElementById('courier-prop-body'); if (!body) return;
+    const ps = this._courierProposals || [];
+    body.innerHTML = ps.length ? ps.map((p) => this._courierPropHtml(p)).join('') : '<div class="hint">No pending proposals from your Courier.</div>';
+    document.getElementById('courier-prop-overlay').hidden = false;
+  }
+  _courierPropHtml(p) {
+    if (p.kind === 'feed') {
+      return `<div class="rv-row" data-cp="${escapeHtml(p.id)}"><div class="rv-head"><span class="pill release">＋ feed</span>`
+        + `<span class="rv-name">${escapeHtml(p.name || p.url)}</span><span class="rv-feed">${escapeHtml(p.from)}</span></div>`
+        + `<div class="rv-facets"><a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.url)}</a>${p.why ? ' — ' + escapeHtml(p.why) : ''}</div>`
+        + `<div class="rv-actions"><button data-cpact="approve">✓ Follow</button><button data-cpact="reject">✕ Dismiss</button></div></div>`;
+    }
+    return `<div class="rv-row" data-cp="${escapeHtml(p.id)}"><div class="rv-head"><span class="pill">${escapeHtml(p.kind)}</span><span class="rv-name">${escapeHtml(String(p.why || p.url || '').slice(0, 120))}</span><span class="rv-feed">${escapeHtml(p.from)}</span></div>`
+      + `<div class="rv-actions"><button data-cpact="reject">✕ Dismiss</button></div></div>`;
+  }
+  async _courierPropAction(e) {
+    const btn = e.target.closest('[data-cpact]'); if (!btn) return;
+    const row = e.target.closest('[data-cp]'); if (!row) return;
+    const p = (this._courierProposals || []).find((x) => x.id === row.dataset.cp); if (!p) return;
+    if (btn.dataset.cpact === 'approve' && p.kind === 'feed') { try { await this.addFeed(p.url); } catch (err) { console.error('approve feed failed', err); } }
+    this._courierProposals = this._courierProposals.filter((x) => x.id !== p.id);
+    this._saveCourierProposals();
+    row.remove();
+    this.renderCourierBar();
+    if (!this._courierProposals.length) { const o = document.getElementById('courier-prop-overlay'); if (o) o.hidden = true; }
   }
 
   async saveSettings() {

@@ -94,6 +94,7 @@
         <span id="telegram-status" class="clickable" title="Telegram capture bot"></span>
         <span id="health-status" title="Feeds that may be hijacked, dead, or stale — click to review"></span>
         <span id="review-status" title="Catalog cards the librarian flagged low-confidence — click to confirm/correct"></span>
+        <span id="courier-status" title="Proposals from your Courier collaborator — click to review (you decide)"></span>
         <span id="catalog-status"></span>
         <span id="notify-status"></span>
       </div>
@@ -293,6 +294,18 @@
     <div class="panel-foot">
       <span class="hint">j/k move · a approve · e edit facets · r re-catalog · x discard · o open · Esc close</span>
       <button class="btn" id="review-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Courier proposals — decides-vs-proposes: the collaborator suggests, you ratify -->
+<div class="overlay" id="courier-prop-overlay" hidden>
+  <div class="panel">
+    <div class="panel-head"><span>Courier proposals</span></div>
+    <div class="review-body" id="courier-prop-body"></div>
+    <div class="panel-foot">
+      <span class="hint">Your Courier proposes · you decide — approve to act, dismiss to discard.</span>
+      <button class="btn" id="courier-prop-close">Close</button>
     </div>
   </div>
 </div>

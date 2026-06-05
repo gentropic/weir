@@ -117,6 +117,11 @@ async function boot() {
   // The Courier — weir's optional FS-backed collaborator exchange (the Laney bridge).
   // Created unmounted; the user attaches an exchange folder from the UI (a gesture).
   { const cs = store.getSettings(); app.courier = new Courier({ store, stacks, config: { ...DEFAULT_COURIER, owner: cs.owner_name || '', name: cs.courier_name || DEFAULT_COURIER.name, author: cs.courier_author || DEFAULT_COURIER.author } }); }
+  // Structural dispatch types land as PROPOSALS the user ratifies (decides-vs-proposes).
+  app._courierProposals = store.getSettings().courier_proposals || [];
+  app.courier.handlers = {
+    feed: async ({ data, body }) => app.courierPropose('feed', { url: data.url, name: data.name, why: ((data.why || body || '').toString()).trim().slice(0, 280) }),
+  };
   // Silently re-attach a previously-connected exchange folder if permission survives
   // (no prompt — handlePermission without request only queries; else reconnect via Settings).
   (async () => {
