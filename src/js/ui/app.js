@@ -224,7 +224,8 @@ export class App {
     document.getElementById('btn-recover')?.addEventListener('click', () => { if (this.feedFilter) this.recoverHistory(this.feedFilter); });
     document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
     document.getElementById('open-settings')?.addEventListener('click', () => this.openSettings());
-    document.querySelector('.settings-nav')?.addEventListener('click', (e) => { const b = e.target.closest('.set-tab'); if (b) this._showSettingsTab(b.dataset.settab); });
+    document.querySelector('.settings-nav')?.addEventListener('click', (e) => { const b = e.target.closest('.set-tab'); if (b) { const f = document.getElementById('settings-filter'); if (f) f.value = ''; this._showSettingsTab(b.dataset.settab); } });
+    document.getElementById('settings-filter')?.addEventListener('input', (e) => this._filterSettings(e.target.value));
     document.getElementById('weir-version')?.addEventListener('click', () => this.checkUpdates());   // one-click update check, no dialog
     document.getElementById('settings-save')?.addEventListener('click', () => this.saveSettings());
     document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
@@ -3327,8 +3328,26 @@ export class App {
 
   _showSettingsTab(name) {
     this._setTab = name;
+    document.querySelectorAll('.set-pane .set-row, .set-pane .set-group').forEach((el) => { el.style.display = ''; });   // clear any filter hiding
     document.querySelectorAll('.set-tab').forEach((b) => b.classList.toggle('active', b.dataset.settab === name));
     document.querySelectorAll('.set-pane').forEach((p) => { p.hidden = p.dataset.pane !== name; });
+  }
+  // Live filter: empty → normal single-tab view; else a FLAT view across all tabs showing
+  // only rows whose label (or their section header) matches. Section name counts, so "polling"
+  // surfaces every row under Polling.
+  _filterSettings(q) {
+    q = (q || '').trim().toLowerCase();
+    if (!q) { this._showSettingsTab(this._setTab || 'reading'); return; }
+    document.querySelectorAll('.set-pane').forEach((p) => { p.hidden = false; });
+    for (const g of document.querySelectorAll('.set-pane .set-group')) {
+      const label = (g.querySelector('h4')?.textContent || '').toLowerCase();
+      let any = false;
+      g.querySelectorAll('.set-row').forEach((r) => {
+        const m = (r.textContent || '').toLowerCase().includes(q) || label.includes(q);
+        r.style.display = m ? '' : 'none'; if (m) any = true;
+      });
+      g.style.display = any ? '' : 'none';
+    }
   }
 
   async openSettings() {
@@ -3374,6 +3393,7 @@ export class App {
     this._refreshStorageInfo();
     this.renderStorageMount();
     this.renderCourierSettings();
+    { const f = document.getElementById('settings-filter'); if (f) f.value = ''; }   // fresh filter each open
     this._showSettingsTab(this._setTab || 'reading');   // restore the last-open tab
     { const wv = document.getElementById('weir-version'), va = document.getElementById('set-version-about'); if (wv && va) va.textContent = wv.textContent; }
     document.getElementById('settings-overlay').hidden = false;

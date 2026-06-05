@@ -430,6 +430,8 @@ body {
 /* settings form */
 .settings-body { flex: 1; display: flex; min-height: 0; padding: 0; }
 .settings-nav { flex: 0 0 150px; display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; border-right: 1px solid var(--au-border); background: var(--sw-bg-deep); overflow-y: auto; }
+.settings-filter { margin: 0 2px 8px; padding: 5px 8px; font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg); background: var(--sw-bg); border: 1px solid var(--au-border); border-radius: var(--au-radius); outline: none; }
+.settings-filter:focus { border-color: var(--au-action); }
 .set-tab { text-align: left; background: transparent; border: none; color: var(--au-fg-soft); font: inherit; font-size: 13px; padding: 7px 11px; border-radius: var(--au-radius); cursor: pointer; transition: color 0.08s, background 0.08s; }
 .set-tab:hover { color: var(--au-fg); background: var(--sw-bg-bright); }
 .set-tab.active { color: var(--au-fg); background: var(--au-selected-soft); box-shadow: inset 2px 0 0 var(--au-action); }

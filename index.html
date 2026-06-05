@@ -902,6 +902,8 @@ body {
 /* settings form */
 .settings-body { flex: 1; display: flex; min-height: 0; padding: 0; }
 .settings-nav { flex: 0 0 150px; display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; border-right: 1px solid var(--au-border); background: var(--sw-bg-deep); overflow-y: auto; }
+.settings-filter { margin: 0 2px 8px; padding: 5px 8px; font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg); background: var(--sw-bg); border: 1px solid var(--au-border); border-radius: var(--au-radius); outline: none; }
+.settings-filter:focus { border-color: var(--au-action); }
 .set-tab { text-align: left; background: transparent; border: none; color: var(--au-fg-soft); font: inherit; font-size: 13px; padding: 7px 11px; border-radius: var(--au-radius); cursor: pointer; transition: color 0.08s, background 0.08s; }
 .set-tab:hover { color: var(--au-fg); background: var(--sw-bg-bright); }
 .set-tab.active { color: var(--au-fg); background: var(--au-selected-soft); box-shadow: inset 2px 0 0 var(--au-action); }
@@ -1226,13 +1228,14 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
     <div class="panel-head"><span>settings</span><span class="rules-error" id="settings-msg"></span></div>
     <div class="settings-body">
       <nav class="settings-nav">
-        <button class="set-tab active" data-settab="reading" type="button">Reading</button>
-        <button class="set-tab" data-settab="feeds" type="button">Feeds</button>
-        <button class="set-tab" data-settab="cataloger" type="button">Cataloger</button>
-        <button class="set-tab" data-settab="connections" type="button">Connections</button>
-        <button class="set-tab" data-settab="courier" type="button">Courier</button>
-        <button class="set-tab" data-settab="storage" type="button">Storage</button>
-        <button class="set-tab" data-settab="about" type="button">About</button>
+        <input id="settings-filter" class="settings-filter" type="search" placeholder="filter settings…" autocomplete="off" spellcheck="false">
+        <button class="set-tab active" data-settab="reading" type="button">reading</button>
+        <button class="set-tab" data-settab="feeds" type="button">feeds</button>
+        <button class="set-tab" data-settab="cataloger" type="button">cataloger</button>
+        <button class="set-tab" data-settab="connections" type="button">connections</button>
+        <button class="set-tab" data-settab="courier" type="button">courier</button>
+        <button class="set-tab" data-settab="storage" type="button">storage</button>
+        <button class="set-tab" data-settab="about" type="button">about</button>
       </nav>
       <div class="settings-panes">
       <div class="set-pane" data-pane="reading">
@@ -16318,7 +16321,8 @@ class App {
     document.getElementById('btn-recover')?.addEventListener('click', () => { if (this.feedFilter) this.recoverHistory(this.feedFilter); });
     document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
     document.getElementById('open-settings')?.addEventListener('click', () => this.openSettings());
-    document.querySelector('.settings-nav')?.addEventListener('click', (e) => { const b = e.target.closest('.set-tab'); if (b) this._showSettingsTab(b.dataset.settab); });
+    document.querySelector('.settings-nav')?.addEventListener('click', (e) => { const b = e.target.closest('.set-tab'); if (b) { const f = document.getElementById('settings-filter'); if (f) f.value = ''; this._showSettingsTab(b.dataset.settab); } });
+    document.getElementById('settings-filter')?.addEventListener('input', (e) => this._filterSettings(e.target.value));
     document.getElementById('weir-version')?.addEventListener('click', () => this.checkUpdates());   // one-click update check, no dialog
     document.getElementById('settings-save')?.addEventListener('click', () => this.saveSettings());
     document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
@@ -19421,8 +19425,26 @@ class App {
 
   _showSettingsTab(name) {
     this._setTab = name;
+    document.querySelectorAll('.set-pane .set-row, .set-pane .set-group').forEach((el) => { el.style.display = ''; });   // clear any filter hiding
     document.querySelectorAll('.set-tab').forEach((b) => b.classList.toggle('active', b.dataset.settab === name));
     document.querySelectorAll('.set-pane').forEach((p) => { p.hidden = p.dataset.pane !== name; });
+  }
+  // Live filter: empty → normal single-tab view; else a FLAT view across all tabs showing
+  // only rows whose label (or their section header) matches. Section name counts, so "polling"
+  // surfaces every row under Polling.
+  _filterSettings(q) {
+    q = (q || '').trim().toLowerCase();
+    if (!q) { this._showSettingsTab(this._setTab || 'reading'); return; }
+    document.querySelectorAll('.set-pane').forEach((p) => { p.hidden = false; });
+    for (const g of document.querySelectorAll('.set-pane .set-group')) {
+      const label = (g.querySelector('h4')?.textContent || '').toLowerCase();
+      let any = false;
+      g.querySelectorAll('.set-row').forEach((r) => {
+        const m = (r.textContent || '').toLowerCase().includes(q) || label.includes(q);
+        r.style.display = m ? '' : 'none'; if (m) any = true;
+      });
+      g.style.display = any ? '' : 'none';
+    }
   }
 
   async openSettings() {
@@ -19468,6 +19490,7 @@ class App {
     this._refreshStorageInfo();
     this.renderStorageMount();
     this.renderCourierSettings();
+    { const f = document.getElementById('settings-filter'); if (f) f.value = ''; }   // fresh filter each open
     this._showSettingsTab(this._setTab || 'reading');   // restore the last-open tab
     { const wv = document.getElementById('weir-version'), va = document.getElementById('set-version-about'); if (wv && va) va.textContent = wv.textContent; }
     document.getElementById('settings-overlay').hidden = false;
@@ -21220,7 +21243,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '48400c2';          // short content hash of the bundle (build id)
+const COMMIT = 'bf1a7bf';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
