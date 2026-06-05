@@ -94,24 +94,41 @@ anything but \`in/\`, and you only need to write there.
 - \`manifest.json\` — machine index: what's here and when it was written. Read this first.
 
 ## in/  (you → weir)
-Drop one Markdown file per dispatch, with YAML frontmatter:
+Drop one Markdown file per dispatch — **one topic per file** is easiest to catalog (and to
+dedup). YAML frontmatter on top, Markdown body below:
 
 \`\`\`markdown
 ---
 title: A short title
+type: note                        # optional — see "dispatch types" below; default: note
 tags: [geostatistics, idea]       # optional; prefer terms from vocab.jsonld
-target: <weir-item-id>            # optional — binds this as an ANNOTATION on that item
----
+target: <weir-item-id>            # optional — binds the note as an ANNOTATION on that item
+---                               #   (item ids are the backticked handles in saved-recent.md)
 
-Your note, in Markdown. [[wiki-links]] to other items work too.
+Your note, in Markdown. [[id|label]] links to other items work too.
 \`\`\`
 
-weir ingests each dispatch as a note authored by **${config.author}**, catalogs it, and
-surfaces it in ${owner}'s stream. With \`target:\`, it lands as a backlink (📝) on that item.
-Write atomically (write a temp file, then rename into \`in/\`). Processed dispatches are
-moved to \`in/.done/\` — never deleted.
+You don't need to sign dispatches — weir files each one as a note **authored by
+${config.author}** automatically, so it's always attributable to you.
 
-_weir writes this file; don't edit it (your changes will be overwritten on next publish)._
+### Dispatch types (\`type:\`)
+- **note** (default) — a finding, brief, or annotation. Filed into ${owner}'s stream. With
+  \`target:\` (an id from \`saved-recent.md\`), it becomes a 📝 backlink on that item.
+- **feed** — *suggest a source to follow.* Frontmatter \`type: feed\`, \`url:\`, and a short
+  \`why:\`. weir queues it as a **proposal ${owner} approves** — it does not auto-add. Use it
+  when you find a blog / feed / channel worth tracking.
+
+The rule for everything beyond a plain note: **you propose, ${owner} decides.** (More types —
+vocabulary suggestions, item relations, slice requests — are coming; they all work this way.)
+
+### Feedback
+After each ingest, weir writes **\`out/receipts.md\`** — check it to see what each file became:
+*filed as note* · *queued (a proposal)* · or *error* (left in \`in/\` for you to fix).
+
+Write atomically (temp file, then rename into \`in/\`). Processed dispatches move to
+\`in/.done/\` — never deleted.
+
+_weir writes this README; don't edit it (your changes are overwritten on next publish)._
 `;
 }
 
