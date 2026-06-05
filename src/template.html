@@ -166,6 +166,25 @@
   <div class="panel">
     <div class="panel-head"><span>settings</span><span class="rules-error" id="settings-msg"></span></div>
     <div class="settings-body">
+      <nav class="settings-nav">
+        <button class="set-tab active" data-settab="reading" type="button">Reading</button>
+        <button class="set-tab" data-settab="feeds" type="button">Feeds</button>
+        <button class="set-tab" data-settab="cataloger" type="button">Cataloger</button>
+        <button class="set-tab" data-settab="connections" type="button">Connections</button>
+        <button class="set-tab" data-settab="courier" type="button">Courier</button>
+        <button class="set-tab" data-settab="storage" type="button">Storage</button>
+        <button class="set-tab" data-settab="about" type="button">About</button>
+      </nav>
+      <div class="settings-panes">
+      <div class="set-pane" data-pane="reading">
+      <section class="set-group">
+        <h4>Reading</h4>
+        <label class="set-row">row density<select id="set-density" class="field"><option value="comfortable">comfortable</option><option value="compact">compact</option></select></label>
+        <label class="set-row check"><input type="checkbox" id="set-images"> load images by default on new feeds</label>
+        <label class="set-row check"><input type="checkbox" id="set-fullcontent"> fetch full content by default</label>
+      </section>
+      </div>
+      <div class="set-pane" data-pane="feeds" hidden>
       <section class="set-group">
         <h4>Polling</h4>
         <label class="set-row">default poll interval (min)<input type="number" id="set-poll-interval" min="1" step="1"></label>
@@ -173,12 +192,6 @@
         <label class="set-row">max concurrent fetches<input type="number" id="set-poll-concurrency" min="1" max="32" step="1"></label>
         <label class="set-row check"><input type="checkbox" id="set-pause-hidden"> pause polling when the tab is hidden</label>
         <label class="set-row check"><input type="checkbox" id="set-poll-flightdeck"> keep polling while the flight-deck pop-out is open (overrides the pause above)</label>
-      </section>
-      <section class="set-group">
-        <h4>Reading</h4>
-        <label class="set-row">row density<select id="set-density" class="field"><option value="comfortable">comfortable</option><option value="compact">compact</option></select></label>
-        <label class="set-row check"><input type="checkbox" id="set-images"> load images by default on new feeds</label>
-        <label class="set-row check"><input type="checkbox" id="set-fullcontent"> fetch full content by default</label>
       </section>
       <section class="set-group">
         <h4>Retention</h4>
@@ -194,12 +207,8 @@
         <label class="set-row">IA secret key<input type="password" id="set-ia-secret" autocomplete="off" placeholder="optional"></label>
         <div class="hint">Keys are not needed for recovery — only for future Save-Page-Now.</div>
       </section>
-      <section class="set-group">
-        <h4>YouTube watch data</h4>
-        <div class="set-row"><span id="affinity-status">no watch data loaded</span><button class="btn-link" id="set-import-affinity" type="button">import digest…</button></div>
-        <input type="file" id="affinity-file" accept=".json,application/json" hidden>
-        <div class="hint">Import a Takeout watch-affinity digest (yt-watch-counts.json) to order YouTube feeds by how much you actually watch — recency-weighted, so old fads sink.</div>
-      </section>
+      </div>
+      <div class="set-pane" data-pane="cataloger" hidden>
       <section class="set-group">
         <h4>AI cataloger (glass)</h4>
         <label class="set-row">provider<select id="set-cat-provider" class="field"><option value="lemonade">Lemonade (Ryzen AI, local)</option><option value="ollama">Ollama (local)</option><option value="nanogpt">NanoGPT</option><option value="groq">Groq</option><option value="custom">Custom</option></select></label>
@@ -212,6 +221,14 @@
         <div class="set-row"><span id="cat-usage">no LLM usage yet</span><button class="btn-link" id="set-cat-gauge" type="button">check allowance</button></div>
         <div class="set-row"><span>Catalog maintenance</span><button class="btn-link" id="set-cat-clear" type="button" title="Delete all catalog cards and un-file every item (items &amp; reading state kept)">clear catalog</button></div>
         <div class="hint">The librarian that fills the language facets. Ollama runs locally (free, nothing leaves your machine). Keys are stored encrypted-out-of-band (OPFS), never in backups or the mounted folder. Cloud providers need their origin added to the bridge allowlist once.</div>
+      </section>
+      </div>
+      <div class="set-pane" data-pane="connections" hidden>
+      <section class="set-group">
+        <h4>YouTube watch data</h4>
+        <div class="set-row"><span id="affinity-status">no watch data loaded</span><button class="btn-link" id="set-import-affinity" type="button">import digest…</button></div>
+        <input type="file" id="affinity-file" accept=".json,application/json" hidden>
+        <div class="hint">Import a Takeout watch-affinity digest (yt-watch-counts.json) to order YouTube feeds by how much you actually watch — recency-weighted, so old fads sink.</div>
       </section>
       <section class="set-group">
         <h4>Telegram capture</h4>
@@ -228,11 +245,17 @@
         <label class="set-row check"><input type="checkbox" id="set-mcp-feed-removal"> let Claude prune feeds (the weir_removeFeed tool — deletes a dead feed + its items; off = Claude can’t)</label>
         <div class="hint">Lets Claude Code curate weir over localhost via <b>@gcu/webmcp</b> (query/tag items, manage feeds, write to the stacks). Run <code>node webmcp-bridge.js --app weir --port 7801 --info</code> in the webmcp repo to get the connection string, paste it, and connect — weir remembers it (origin-local, never in backups). Uses the same @gcu/bridge extension as the cataloger to reach localhost.</div>
       </section>
+      </div>
+      <div class="set-pane" data-pane="about" hidden>
       <section class="set-group">
         <h4>Updates</h4>
+        <div class="set-row"><span>version</span><b id="set-version-about" class="hint">weir</b></div>
         <label class="set-row check"><input type="checkbox" id="set-autocheck"> check for updates automatically (background)</label>
         <div class="set-row"><span id="update-check-status">—</span><button class="btn-link" id="set-check-update" type="button">check now</button></div>
+        <div class="hint">Tip: click <code>weir …</code> in the status bar to check for updates from anywhere.</div>
       </section>
+      </div>
+      <div class="set-pane" data-pane="storage" hidden>
       <section class="set-group">
         <h4>Storage</h4>
         <div class="set-row"><span>location: <b id="set-storage-loc">browser (IndexedDB)</b></span><span id="set-storage-actions"></span></div>
@@ -244,6 +267,8 @@
         <input type="file" id="backup-file" accept=".json,application/json" hidden>
         <div class="hint">Export a full backup — every feed, item, and its content in one file — your safety net against the browser clearing IndexedDB. Restore replaces weir's current data with the backup, then reloads.</div>
       </section>
+      </div>
+      <div class="set-pane" data-pane="courier" hidden>
       <section class="set-group">
         <h4>Courier — collaborator exchange</h4>
         <div class="set-row"><span>folder: <b id="set-courier-loc">not connected</b></span><span id="set-courier-actions"></span></div>
@@ -253,6 +278,8 @@
         <label class="set-row">author tag<input type="text" id="set-courier-author" class="field" autocomplete="off" spellcheck="false" placeholder="laney" title="The author stamped on dispatches ingested from this Courier, so you can tell them from your own notes."></label>
         <div class="hint"><b>Optional.</b> An FS-backed exchange with an external collaborator (e.g. <b>Laney</b>): weir publishes a curated slice into <code>out/</code> (your vocabulary + recent captures) and ingests dispatches from <code>in/</code> as <code>author</code>-tagged notes. Point this at the folder you sync (Syncthing, …) — how it's shared is up to you; weir just reads the folder. Its <code>README.md</code> documents the protocol for the collaborator.</div>
       </section>
+      </div>
+      </div>
     </div>
     <div class="panel-foot">
       <button class="btn" id="settings-save">Save</button>

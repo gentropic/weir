@@ -224,6 +224,8 @@ export class App {
     document.getElementById('btn-recover')?.addEventListener('click', () => { if (this.feedFilter) this.recoverHistory(this.feedFilter); });
     document.getElementById('open-rules')?.addEventListener('click', () => this.openRules());
     document.getElementById('open-settings')?.addEventListener('click', () => this.openSettings());
+    document.querySelector('.settings-nav')?.addEventListener('click', (e) => { const b = e.target.closest('.set-tab'); if (b) this._showSettingsTab(b.dataset.settab); });
+    document.getElementById('weir-version')?.addEventListener('click', () => this.checkUpdates());   // one-click update check, no dialog
     document.getElementById('settings-save')?.addEventListener('click', () => this.saveSettings());
     document.getElementById('settings-close')?.addEventListener('click', () => this.closeSettings());
     document.getElementById('set-request-persist')?.addEventListener('click', () => this.requestPersist());
@@ -3323,6 +3325,12 @@ export class App {
     catch (e) { const lab = document.getElementById('set-webmcp-state'); if (lab) lab.textContent = e.message; }
   }
 
+  _showSettingsTab(name) {
+    this._setTab = name;
+    document.querySelectorAll('.set-tab').forEach((b) => b.classList.toggle('active', b.dataset.settab === name));
+    document.querySelectorAll('.set-pane').forEach((p) => { p.hidden = p.dataset.pane !== name; });
+  }
+
   async openSettings() {
     const s = this.store.getSettings();
     const val = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
@@ -3366,6 +3374,8 @@ export class App {
     this._refreshStorageInfo();
     this.renderStorageMount();
     this.renderCourierSettings();
+    this._showSettingsTab(this._setTab || 'reading');   // restore the last-open tab
+    { const wv = document.getElementById('weir-version'), va = document.getElementById('set-version-about'); if (wv && va) va.textContent = wv.textContent; }
     document.getElementById('settings-overlay').hidden = false;
   }
 
@@ -3719,7 +3729,10 @@ export class App {
 
   async checkUpdates() {
     const el = document.getElementById('update-check-status');
+    const ver = document.getElementById('weir-version');
+    const prev = ver ? ver.textContent : '';
     if (el) el.textContent = 'checking…';
+    if (ver) ver.textContent = 'checking…';
     const { state } = (await checkForUpdateNow()) || {};
     const MSG = {
       unsupported: 'no service worker here — needs https or installing as an app',
@@ -3728,7 +3741,9 @@ export class App {
       uncontrolled: 'this tab loaded without the service worker (so you’re already on the latest) — reload to re-attach it for offline + auto-updates',
       checked: 'checked — a reload prompt appears if there’s an update',
     };
+    const SHORT = { unsupported: 'no SW', none: 'reload to register', waiting: 'update ready ↻', uncontrolled: 'on latest', checked: 'up to date ✓' };
     if (el) el.textContent = MSG[state] || 'check failed';
+    if (ver) { ver.textContent = SHORT[state] || 'check failed'; setTimeout(() => { if (ver) ver.textContent = prev; }, 4000); }   // flash result on the status-bar version, then restore
   }
 
   async requestPersist() {

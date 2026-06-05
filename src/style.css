@@ -428,7 +428,15 @@ body {
 .panel-foot { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--au-border); }
 
 /* settings form */
-.settings-body { flex: 1; overflow-y: auto; padding: 8px 16px 16px; }
+.settings-body { flex: 1; display: flex; min-height: 0; padding: 0; }
+.settings-nav { flex: 0 0 150px; display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; border-right: 1px solid var(--au-border); background: var(--sw-bg-deep); overflow-y: auto; }
+.set-tab { text-align: left; background: transparent; border: none; color: var(--au-fg-soft); font: inherit; font-size: 13px; padding: 7px 11px; border-radius: var(--au-radius); cursor: pointer; transition: color 0.08s, background 0.08s; }
+.set-tab:hover { color: var(--au-fg); background: var(--sw-bg-bright); }
+.set-tab.active { color: var(--au-fg); background: var(--au-selected-soft); box-shadow: inset 2px 0 0 var(--au-action); }
+.settings-panes { flex: 1; min-width: 0; overflow-y: auto; padding: 4px 22px 16px; }
+.set-pane[hidden] { display: none; }
+#weir-version { cursor: pointer; }
+#weir-version:hover { color: var(--au-action); }
 .set-group { padding: 12px 0; border-bottom: 1px solid var(--au-border); }
 .set-group:last-child { border-bottom: none; }
 .set-group h4 { font-family: var(--au-font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--au-fg-soft); font-weight: 600; margin-bottom: 10px; }
