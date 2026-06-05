@@ -54,6 +54,9 @@ export const DEFAULT_SETTINGS = {
   telegram_allowed_id: 0,                // owner's Telegram user id — only ingest from you (0 = auto-bind on first message)
   catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
+  owner_name: '',                        // your display name — used by the Courier's README/exports (NEVER hardcoded; '' → neutral "the owner")
+  courier_name: 'Laney',                 // the Courier collaborator's display name
+  courier_author: 'laney',               // author tag stamped on dispatches ingested from the Courier
   mcp_allow_feed_removal: true,          // let the weir_removeFeed MCP tool hard-delete a feed (+ its items); off = Claude can't prune feeds
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.

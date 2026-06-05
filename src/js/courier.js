@@ -22,9 +22,12 @@ import { VFS } from '../../vendor/vfs.js';   // dev-clarity; build inlines (glob
 
 export const DEFAULT_COURIER = {
   id: 'laney', name: 'Laney', author: 'laney',
+  owner: '',                            // the weir user's display name (config — NEVER hardcoded);
+                                        // '' → a neutral "the owner" in generated text.
   exports: ['vocab', 'saved-recent'],   // the trust gradient — start narrow, widen later
   savedRecentLimit: 60,
 };
+const ownerName = (config) => (config && config.owner) || 'the owner';
 
 // ── export writers: a small registry so adding an export is pluggable, not surgery ──
 // Each takes a ctx { store, config, now } and returns { path, text }.
@@ -50,7 +53,7 @@ export function formatSavedRecent(ctx) {
   for (const it of pool) { if (seen.has(it.id)) continue; seen.add(it.id); items.push(it); if (items.length >= limit) break; }
   const fm = `---\nkind: saved-recent\ngenerated_at: ${ctx.now}\ncount: ${items.length}\n---\n\n`;
   const head = `# Recent deliberate captures (${items.length})\n\n`
-    + `Shared links + ★saved, newest first — the high-signal slice of what Arthur actually grabbed.\n\n`;
+    + `Shared links + ★saved, newest first — the high-signal slice of what ${ownerName(ctx.config)} actually grabbed.\n\n`;
   const rows = items.map((it) => {
     const d = it.published_at ? new Date(it.published_at).toISOString().slice(0, 10) : '—';
     const t = escMd(it.title || it.url || it.id);
@@ -66,6 +69,7 @@ export function formatManifest(files, ctx) {
 
 // The self-describing skill — this IS the collaborator's interface + the live protocol spec.
 export function formatReadme(config) {
+  const owner = ownerName(config);
   return `# weir Courier — ${config.name}
 
 This folder is a **Courier**: weir's filesystem exchange with you. weir writes curated
@@ -73,10 +77,10 @@ material into \`out/\`; you write findings ("dispatches") into \`in/\`. weir nev
 anything but \`in/\`, and you only need to write there.
 
 ## out/  (weir → you — read-only by convention)
-- \`vocab.jsonld\` — Arthur's SKOS controlled vocabulary. **Use these terms** when you tag,
-  so your work aligns with his taxonomy.
-- \`saved-recent.md\` — his recent deliberate captures (shared links + saved), newest first.
-  The high-signal slice of what he actually cares about — a good thing to work on.
+- \`vocab.jsonld\` — ${owner}'s SKOS controlled vocabulary. **Use these terms** when you tag,
+  so your work aligns with their taxonomy.
+- \`saved-recent.md\` — ${owner}'s recent deliberate captures (shared links + saved), newest
+  first. The high-signal slice of what they actually care about — a good thing to work on.
 - \`manifest.json\` — machine index: what's here and when it was written. Read this first.
 
 ## in/  (you → weir)
@@ -93,7 +97,7 @@ Your note, in Markdown. [[wiki-links]] to other items work too.
 \`\`\`
 
 weir ingests each dispatch as a note authored by **${config.author}**, catalogs it, and
-surfaces it in Arthur's stream. With \`target:\`, it lands as a backlink (📝) on that item.
+surfaces it in ${owner}'s stream. With \`target:\`, it lands as a backlink (📝) on that item.
 Write atomically (write a temp file, then rename into \`in/\`). Processed dispatches are
 moved to \`in/.done/\` — never deleted.
 

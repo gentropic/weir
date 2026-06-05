@@ -1298,6 +1298,9 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
         <h4>Courier — collaborator exchange</h4>
         <div class="set-row"><span>folder: <b id="set-courier-loc">not connected</b></span><span id="set-courier-actions"></span></div>
         <div class="set-row"><span id="set-courier-status" class="hint">—</span></div>
+        <label class="set-row">your name<input type="text" id="set-courier-owner" class="field" autocomplete="off" spellcheck="false" placeholder="(blank = a neutral “the owner” in the exchange)"></label>
+        <label class="set-row">collaborator name<input type="text" id="set-courier-name" class="field" autocomplete="off" spellcheck="false" placeholder="Laney"></label>
+        <label class="set-row">author tag<input type="text" id="set-courier-author" class="field" autocomplete="off" spellcheck="false" placeholder="laney" title="The author stamped on dispatches ingested from this Courier, so you can tell them from your own notes."></label>
         <div class="hint"><b>Optional.</b> An FS-backed exchange with an external collaborator (e.g. <b>Laney</b>): weir publishes a curated slice into <code>out/</code> (your vocabulary + recent captures) and ingests dispatches from <code>in/</code> as <code>author</code>-tagged notes. Point this at the folder you sync (Syncthing, …) — how it's shared is up to you; weir just reads the folder. Its <code>README.md</code> documents the protocol for the collaborator.</div>
       </section>
     </div>
@@ -10393,6 +10396,9 @@ const DEFAULT_SETTINGS = {
   telegram_allowed_id: 0,                // owner's Telegram user id — only ingest from you (0 = auto-bind on first message)
   catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
+  owner_name: '',                        // your display name — used by the Courier's README/exports (NEVER hardcoded; '' → neutral "the owner")
+  courier_name: 'Laney',                 // the Courier collaborator's display name
+  courier_author: 'laney',               // author tag stamped on dispatches ingested from the Courier
   mcp_allow_feed_removal: true,          // let the weir_removeFeed MCP tool hard-delete a feed (+ its items); off = Claude can't prune feeds
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.
@@ -12884,9 +12890,12 @@ class StacksStore {
 
 const DEFAULT_COURIER = {
   id: 'laney', name: 'Laney', author: 'laney',
+  owner: '',                            // the weir user's display name (config — NEVER hardcoded);
+                                        // '' → a neutral "the owner" in generated text.
   exports: ['vocab', 'saved-recent'],   // the trust gradient — start narrow, widen later
   savedRecentLimit: 60,
 };
+const ownerName = (config) => (config && config.owner) || 'the owner';
 
 // ── export writers: a small registry so adding an export is pluggable, not surgery ──
 // Each takes a ctx { store, config, now } and returns { path, text }.
@@ -12912,7 +12921,7 @@ function formatSavedRecent(ctx) {
   for (const it of pool) { if (seen.has(it.id)) continue; seen.add(it.id); items.push(it); if (items.length >= limit) break; }
   const fm = `---\nkind: saved-recent\ngenerated_at: ${ctx.now}\ncount: ${items.length}\n---\n\n`;
   const head = `# Recent deliberate captures (${items.length})\n\n`
-    + `Shared links + ★saved, newest first — the high-signal slice of what Arthur actually grabbed.\n\n`;
+    + `Shared links + ★saved, newest first — the high-signal slice of what ${ownerName(ctx.config)} actually grabbed.\n\n`;
   const rows = items.map((it) => {
     const d = it.published_at ? new Date(it.published_at).toISOString().slice(0, 10) : '—';
     const t = escMd(it.title || it.url || it.id);
@@ -12928,6 +12937,7 @@ function formatManifest(files, ctx) {
 
 // The self-describing skill — this IS the collaborator's interface + the live protocol spec.
 function formatReadme(config) {
+  const owner = ownerName(config);
   return `# weir Courier — ${config.name}
 
 This folder is a **Courier**: weir's filesystem exchange with you. weir writes curated
@@ -12935,10 +12945,10 @@ material into \`out/\`; you write findings ("dispatches") into \`in/\`. weir nev
 anything but \`in/\`, and you only need to write there.
 
 ## out/  (weir → you — read-only by convention)
-- \`vocab.jsonld\` — Arthur's SKOS controlled vocabulary. **Use these terms** when you tag,
-  so your work aligns with his taxonomy.
-- \`saved-recent.md\` — his recent deliberate captures (shared links + saved), newest first.
-  The high-signal slice of what he actually cares about — a good thing to work on.
+- \`vocab.jsonld\` — ${owner}'s SKOS controlled vocabulary. **Use these terms** when you tag,
+  so your work aligns with their taxonomy.
+- \`saved-recent.md\` — ${owner}'s recent deliberate captures (shared links + saved), newest
+  first. The high-signal slice of what they actually care about — a good thing to work on.
 - \`manifest.json\` — machine index: what's here and when it was written. Read this first.
 
 ## in/  (you → weir)
@@ -12955,7 +12965,7 @@ Your note, in Markdown. [[wiki-links]] to other items work too.
 \`\`\`
 
 weir ingests each dispatch as a note authored by **${config.author}**, catalogs it, and
-surfaces it in Arthur's stream. With \`target:\`, it lands as a backlink (📝) on that item.
+surfaces it in ${owner}'s stream. With \`target:\`, it lands as a backlink (📝) on that item.
 Write atomically (write a temp file, then rename into \`in/\`). Processed dispatches are
 moved to \`in/.done/\` — never deleted.
 
@@ -19274,6 +19284,9 @@ class App {
     val('set-wb-max', s.wayback_max_snapshots);
     val('set-ia-access', s.ia_access_key || '');
     val('set-ia-secret', s.ia_secret_key || '');
+    val('set-courier-owner', s.owner_name || '');
+    val('set-courier-name', s.courier_name || 'Laney');
+    val('set-courier-author', s.courier_author || 'laney');
     document.getElementById('settings-msg').textContent = '';
     const aff = this.store.feedsWithAffinity();
     document.getElementById('affinity-status').textContent = aff ? `watch data on ${aff} feeds` : 'no watch data loaded';
@@ -19500,8 +19513,16 @@ class App {
       wayback_max_snapshots: Math.max(1, Math.round(num('set-wb-max', 40))),
       ia_access_key: document.getElementById('set-ia-access').value.trim(),
       ia_secret_key: document.getElementById('set-ia-secret').value.trim(),
+      owner_name: document.getElementById('set-courier-owner')?.value.trim() || '',
+      courier_name: document.getElementById('set-courier-name')?.value.trim() || 'Laney',
+      courier_author: (document.getElementById('set-courier-author')?.value.trim() || 'laney').toLowerCase(),
     };
     await this.store.setSettings(patch);
+    if (this.courier) {   // keep the live Courier config in sync; re-publish so its README/exports reflect the new identity
+      Object.assign(this.courier.config, { owner: patch.owner_name, name: patch.courier_name, author: patch.courier_author });
+      if (this.courier.mounted) this.courier.publish().catch(() => {});
+      this.renderCourierSettings();
+    }
     const keyVal = document.getElementById('set-cat-key')?.value;
     if (keyVal) { await saveKey(patch.catalog_provider, keyVal); const k = document.getElementById('set-cat-key'); if (k) k.value = ''; }
     { const tg = document.getElementById('set-tg-token')?.value; if (tg) { await saveKey('telegram', tg); const t = document.getElementById('set-tg-token'); if (t) t.value = ''; } }
@@ -20969,7 +20990,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '43448a7';          // short content hash of the bundle (build id)
+const COMMIT = 'd51908d';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -21056,7 +21077,7 @@ async function boot() {
   app.stacks = stacks;
   // The Courier — weir's optional FS-backed collaborator exchange (the Laney bridge).
   // Created unmounted; the user attaches an exchange folder from the UI (a gesture).
-  app.courier = new Courier({ store, stacks, config: DEFAULT_COURIER });
+  { const cs = store.getSettings(); app.courier = new Courier({ store, stacks, config: { ...DEFAULT_COURIER, owner: cs.owner_name || '', name: cs.courier_name || DEFAULT_COURIER.name, author: cs.courier_author || DEFAULT_COURIER.author } }); }
   // Silently re-attach a previously-connected exchange folder if permission survives
   // (no prompt — handlePermission without request only queries; else reconnect via Settings).
   (async () => {

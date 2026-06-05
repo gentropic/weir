@@ -59,6 +59,10 @@ assert.deepEqual(splitFm('no frontmatter here').data, {}, 'bare body → empty d
 // ── 3. README + manifest ────────────────────────────────────────────────────
 assert.match(formatReadme(DEFAULT_COURIER), /Courier — Laney/);
 assert.match(formatReadme(DEFAULT_COURIER), /authored by \*\*laney\*\*/);
+assert.ok(!/Arthur/.test(formatReadme(DEFAULT_COURIER)), 'owner name is NOT hardcoded');
+assert.match(formatReadme(DEFAULT_COURIER), /the owner's/, 'neutral fallback when owner unset');
+assert.match(formatReadme({ ...DEFAULT_COURIER, owner: 'Testname' }), /Testname's SKOS/, 'owner name is config-driven');
+assert.match(formatSavedRecent({ store, config: { ...DEFAULT_COURIER, owner: 'Testname' }, now: 't' }), /what Testname actually grabbed/, 'saved-recent owner config-driven');
 assert.match(formatManifest([{ name: 'out/vocab.jsonld', updated: 't' }], { config: DEFAULT_COURIER, now: 't' }), /"courier": "weir"/);
 
 // ── 4. Courier.publish + ingest against the mem VFS ─────────────────────────

@@ -3354,6 +3354,9 @@ export class App {
     val('set-wb-max', s.wayback_max_snapshots);
     val('set-ia-access', s.ia_access_key || '');
     val('set-ia-secret', s.ia_secret_key || '');
+    val('set-courier-owner', s.owner_name || '');
+    val('set-courier-name', s.courier_name || 'Laney');
+    val('set-courier-author', s.courier_author || 'laney');
     document.getElementById('settings-msg').textContent = '';
     const aff = this.store.feedsWithAffinity();
     document.getElementById('affinity-status').textContent = aff ? `watch data on ${aff} feeds` : 'no watch data loaded';
@@ -3580,8 +3583,16 @@ export class App {
       wayback_max_snapshots: Math.max(1, Math.round(num('set-wb-max', 40))),
       ia_access_key: document.getElementById('set-ia-access').value.trim(),
       ia_secret_key: document.getElementById('set-ia-secret').value.trim(),
+      owner_name: document.getElementById('set-courier-owner')?.value.trim() || '',
+      courier_name: document.getElementById('set-courier-name')?.value.trim() || 'Laney',
+      courier_author: (document.getElementById('set-courier-author')?.value.trim() || 'laney').toLowerCase(),
     };
     await this.store.setSettings(patch);
+    if (this.courier) {   // keep the live Courier config in sync; re-publish so its README/exports reflect the new identity
+      Object.assign(this.courier.config, { owner: patch.owner_name, name: patch.courier_name, author: patch.courier_author });
+      if (this.courier.mounted) this.courier.publish().catch(() => {});
+      this.renderCourierSettings();
+    }
     const keyVal = document.getElementById('set-cat-key')?.value;
     if (keyVal) { await saveKey(patch.catalog_provider, keyVal); const k = document.getElementById('set-cat-key'); if (k) k.value = ''; }
     { const tg = document.getElementById('set-tg-token')?.value; if (tg) { await saveKey('telegram', tg); const t = document.getElementById('set-tg-token'); if (t) t.value = ''; } }

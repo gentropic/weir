@@ -116,7 +116,7 @@ async function boot() {
   app.stacks = stacks;
   // The Courier — weir's optional FS-backed collaborator exchange (the Laney bridge).
   // Created unmounted; the user attaches an exchange folder from the UI (a gesture).
-  app.courier = new Courier({ store, stacks, config: DEFAULT_COURIER });
+  { const cs = store.getSettings(); app.courier = new Courier({ store, stacks, config: { ...DEFAULT_COURIER, owner: cs.owner_name || '', name: cs.courier_name || DEFAULT_COURIER.name, author: cs.courier_author || DEFAULT_COURIER.author } }); }
   // Silently re-attach a previously-connected exchange folder if permission survives
   // (no prompt — handlePermission without request only queries; else reconnect via Settings).
   (async () => {
