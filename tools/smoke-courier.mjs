@@ -98,4 +98,12 @@ assert.match(ing2.results.find((r) => r.name === 'feed-1.md').disposition, /queu
 assert.match(await c._read('/out/receipts.md'), /feed-1\.md/, 'receipt written to out/');
 assert.match(await c._read('/in/.done/feed-1.md'), /type: feed/, 'feed dispatch moved to .done');
 
-console.log('courier smoke ok:', JSON.stringify({ published: pub.written.length, ingested: ing.ingested, routed: 'feed→handler' }));
+// ── 6. subfolder organization: `folder:` nests under the courier namespace ──
+await c.vfs.writeFile('/in/org.md', '---\ntitle: Organized\nfolder: research/ai\n---\n\nbody');
+await c.ingest('t-org');
+assert.equal(writes.find((w) => w.title === 'Organized').folder, 'laney/research/ai', 'folder: nests under stacks/<id>/');
+await c.vfs.writeFile('/in/esc.md', '---\ntitle: Escapee\nfolder: ../../etc\n---\n\nbody');
+await c.ingest('t-esc');
+assert.equal(writes.find((w) => w.title === 'Escapee').folder, 'laney/etc', 'folder: cannot escape the namespace (.. stripped)');
+
+console.log('courier smoke ok:', JSON.stringify({ published: pub.written.length, ingested: ing.ingested, routed: 'feed→handler', subfolder: 'laney/research/ai' }));

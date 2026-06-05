@@ -12985,10 +12985,15 @@ title: A short title
 type: note                        # optional — see "dispatch types" below; default: note
 tags: [geostatistics, idea]       # optional; prefer terms from vocab.jsonld
 target: <weir-item-id>            # optional — binds the note as an ANNOTATION on that item
----                               #   (item ids are the backticked handles in saved-recent.md)
+folder: research/ai              #   (item ids are the backticked handles in saved-recent.md)
+---                               # optional — organize into subfolders under your own space
 
 Your note, in Markdown. [[id|label]] links to other items work too.
 \`\`\`
+
+Use \`folder:\` to keep your work tidy — it nests under your own \`${config.author}/\` space
+(e.g. \`folder: agents\` → \`stacks/${config.author}/agents/\`), created as needed. Everything
+you send stays namespaced to you; ${owner} can rearrange it in the stacks tree anytime.
 
 You don't need to sign dispatches — weir files each one as a note authored by **${config.author}** automatically, so it's always attributable to you.
 
@@ -13109,8 +13114,13 @@ class Courier {
   // stacks note; other types → a registered handler (a PROPOSAL the user ratifies).
   // Processed files move to in/.done (never-delete); a receipt is written to out/.
   async _fileAsNote(data, body, name) {
+    // Everything stays NAMESPACED under stacks/<id>/ (e.g. stacks/laney/) for attribution.
+    // The collaborator may organize WITHIN that namespace via `folder:` — sanitized so a
+    // dispatch can't escape it (no leading slash, no .., safe chars only).
+    const sub = String(data.folder || data.dir || '').replace(/\.\.+/g, '').replace(/[^\w /-]/g, '').replace(/^[ /]+|[ /]+$/g, '').trim();
+    const folder = sub ? `${this.config.id}/${sub}` : this.config.id;
     return this.stacks.writeNote({
-      folder: this.config.id,                   // → stacks/<id>/ (e.g. stacks/laney/)
+      folder,
       title: data.title || name.replace(/\.md$/i, ''),
       markdown: body,
       tags: Array.isArray(data.tags) ? data.tags : [],
@@ -21099,7 +21109,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '59e103b';          // short content hash of the bundle (build id)
+const COMMIT = 'e531462';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
