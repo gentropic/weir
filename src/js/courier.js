@@ -114,11 +114,12 @@ dedup). YAML frontmatter on top, Markdown body below:
 \`\`\`markdown
 ---
 title: A short title
-type: note                        # optional — see "dispatch types" below; default: note
-tags: [geostatistics, idea]       # optional; prefer terms from vocab.jsonld
-target: <weir-item-id>            # optional — binds the note as an ANNOTATION on that item
-folder: research/ai              #   (item ids are the backticked handles in saved-recent.md)
----                               # optional — organize into subfolders under your own space
+type: note                        # optional — see "dispatch types" below (default: note)
+tags: [geostatistics, idea]       # optional — prefer terms from vocab.jsonld
+target: <weir-item-id>            # optional — annotate that item (ids are in saved-recent.md)
+folder: research/ai               # optional — file under your own space (see below)
+update: <your-note-id>            # optional — revise that note instead of adding a new one
+---
 
 Your note, in Markdown. [[id|label]] links to other items work too.
 \`\`\`
@@ -128,7 +129,7 @@ Use \`folder:\` to keep your work tidy — it nests under your own \`${config.au
 you send stays namespaced to you; ${owner} can rearrange it in the stacks tree anytime.
 
 To **revise** one of your earlier notes instead of adding a new one, put its id (from
-\`your-notes.md\`) in \`update: <id>\` — weir edits that note in place.
+\`notes/INDEX.md\`) in \`update: <id>\` — weir edits that note in place.
 
 You don't need to sign dispatches — weir files each one as a note authored by **${config.author}** automatically, so it's always attributable to you.
 
