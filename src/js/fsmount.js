@@ -29,17 +29,20 @@ function _tx(mode, run) {
 }
 
 // The persisted directory handle, or null. FileSystemDirectoryHandle is
-// structured-cloneable, so IDB stores it directly.
-export async function loadHandle() { try { return (await _tx('readonly', (os) => os.get(HANDLE_KEY))) || null; } catch { return null; } }
-export async function saveHandle(handle) { await _tx('readwrite', (os) => os.put(handle, HANDLE_KEY)); }
-export async function clearHandle() { try { await _tx('readwrite', (os) => os.delete(HANDLE_KEY)); } catch { /* nothing to clear */ } }
+// structured-cloneable, so IDB stores it directly. `key` selects WHICH handle —
+// default is the store mount ('dir'); auxiliary mounts (e.g. a Courier exchange
+// folder, 'courier:<id>') persist under their own key, fully decoupled from the store.
+export async function loadHandle(key = HANDLE_KEY) { try { return (await _tx('readonly', (os) => os.get(key))) || null; } catch { return null; } }
+export async function saveHandle(handle, key = HANDLE_KEY) { await _tx('readwrite', (os) => os.put(handle, key)); }
+export async function clearHandle(key = HANDLE_KEY) { try { await _tx('readwrite', (os) => os.delete(key)); } catch { /* nothing to clear */ } }
 
-// Prompt the user to pick a directory (needs a user gesture).
-export async function pickDirectory() {
+// Prompt the user to pick a directory (needs a user gesture). `id` lets the browser
+// remember a distinct last-folder per purpose (store vs each courier).
+export async function pickDirectory(id = 'weir-store') {
   if (typeof window === 'undefined' || !window.showDirectoryPicker) {
     throw new Error('This browser has no File System Access API — try Edge or Chrome (desktop).');
   }
-  return window.showDirectoryPicker({ mode: 'readwrite', id: 'weir-store' });
+  return window.showDirectoryPicker({ mode: 'readwrite', id });
 }
 
 // 'granted' | 'prompt' | 'denied'. `request: true` triggers the permission

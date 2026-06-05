@@ -18,6 +18,7 @@ import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
 import { TelegramInflux } from './telegram.js';
 import { StacksStore } from './stacks.js';
+import { Courier, DEFAULT_COURIER } from './courier.js';
 import { BackgroundRunner } from './runner.js';
 import { parseFeed, feedAdapter } from './adapters/feed.js';
 import { youtubeAdapter } from './adapters/youtube.js';
@@ -113,6 +114,9 @@ async function boot() {
   // Telegram stash run just after (async), reconciling the on-disk tree.
   const stacks = new StacksStore(store);
   app.stacks = stacks;
+  // The Courier — weir's optional FS-backed collaborator exchange (the Laney bridge).
+  // Created unmounted; the user attaches an exchange folder from the UI (a gesture).
+  app.courier = new Courier({ store, stacks, config: DEFAULT_COURIER });
 
   app.mount();
   poller.start();

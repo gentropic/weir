@@ -25,6 +25,7 @@ import './cataloger.js';                 // → catalogStoreItem (glass cataloge
 import './llmkeys.js';                   // → getKey/saveKey (OPFS LLM key vault, browser-only)
 import './store/store.js';               // → Store (uses VFS + schema globals)
 import './stacks.js';                    // → StacksStore (notes/files vault; uses store + yaml)
+import './courier.js';                   // → Courier (optional FS-backed collaborator exchange; uses store + stacks + VFS)
 import './search.js';                    // → SearchIndex (full-text v2 on Librarian; uses store + Librarian)
 import './parse/xml.js';                 // → parseXml (before feed)
 import './parse/sanitize.js';            // → sanitizeHtml (before feed)
