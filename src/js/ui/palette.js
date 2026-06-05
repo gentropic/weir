@@ -83,7 +83,7 @@ function highlight(label, q) {
 
 function palEsc(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
-export function showPalette(actions) {
+export function showPalette(actions, opts = {}) {
   closePalette();
   const overlay = document.createElement('div');
   overlay.className = 'palette-overlay';
@@ -114,7 +114,7 @@ export function showPalette(actions) {
 
   const refilter = () => { filtered = filterActions(actions, input.value); active = 0; render(); };
   const move = (d) => { if (!filtered.length) return; active = (active + d + filtered.length) % filtered.length; render(); };
-  const run = () => { const a = filtered[active]; if (!a) return; closePalette(); try { a.run(); } catch (e) { console.error('palette action', e); } };
+  const run = () => { const a = filtered[active]; if (!a) return; closePalette(); try { opts.onRun && opts.onRun(a); } catch { /* recorder must never block the action */ } try { a.run(); } catch (e) { console.error('palette action', e); } };
 
   input.addEventListener('input', refilter);
   list.addEventListener('mousemove', (e) => { const r = e.target.closest('.palette-row'); if (r) { const i = +r.dataset.i; if (i !== active) { active = i; render(); } } });

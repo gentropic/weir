@@ -58,6 +58,7 @@ export const DEFAULT_SETTINGS = {
   courier_name: 'Laney',                 // the Courier collaborator's display name
   courier_author: 'laney',               // author tag stamped on dispatches ingested from the Courier
   courier_proposals: [],                 // pending Courier proposals (feed suggestions, …) awaiting the user's ratify (decides-vs-proposes)
+  palette_recent: [],                    // recently-run command-palette labels (MRU, surfaced first on open — Cmd-K ↵ repeats the last)
   mcp_allow_feed_removal: true,          // let the weir_removeFeed MCP tool hard-delete a feed (+ its items); off = Claude can't prune feeds
   // Retention ARCHIVES expired items (moves to the archived view) — never
   // deletes. Off by default; nothing expires until you opt in.

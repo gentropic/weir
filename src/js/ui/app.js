@@ -2460,7 +2460,19 @@ export class App {
     const folders = [...new Set(feeds.map((f) => f.category).filter(Boolean))].sort()
       .map((c) => ({ label: c, kind: 'Folder', run: () => this.setCategory(c) }));
     const sources = feeds.map((f) => ({ label: f.name, kind: 'Source', hint: f.category || undefined, run: () => this.selectFeed(f.id) }));
-    showPalette([...views, ...cmds, ...smartViews, ...routes, ...folders, ...sources].filter(Boolean));
+    const actions = [...views, ...cmds, ...smartViews, ...routes, ...folders, ...sources].filter(Boolean);
+    if (!this._paletteRecent) this._paletteRecent = this.store.getSettings().palette_recent || [];
+    // recently-run first (MRU), then the rest in their normal order — so Cmd-K Enter repeats
+    // your last action, Cmd-K ↓ Enter picks an older one. Typing re-ranks by relevance as usual.
+    const byLabel = new Map(actions.map((a) => [a.label, a]));
+    const front = [];
+    for (const lbl of this._paletteRecent) { const a = byLabel.get(lbl); if (a) { front.push(a); byLabel.delete(lbl); } }
+    showPalette([...front, ...actions.filter((a) => byLabel.has(a.label))], { onRun: (a) => this._recordPaletteRecent(a.label) });
+  }
+  _recordPaletteRecent(label) {
+    if (!label) return;
+    this._paletteRecent = [label, ...(this._paletteRecent || []).filter((l) => l !== label)].slice(0, 8);
+    this.store.setSettings({ palette_recent: this._paletteRecent });
   }
 
   onKey(e) {
