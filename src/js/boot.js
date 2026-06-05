@@ -127,7 +127,7 @@ async function boot() {
   (async () => {
     try {
       const h = await loadHandle('courier:' + DEFAULT_COURIER.id);
-      if (h && (await handlePermission(h)) === 'granted') { await app.courier.mount(h); app.renderCourierSettings?.(); }
+      if (h && (await handlePermission(h)) === 'granted') { await app.courier.mount(h); await app.courier.publish().catch(() => {}); app.renderCourierSettings?.(); }
     } catch { /* offline / no folder — user connects from Settings */ }
   })();
 
