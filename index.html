@@ -4851,11 +4851,7 @@ async function gcuFetch(url, opts = {}) {
 // The host drives time: call tick() on an interval (bridge/shim) or in a loop
 // (smoke). The host MUST NOT overlap ticks (await one before the next).
 
-(function (root, factory) {
-  var api = factory();
-  if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.GcuFsChannel = api;
-}(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+const GcuFsChannel = (function () {
   'use strict';
 
   var FS_VERSION = 1;
@@ -5093,7 +5089,15 @@ async function gcuFetch(url, opts = {}) {
   FsChannel.prototype.stop = function () { this._setState('closed'); this._outQueue.length = 0; };
 
   return { FsChannel: FsChannel, FS_VERSION: FS_VERSION };
-}));
+})();
+
+// ESM exports for node / Deno / JSR. The IIFE above keeps the internal helpers
+// (canon, ctEq, outboxOf, …) scoped, so app builds that flat-concat this file (e.g.
+// weir strips the `export`s and inlines the rest) gain no extra top-level names.
+const FsChannel = GcuFsChannel.FsChannel;
+const FS_VERSION = GcuFsChannel.FS_VERSION;
+// Browser: the shim loads this as a plain inlined script and reads this global.
+if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
 
 // ── vendor/webmcp-shim.js ──
 
@@ -21721,7 +21725,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '77ece26';          // short content hash of the bundle (build id)
+const COMMIT = 'f15a0a0';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
