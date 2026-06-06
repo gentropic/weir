@@ -451,7 +451,18 @@ Hypothesis's fuzzy-match tolerances.
 
 ---
 
-## 10. The knowledge graph — emergent, not an engine **[designed]**
+## 10. The knowledge graph — emergent, not an engine **[building]**
+
+> **Status (2026-06-06):** the typed-`related`-edges piece is built at the data +
+> logic + tool layer — `store.proposeRelated` (on-demand IDF-weighted facet-overlap
+> candidates, deterministic, no LLM), `relateCards`/`unrelateCards` (the ratify gate;
+> edges on `card.glass.related`), `relatedOf` (outgoing + backlink scan), the pure
+> `sharedTopicalTerms`/`relatednessScore` + `RELATION_TYPES`/`TOPICAL_FACETS` in
+> `glass.js`, and the MCP tools `weir_relatedTo`/`weir_relate`. Tested in
+> `tools/smoke-relate.mjs` + `smoke-webmcp.mjs`. **Next: the in-app "Related" UI on the
+> expanded item** (ratified edges + backlinks + suggestions, with ✓ratify/✕dismiss/
+> type-it). Facet-intersection (1) and the thesaurus (3) already exist; the viz layer
+> (force-graph / UMAP terrain) stays deferred.
 
 There is no graph database. The graph is three things that fall out of a good
 catalog: (1) **facet intersection** (everything sharing a facet value is
