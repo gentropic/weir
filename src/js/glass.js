@@ -84,3 +84,35 @@ export function buildCard(item, feed, opts = {}) {
     },
   };
 }
+
+// ── the knowledge graph: typed `related` edges (GLASS §10) ──
+// The graph is edges-on-cards, not an engine. An edge is { target, type, source, at }
+// on card.glass.related. decides-vs-proposes (§2.1): a facet-overlap signal *proposes*,
+// the human (or Claude) *ratifies* → only ratified edges are stored.
+
+// A small, growable closed set of edge types. `related` is the generic; `same-work` is
+// the FRBR-deterministic one; the rest carry intent the proposer can't infer.
+export const RELATION_TYPES = ['related', 'same-topic', 'extends', 'contradicts', 'responds-to', 'same-work'];
+
+// Facets that signal *topical* relatedness — NOT form/provenance/temporal (two 2023
+// videos aren't "related" by sharing genre or year). These drive proposals.
+export const TOPICAL_FACETS = ['domain', 'entity', 'process', 'method', 'scale', 'spatial', 'stance'];
+
+// Shared topical-facet terms between two facet maps → { facet: [terms] } (non-empty only).
+export function sharedTopicalTerms(a, b) {
+  const out = {};
+  for (const f of TOPICAL_FACETS) {
+    const sb = new Set(b[f] || []);
+    const shared = (a[f] || []).filter((t) => sb.has(t));
+    if (shared.length) out[f] = shared;
+  }
+  return out;
+}
+
+// IDF-weighted relatedness from shared terms: `idf(facet, term)` weights rarer shared
+// terms higher (a shared `kriging` means far more than a shared `technology`). Pure.
+export function relatednessScore(shared, idf) {
+  let s = 0;
+  for (const f in shared) for (const t of shared[f]) s += idf(f, t);
+  return s;
+}

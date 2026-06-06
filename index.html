@@ -11213,6 +11213,38 @@ function buildCard(item, feed, opts = {}) {
   };
 }
 
+// ── the knowledge graph: typed `related` edges (GLASS §10) ──
+// The graph is edges-on-cards, not an engine. An edge is { target, type, source, at }
+// on card.glass.related. decides-vs-proposes (§2.1): a facet-overlap signal *proposes*,
+// the human (or Claude) *ratifies* → only ratified edges are stored.
+
+// A small, growable closed set of edge types. `related` is the generic; `same-work` is
+// the FRBR-deterministic one; the rest carry intent the proposer can't infer.
+const RELATION_TYPES = ['related', 'same-topic', 'extends', 'contradicts', 'responds-to', 'same-work'];
+
+// Facets that signal *topical* relatedness — NOT form/provenance/temporal (two 2023
+// videos aren't "related" by sharing genre or year). These drive proposals.
+const TOPICAL_FACETS = ['domain', 'entity', 'process', 'method', 'scale', 'spatial', 'stance'];
+
+// Shared topical-facet terms between two facet maps → { facet: [terms] } (non-empty only).
+function sharedTopicalTerms(a, b) {
+  const out = {};
+  for (const f of TOPICAL_FACETS) {
+    const sb = new Set(b[f] || []);
+    const shared = (a[f] || []).filter((t) => sb.has(t));
+    if (shared.length) out[f] = shared;
+  }
+  return out;
+}
+
+// IDF-weighted relatedness from shared terms: `idf(facet, term)` weights rarer shared
+// terms higher (a shared `kriging` means far more than a shared `technology`). Pure.
+function relatednessScore(shared, idf) {
+  let s = 0;
+  for (const f in shared) for (const t of shared[f]) s += idf(f, t);
+  return s;
+}
+
 // ── src/js/callnumber.js ──
 
 // Glass call number — a faceted, sortable SHELF ADDRESS. CC0, our own scheme
@@ -12678,6 +12710,102 @@ class Store {
     return card;
   }
   async catalogCount() { return this.cards.size; }
+
+  // ── knowledge graph: typed `related` edges (GLASS §10, decides-vs-proposes §2.1) ──
+  // No graph DB: edges live on the card (card.glass.related = [{ target, type, source,
+  // at }]). Proposals are computed ON DEMAND from facet co-occurrence (free, no LLM);
+  // only RATIFIED edges are stored. Backlinks are a scan (the card set is in memory).
+
+  // {df, postings, N} over topical-facet terms across all cards. df = doc frequency
+  // (→ IDF); postings[key] = Set<glass_id> sharing that facet:term (→ candidate gather).
+  _relatednessIndex() {
+    const df = new Map(), postings = new Map();
+    for (const [gid, card] of this.cards) {
+      const facets = card.facets || {};
+      for (const f of TOPICAL_FACETS) for (const t of facets[f] || []) {
+        const key = f + ' ' + t;
+        df.set(key, (df.get(key) || 0) + 1);
+        let set = postings.get(key); if (!set) postings.set(key, set = new Set());
+        set.add(gid);
+      }
+    }
+    return { df, postings, N: this.cards.size };
+  }
+
+  // Propose related cards for `glassId` by IDF-weighted facet co-occurrence — on demand,
+  // deterministic, NOT stored (surfaced for ratification). Excludes self + already-related.
+  // Returns [{ glass_id, score, shared, title, document_ref }] best-first. Pass opts._index
+  // (from _relatednessIndex) to amortize over a batch.
+  proposeRelated(glassId, opts = {}) {
+    const gid = String(glassId);
+    const card = this.cards.get(gid);
+    if (!card) return [];
+    const facets = card.facets || {};
+    const { df, postings, N } = opts._index || this._relatednessIndex();
+    const idf = (f, t) => Math.log((N + 1) / ((df.get(f + ' ' + t) || 0) + 1)) + 1;
+    const cand = new Set();
+    for (const f of TOPICAL_FACETS) for (const t of facets[f] || []) {
+      const set = postings.get(f + ' ' + t); if (set) for (const g of set) if (g !== gid) cand.add(g);
+    }
+    const already = new Set(((card.glass && card.glass.related) || []).map((e) => e.target));
+    const limit = Math.min(Math.max(1, opts.limit || 8), 50);
+    const scored = [];
+    for (const g of cand) {
+      if (already.has(g)) continue;
+      const other = this.cards.get(g); if (!other) continue;
+      const shared = sharedTopicalTerms(facets, other.facets || {});
+      if (!Object.keys(shared).length) continue;
+      const score = relatednessScore(shared, idf);
+      if (opts.minScore && score < opts.minScore) continue;
+      scored.push({ glass_id: g, score: +score.toFixed(3), shared, title: (other.dublin_core && other.dublin_core.title) || g, document_ref: other.glass && other.glass.document_ref });
+    }
+    scored.sort((a, b) => b.score - a.score || (a.glass_id < b.glass_id ? -1 : 1));
+    return scored.slice(0, limit);
+  }
+
+  // Ratify/create a typed edge fromGlassId → toGlassId. This IS the ratification — an
+  // edge exists only once stored here (§2.1). Idempotent per (target, type).
+  relateCards(fromGlassId, toGlassId, opts = {}) {
+    const from = this.cards.get(String(fromGlassId));
+    if (!from) throw new Error(`no such card: ${fromGlassId}`);
+    if (!this.cards.get(String(toGlassId))) throw new Error(`no such card: ${toGlassId}`);
+    if (String(fromGlassId) === String(toGlassId)) throw new Error('a card cannot relate to itself');
+    const type = String(opts.type || 'related');
+    if (!RELATION_TYPES.includes(type)) throw new Error(`unknown relation type "${type}" (one of: ${RELATION_TYPES.join(', ')})`);
+    from.glass = from.glass || {};
+    const related = from.glass.related || (from.glass.related = []);
+    let edge = related.find((e) => e.target === String(toGlassId) && e.type === type);
+    if (!edge) { edge = { target: String(toGlassId), type, source: opts.source || 'human', at: now() }; related.push(edge); }
+    this._markCardDirty(String(fromGlassId));
+    this.emit('catalog', { id: String(fromGlassId), related: true });
+    return edge;
+  }
+
+  // Remove edge(s) fromGlassId → toGlassId (optionally only of `type`). Returns count.
+  unrelateCards(fromGlassId, toGlassId, opts = {}) {
+    const from = this.cards.get(String(fromGlassId));
+    if (!from || !from.glass || !Array.isArray(from.glass.related)) return 0;
+    const before = from.glass.related.length;
+    from.glass.related = from.glass.related.filter((e) => !(e.target === String(toGlassId) && (!opts.type || e.type === opts.type)));
+    const removed = before - from.glass.related.length;
+    if (removed) { this._markCardDirty(String(fromGlassId)); this.emit('catalog', { id: String(fromGlassId), related: true }); }
+    return removed;
+  }
+
+  // All ratified edges touching a card: outgoing (resolved) + backlinks (cards pointing
+  // here). Backlinks are a scan over the in-memory card set.
+  relatedOf(glassId) {
+    const gid = String(glassId);
+    const card = this.cards.get(gid);
+    const resolve = (g) => { const c = this.cards.get(g); return { glass_id: g, title: (c && c.dublin_core && c.dublin_core.title) || g, document_ref: c && c.glass && c.glass.document_ref }; };
+    const outgoing = (((card && card.glass) || {}).related || []).map((e) => ({ ...resolve(e.target), type: e.type, source: e.source }));
+    const backlinks = [];
+    for (const [g, c] of this.cards) {
+      if (g === gid) continue;
+      for (const e of ((c.glass || {}).related) || []) if (e.target === gid) backlinks.push({ ...resolve(g), type: e.type, source: e.source });
+    }
+    return { outgoing, backlinks };
+  }
 
   // Controlled-vocabulary normalization (the thesaurus primitive): rewrite a term
   // across EVERY catalog card within one facet — `from` → `to`, de-duplicated,
@@ -21725,7 +21853,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'f15a0a0';          // short content hash of the bundle (build id)
+const COMMIT = '23311f4';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
