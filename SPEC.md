@@ -739,9 +739,12 @@ past MiniSearch's capabilities, that's a v1.x reconsideration.
 
 ## 7. Integration
 
-Weir integrates with two GCU components: `@gcu/bridge` for fetching and
-`Auditable Works` (AW) for note export. Both are loose couplings — weir
-functions without either, just with degraded capability.
+Weir has three I/O surfaces. **Inbound fetching** goes through `@gcu/bridge`.
+**Outbound collaboration** — sharing weir's catalog with, and ingesting work
+from, an external agent — goes through the **Courier**. And **glass**, once
+imagined here as an *external* "save to glass" handoff, has been internalized:
+weir *is* the glass implementation (see GLASS.md). All three are loose couplings —
+weir functions without any of them, just with degraded reach.
 
 ### Bridge
 
@@ -770,33 +773,39 @@ and `bridgeVersion()`:
 by bridge's static allowlist). If from `localhost` or a custom origin, the
 user adds it once in bridge's options page.
 
-### Auditable Works
+### Glass — internalized, not a handoff
 
-Weir is **standalone** for v0.1 — its own pinned-tab single-file HTML, its own
-storage, its own UI. It does not embed into Auditable Works, inherit AW's
-layout, or share AW's runtime. This is deliberate: keeps weir's surface small
-and its release cadence independent.
+Earlier drafts of this section defined a one-way "Save to glass" handoff: weir →
+Auditable Works over `BroadcastChannel('gcu-handoff')`, with an FSA Markdown
+export to `exports/<ts>-<slug>.md` as fallback. **That design is retired.** Glass
+is no longer an external app weir exports *to* — **weir is the glass
+implementation.** The catalog (faceted classification, controlled vocabulary,
+Dublin Core, the typed relation graph, the LLM cataloger-as-service) lives inside
+weir; reading an item, writing a note, and adding it to the library are the same
+act. The canonical design is **GLASS.md**, which supersedes this subsection.
 
-For interop, weir defines a small postMessage protocol:
+An Auditable-based glass may still exist as a *second* implementation of the same
+CC0 catalog-card format; the two interoperate through the card and can share one
+FSA folder — but that is a peer implementation, not weir's "save" target.
 
-```ts
-// "Save to glass" — weir → AW
-{
-  type: 'gcu-weir-export',
-  target: 'auditable-works',
-  item: Item,        // full record per §2
-  format: 'note'     // 'note' | 'markdown' | 'json'
-}
-```
+### The Courier & webmcp — external agents
 
-The "Save to glass" verb on an item attempts a `BroadcastChannel('gcu-handoff')`
-message. If AW is open and listening, it receives the item and creates an
-Auditable note. If no listener responds within ~500ms, weir falls back to
-exporting the item as a Markdown file to the FSA archive directory under
-`exports/<timestamp>-<slug>.md`.
+Weir's outward collaboration surface is the **Courier** (`src/js/courier.js`): an
+optional, sync-agnostic, filesystem-backed exchange with an external agent
+collaborator. Weir writes a curated slice to `out/` (controlled vocabulary as
+SKOS/JSON-LD, recent deliberate captures, a mirror of the collaborator's own
+notes as a tree) and ingests the agent's "dispatches" from `in/` — notes land in
+the stacks vault as `author:<agent>` items; structural suggestions (e.g. a feed
+to follow) arrive as **proposals the user ratifies** (decides-vs-proposes,
+GLASS §2.1). The transport is the user's own infrastructure (Syncthing, etc.)
+over a dedicated FSA handle — weir only reads and writes the folder; it operates
+no sync protocol of its own. The generated `README.md` in that folder is the
+self-describing protocol.
 
-This keeps weir functional without AW, gives a clean path when AW is present,
-and decouples release timelines.
+Separately, **`@gcu/webmcp`** exposes weir's catalog to *your* Claude as MCP
+tools (query, catalog, vocabulary, recover, stacks…), so an agent can drive the
+librarian — trigger cataloging, work the review queue, run reference queries —
+without weir's core becoming agentic.
 
 ---
 
@@ -822,9 +831,13 @@ right answer is a different tool, not the weir.
 - **Account system.** No login, no cloud, no telemetry.
 - **Mobile.** Desktop, Chromium, pinned tab. A mobile companion is a separate
   project if it ever happens.
-- **Per-item AI summarization, generation, or rewriting.** Out of scope for the
-  weir itself. A separate Auditable Works tool can consume saved items if you
-  want that.
+- **Per-item AI *generation* — summarization, rewriting, synthesis.** Still out
+  of scope: weir does not produce prose for you, and there is no "for you"
+  synthesis. Note the boundary, though — *cataloging* (classification into facets
+  + Dublin Core, run as a bounded, auditable, human-correctable service) **is**
+  now core via glass (GLASS.md §1.1). That is classification, not generation: the
+  line glass draws is decides-vs-proposes — structured, inspectable records yes;
+  opaque synthesis no.
 
 ---
 
