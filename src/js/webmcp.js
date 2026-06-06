@@ -396,6 +396,46 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { facet: String(input.facet), term: String(input.term).toLowerCase().trim(), concept: store.getConcept(String(input.facet), String(input.term)) };
   }
 
+  // ── the knowledge graph: typed `related` edges between items (GLASS §10) ──
+  // Resolve an item id OR glass_id to a card's glass_id (errors if uncataloged);
+  // map a glass_id back to its item id for projection.
+  function toGlassId(idOrGlass) {
+    const s = String(idOrGlass || '');
+    if (s && store.cards.get(s)) return s;            // already a glass_id
+    const it = store.getItem(s);
+    if (it && it.glass_id) return it.glass_id;
+    throw new Error(`"${idOrGlass}" has no catalog card yet — catalog it first (or pass a glass_id).`);
+  }
+  const itemRefOf = (gid) => { const c = store.cards.get(gid); return (c && c.glass && c.glass.document_ref) || gid; };
+
+  // Read the graph around an item: ratified edges (outgoing + backlinks) + on-demand
+  // facet-overlap SUGGESTIONS to ratify (each with the shared terms = the "why").
+  async function relatedTo(input = {}) {
+    const gid = toGlassId(input.id);
+    const r = store.relatedOf(gid);
+    const proj = (e) => ({ id: itemRefOf(e.glass_id), title: e.title, type: e.type, source: e.source });
+    const out = { id: String(input.id), outgoing: r.outgoing.map(proj), backlinks: r.backlinks.map(proj) };
+    if (input.suggest !== false) {
+      const limit = Math.min(Math.max(1, Number(input.limit) || 8), 25);
+      out.suggested = store.proposeRelated(gid, { limit }).map((p) => ({ id: itemRefOf(p.glass_id), title: p.title, score: p.score, shared: p.shared }));
+    }
+    return out;
+  }
+
+  // Ratify (or remove) a typed edge between two items — the decides-vs-proposes gate
+  // (GLASS §2.1): a suggestion is only an edge once declared here. type ∈ RELATION_TYPES.
+  async function relate(input = {}) {
+    const from = toGlassId(input.from), to = toGlassId(input.to);
+    if (input.remove) {
+      const removed = store.unrelateCards(from, to, input.type ? { type: String(input.type) } : {});
+      await store.flush();
+      return { removed, from: String(input.from), to: String(input.to) };
+    }
+    const edge = store.relateCards(from, to, { type: input.type || 'related', source: 'claude' });
+    await store.flush();
+    return { related: true, from: String(input.from), to: String(input.to), type: edge.type };
+  }
+
   // Inspect (and optionally rebuild) FRBR work-grouping (GLASS §4.1): items that are
   // the same Work across manifestations (wire-syndication, re-uploads). `regroup:true`
   // runs the deterministic pass (canonical-URL + SimHash near-dup — NOT an LLM call)
@@ -750,7 +790,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1043,6 +1083,31 @@ const TOOLS = [
       },
     },
     annotations: { title: 'Work-grouping (FRBR)' },
+  },
+  {
+    name: 'weir_relatedTo', fn: 'relatedTo',
+    description: 'The knowledge graph around an item (GLASS §10): its ratified `related` edges — outgoing + backlinks — PLUS on-demand SUGGESTIONS (set suggest:false to skip) from facet co-occurrence, each carrying the shared facet terms (the "why") and a score. Pass an item id (from weir_queryItems) or a glass_id; the item must be cataloged. Suggestions are NOT edges until ratified via weir_relate.',
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'Item id or glass_id' },
+        suggest: { type: 'boolean', description: 'Include facet-overlap suggestions (default true)' },
+        limit: { type: 'integer', description: 'Max suggestions (default 8, cap 25)' },
+      }, required: ['id'],
+    },
+    annotations: { readOnlyHint: true, title: 'Related items + suggestions' },
+  },
+  {
+    name: 'weir_relate', fn: 'relate',
+    description: 'Ratify (or remove) a typed `related` edge between two items — decides-vs-proposes (GLASS §2.1): a facet-overlap suggestion becomes a real edge ONLY when declared here. `from`/`to` are item ids (or glass_ids); both must be cataloged. `type` ∈ related | same-topic | extends | contradicts | responds-to | same-work (default "related"). Pass remove:true to delete the edge (optionally just one type). Stored on the from-item, source "claude"; reversible (weir never deletes the items).',
+    inputSchema: {
+      type: 'object', properties: {
+        from: { type: 'string', description: 'Source item id / glass_id' },
+        to: { type: 'string', description: 'Target item id / glass_id' },
+        type: { type: 'string', description: 'related | same-topic | extends | contradicts | responds-to | same-work' },
+        remove: { type: 'boolean', description: 'Remove the edge instead of creating it' },
+      }, required: ['from', 'to'],
+    },
+    annotations: { title: 'Relate two items' },
   },
   {
     name: 'weir_listFacets', fn: 'listFacets',

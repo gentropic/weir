@@ -389,4 +389,21 @@ assert.equal(lm.count, 2); assert.deepEqual(lm.models, ['m1', 'm2'], 'models lis
   assert.ok((gib.links || []).some((l) => l.ref === a.uid && l.id === a.id), 'getItem: links resolve [[ref]] → target');
 }
 
+// ── knowledge graph: relatedTo (suggest) + relate (ratify/remove), by item id ──
+const blankFacets = { domain: [], entity: [], process: [], method: [], scale: [], spatial: [], stance: [], form: [], provenance: [], temporal: [] };
+await store.writeCard({ dublin_core: { title: 'Jack Daniel preacher' }, facets: { ...blankFacets, entity: ['whiskey', 'tennessee'], domain: ['history'] }, glass: { document_ref: 'a1', related: [] } });
+await store.writeCard({ dublin_core: { title: '3D Print Farm' }, facets: { ...blankFacets, entity: ['tennessee'], domain: ['history'], form: ['video'] }, glass: { document_ref: 'v1', related: [] } });
+
+let kg = await tools.relatedTo({ id: 'a1' });
+assert.ok(kg.suggested.find((s) => s.id === 'v1'), 'relatedTo suggests v1 for a1 (shared facets), by item id');
+const made = await tools.relate({ from: 'a1', to: 'v1', type: 'same-topic' });
+assert.equal(made.type, 'same-topic'); assert.equal(made.from, 'a1');
+kg = await tools.relatedTo({ id: 'a1' });
+assert.equal(kg.outgoing[0].id, 'v1', 'outgoing edge resolves back to the item id');
+assert.equal(kg.outgoing[0].type, 'same-topic');
+assert.ok(!kg.suggested.find((s) => s.id === 'v1'), 'ratified edge drops out of suggestions');
+assert.equal((await tools.relatedTo({ id: 'v1' })).backlinks[0].id, 'a1', 'v1 is back-linked from a1');
+assert.equal((await tools.relate({ from: 'a1', to: 'v1', remove: true })).removed, 1, 'edge removed');
+await assert.rejects(() => tools.relatedTo({ id: 'no-such-item' }), /no catalog card/, 'uncataloged item errors clearly');
+
 console.log('webmcp tools smoke ok:', JSON.stringify({ items: all.count, facets: Object.keys(f).length, mutations: calls.length }));
