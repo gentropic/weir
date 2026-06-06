@@ -17,7 +17,8 @@ import { facetsOf, FACETS } from './glass.js';
 import { listModels } from './llm.js';
 import { getKey } from './llmkeys.js';
 
-const LS_KEY = 'weir-webmcp';   // localStorage "port:token" — origin-scoped, never in backups/FSA folder
+const LS_KEY = 'weir-webmcp';      // localStorage "port:token" (socket transport) — origin-scoped, never in backups
+const LS_FS = 'weir-webmcp-fs';    // localStorage machine token (fs transport; the folder handle persists via fsmount 'webmcp-fs')
 
 // Compact projection for tool output — never dump whole records at the model.
 function projItem(store, it, full) {
@@ -1128,20 +1129,37 @@ export function initWebmcp({ store, app, fetch }) {
   }
 
   const read = () => { try { return localStorage.getItem(LS_KEY) || ''; } catch { return ''; } };
+  const readFs = () => { try { return localStorage.getItem(LS_FS) || ''; } catch { return ''; } };
   const api = {
     available: !!wm,
     state: () => (wm ? wm.state : 'unavailable'),
+    mode: () => (readFs() ? 'fs' : (read() ? 'socket' : 'none')),
     stored: read,
+    storedFs: readFs,
+    // localhost transport — a port:token string (ws/http via the bridge extension).
     connect(connStr) {
       const v = String(connStr || '').trim();
       if (!/^\d+:[0-9a-f]{8,}/i.test(v)) throw new Error('expected port:token (e.g. 7801:…)');
-      try { localStorage.setItem(LS_KEY, v); } catch { /* private mode */ }
-      if (wm) wm.connect(v);
+      try { localStorage.setItem(LS_KEY, v); localStorage.removeItem(LS_FS); } catch { /* private mode */ }
+      if (wm) { wm.folder = null; wm.connect(v); }
     },
-    disconnect() { try { localStorage.removeItem(LS_KEY); } catch { /* ignore */ } if (wm) wm.disconnect(); },
+    // fs transport — a folder handle + a bare machine token (no port, no extension).
+    // The CALLER persists the handle (saveHandle('webmcp-fs')); this stores the token
+    // and drives the shim's fs path. See TRANSPORTS.md §6.1.
+    connectFolder(handle, token) {
+      const t = String(token || '').trim();
+      if (!handle) throw new Error('pick a folder first');
+      if (!t) throw new Error('a machine token is required (the bridge prints it: --transport fs --info)');
+      if (!wm) throw new Error('the webmcp shim is not loaded');
+      try { localStorage.setItem(LS_FS, t); localStorage.removeItem(LS_KEY); } catch { /* private mode */ }
+      wm.folder = handle; wm.connect(t);
+    },
+    disconnect() { try { localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_FS); } catch { /* ignore */ } if (wm) { wm.folder = null; wm.disconnect(); } },
   };
 
+  // Auto-reconnect a SOCKET connection on load. The fs path reconnects from boot.js
+  // instead — it needs the persisted folder handle + a permission re-grant gesture.
   const stored = read();
-  if (wm && stored) { try { wm.connect(stored); } catch { /* bad stored string */ } }
+  if (wm && stored && !readFs()) { try { wm.connect(stored); } catch { /* bad stored string */ } }
   return api;
 }

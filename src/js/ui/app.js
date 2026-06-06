@@ -20,7 +20,7 @@ import { parseFeed } from '../adapters/feed.js';
 import { monogram } from '../favicon.js';
 import { assessFeed } from '../health.js';
 import { Store } from '../store/store.js';
-import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle } from '../fsmount.js';
+import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle, loadHandle } from '../fsmount.js';
 import { facetsOf, FACETS } from '../glass.js';
 import { WORLD_PATH, WORLD_VIEWBOX } from '../../../vendor/worldmap.js';
 import { getKey, hasKey, saveKey } from '../llmkeys.js';
@@ -201,6 +201,8 @@ export class App {
     document.getElementById('facets-head')?.addEventListener('contextmenu', (e) => { if (e.target.closest('button')) return; e.preventDefault(); this.facetsHeaderMenu(e.clientX, e.clientY); });
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
+    document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder());
+    document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder());
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -3325,8 +3327,11 @@ export class App {
     if (bar) { bar.textContent = s === 'connected' ? 'mcp' : s === 'connecting' ? 'mcp…' : s === 'error' ? 'mcp err' : ''; bar.dataset.state = s; }
     const lab = document.getElementById('set-webmcp-state');
     if (lab) lab.textContent = (this.webmcp && this.webmcp.available) ? s : 'unavailable (shim not loaded)';
+    const connected = (s === 'connected' || s === 'connecting');
     const btn = document.getElementById('set-webmcp-toggle');
-    if (btn) btn.textContent = (s === 'connected' || s === 'connecting') ? 'disconnect' : 'connect';
+    if (btn) btn.textContent = connected ? 'disconnect' : 'connect';
+    const fsBtn = document.getElementById('set-webmcp-fs-toggle');
+    if (fsBtn) fsBtn.textContent = connected ? 'disconnect' : 'connect over folder';
   }
 
   toggleWebmcp() {
@@ -3336,6 +3341,31 @@ export class App {
     const input = document.getElementById('set-webmcp-conn');
     try { this.webmcp.connect((input && input.value) || ''); }
     catch (e) { const lab = document.getElementById('set-webmcp-state'); if (lab) lab.textContent = e.message; }
+  }
+
+  // fs transport: pick the shared exchange folder (its own handle, distinct from the
+  // store and the Courier), then connect with a bare machine token.
+  async pickWebmcpFolder() {
+    const msg = document.getElementById('settings-msg');
+    try { this._webmcpFsHandle = await pickDirectory('webmcp-fs'); }
+    catch (e) { if (e && e.name === 'AbortError') return; if (msg) msg.textContent = e.message; return; }
+    const lab = document.getElementById('set-webmcp-fs-folder');
+    if (lab) lab.textContent = handleName(this._webmcpFsHandle);
+  }
+
+  async toggleWebmcpFolder() {
+    if (!this.webmcp || !this.webmcp.available) { this.renderWebmcpStatus('unavailable'); return; }
+    const lab = document.getElementById('set-webmcp-state');
+    const st = this.webmcp.state();
+    if (st === 'connected' || st === 'connecting') { this.webmcp.disconnect(); this.renderWebmcpStatus(); return; }
+    let handle = this._webmcpFsHandle;
+    if (!handle) { try { handle = await loadHandle('webmcp-fs'); } catch { /* none yet */ } }   // reuse a previously-picked folder
+    const tok = (document.getElementById('set-webmcp-fs-token') || {}).value || '';
+    try {
+      if (handle) await saveHandle(handle, 'webmcp-fs');   // persist so boot can reconnect silently
+      this.webmcp.connectFolder(handle, tok);              // throws a friendly error if no folder/token
+      this.renderWebmcpStatus();
+    } catch (e) { if (lab) lab.textContent = e.message; }
   }
 
   _showSettingsTab(name) {
@@ -3383,6 +3413,8 @@ export class App {
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
+    { const ft = document.getElementById('set-webmcp-fs-token'); if (ft && this.webmcp) ft.value = (this.webmcp.storedFs && this.webmcp.storedFs()) || ''; }
+    { const fl = document.getElementById('set-webmcp-fs-folder'); if (fl) loadHandle('webmcp-fs').then((h) => { fl.textContent = h ? handleName(h) : '—'; if (h && !this._webmcpFsHandle) this._webmcpFsHandle = h; }).catch(() => {}); }
     this.renderWebmcpStatus();
     chk('set-retention', s.retention_enabled);
     chk('set-tg-enabled', s.telegram_enabled);

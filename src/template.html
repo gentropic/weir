@@ -243,8 +243,10 @@
         <h4>Claude (WebMCP)</h4>
         <div class="set-row"><span>status: <b id="set-webmcp-state">—</b></span><button class="btn-link" id="set-webmcp-toggle" type="button">connect</button></div>
         <label class="set-row">connection<input type="text" id="set-webmcp-conn" class="field" autocomplete="off" spellcheck="false" placeholder="port:token (e.g. 7801:…)"></label>
+        <div class="set-row"><span>or folder: <b id="set-webmcp-fs-folder">—</b></span><button class="btn-link" id="set-webmcp-fs-pick" type="button">pick…</button><button class="btn-link" id="set-webmcp-fs-toggle" type="button">connect over folder</button></div>
+        <label class="set-row">folder token<input type="text" id="set-webmcp-fs-token" class="field" autocomplete="off" spellcheck="false" placeholder="machine token (no port — fs transport)"></label>
         <label class="set-row check"><input type="checkbox" id="set-mcp-feed-removal"> let Claude prune feeds (the weir_removeFeed tool — deletes a dead feed + its items; off = Claude can’t)</label>
-        <div class="hint">Lets Claude Code curate weir over localhost via <b>@gcu/webmcp</b> (query/tag items, manage feeds, write to the stacks). Run <code>node webmcp-bridge.js --app weir --port 7801 --info</code> in the webmcp repo to get the connection string, paste it, and connect — weir remembers it (origin-local, never in backups). Uses the same @gcu/bridge extension as the cataloger to reach localhost.</div>
+        <div class="hint">Lets Claude Code curate weir via <b>@gcu/webmcp</b> (query/tag items, manage feeds, write to the stacks). <b>Over localhost:</b> run <code>node webmcp-bridge.js --app weir --port 7801 --info</code>, paste the <code>port:token</code>, connect (uses the @gcu/bridge extension, like the cataloger). <b>Over a folder</b> (no port, no extension): run <code>… --transport fs --folder &lt;dir&gt; --info</code>, pick that folder here, paste the token, connect — sync the folder (e.g. Syncthing) to drive weir from another machine. weir remembers either (origin-local, never in backups).</div>
       </section>
       </div>
       <div class="set-pane" data-pane="about" hidden>

@@ -151,6 +151,15 @@ async function boot() {
   const webmcp = initWebmcp({ store, app, fetch: gcuFetch });
   app.webmcp = webmcp;
   app.renderWebmcpStatus(webmcp ? webmcp.state() : 'unavailable');
+  // WebMCP over a folder (fs transport): reconnect silently if a folder handle was
+  // persisted and permission is still granted (no prompt — else reconnect via Settings,
+  // which has the user gesture). Mirrors the Courier's boot reconnect.
+  if (webmcp && webmcp.storedFs && webmcp.storedFs()) {
+    try {
+      const h = await loadHandle('webmcp-fs');
+      if (h && (await handlePermission(h)) === 'granted') webmcp.connectFolder(h, webmcp.storedFs());
+    } catch { /* reconnect via Settings */ }
+  }
 
   const retainer = new Retainer(store);   // archives expired items (never deletes); off until enabled
   retainer.start();

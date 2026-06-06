@@ -1304,8 +1304,10 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
         <h4>Claude (WebMCP)</h4>
         <div class="set-row"><span>status: <b id="set-webmcp-state">—</b></span><button class="btn-link" id="set-webmcp-toggle" type="button">connect</button></div>
         <label class="set-row">connection<input type="text" id="set-webmcp-conn" class="field" autocomplete="off" spellcheck="false" placeholder="port:token (e.g. 7801:…)"></label>
+        <div class="set-row"><span>or folder: <b id="set-webmcp-fs-folder">—</b></span><button class="btn-link" id="set-webmcp-fs-pick" type="button">pick…</button><button class="btn-link" id="set-webmcp-fs-toggle" type="button">connect over folder</button></div>
+        <label class="set-row">folder token<input type="text" id="set-webmcp-fs-token" class="field" autocomplete="off" spellcheck="false" placeholder="machine token (no port — fs transport)"></label>
         <label class="set-row check"><input type="checkbox" id="set-mcp-feed-removal"> let Claude prune feeds (the weir_removeFeed tool — deletes a dead feed + its items; off = Claude can’t)</label>
-        <div class="hint">Lets Claude Code curate weir over localhost via <b>@gcu/webmcp</b> (query/tag items, manage feeds, write to the stacks). Run <code>node webmcp-bridge.js --app weir --port 7801 --info</code> in the webmcp repo to get the connection string, paste it, and connect — weir remembers it (origin-local, never in backups). Uses the same @gcu/bridge extension as the cataloger to reach localhost.</div>
+        <div class="hint">Lets Claude Code curate weir via <b>@gcu/webmcp</b> (query/tag items, manage feeds, write to the stacks). <b>Over localhost:</b> run <code>node webmcp-bridge.js --app weir --port 7801 --info</code>, paste the <code>port:token</code>, connect (uses the @gcu/bridge extension, like the cataloger). <b>Over a folder</b> (no port, no extension): run <code>… --transport fs --folder &lt;dir&gt; --info</code>, pick that folder here, paste the token, connect — sync the folder (e.g. Syncthing) to drive weir from another machine. weir remembers either (origin-local, never in backups).</div>
       </section>
       </div>
       <div class="set-pane" data-pane="about" hidden>
@@ -16676,6 +16678,8 @@ class App {
     document.getElementById('facets-head')?.addEventListener('contextmenu', (e) => { if (e.target.closest('button')) return; e.preventDefault(); this.facetsHeaderMenu(e.clientX, e.clientY); });
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
+    document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder());
+    document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder());
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -19800,8 +19804,11 @@ class App {
     if (bar) { bar.textContent = s === 'connected' ? 'mcp' : s === 'connecting' ? 'mcp…' : s === 'error' ? 'mcp err' : ''; bar.dataset.state = s; }
     const lab = document.getElementById('set-webmcp-state');
     if (lab) lab.textContent = (this.webmcp && this.webmcp.available) ? s : 'unavailable (shim not loaded)';
+    const connected = (s === 'connected' || s === 'connecting');
     const btn = document.getElementById('set-webmcp-toggle');
-    if (btn) btn.textContent = (s === 'connected' || s === 'connecting') ? 'disconnect' : 'connect';
+    if (btn) btn.textContent = connected ? 'disconnect' : 'connect';
+    const fsBtn = document.getElementById('set-webmcp-fs-toggle');
+    if (fsBtn) fsBtn.textContent = connected ? 'disconnect' : 'connect over folder';
   }
 
   toggleWebmcp() {
@@ -19811,6 +19818,31 @@ class App {
     const input = document.getElementById('set-webmcp-conn');
     try { this.webmcp.connect((input && input.value) || ''); }
     catch (e) { const lab = document.getElementById('set-webmcp-state'); if (lab) lab.textContent = e.message; }
+  }
+
+  // fs transport: pick the shared exchange folder (its own handle, distinct from the
+  // store and the Courier), then connect with a bare machine token.
+  async pickWebmcpFolder() {
+    const msg = document.getElementById('settings-msg');
+    try { this._webmcpFsHandle = await pickDirectory('webmcp-fs'); }
+    catch (e) { if (e && e.name === 'AbortError') return; if (msg) msg.textContent = e.message; return; }
+    const lab = document.getElementById('set-webmcp-fs-folder');
+    if (lab) lab.textContent = handleName(this._webmcpFsHandle);
+  }
+
+  async toggleWebmcpFolder() {
+    if (!this.webmcp || !this.webmcp.available) { this.renderWebmcpStatus('unavailable'); return; }
+    const lab = document.getElementById('set-webmcp-state');
+    const st = this.webmcp.state();
+    if (st === 'connected' || st === 'connecting') { this.webmcp.disconnect(); this.renderWebmcpStatus(); return; }
+    let handle = this._webmcpFsHandle;
+    if (!handle) { try { handle = await loadHandle('webmcp-fs'); } catch { /* none yet */ } }   // reuse a previously-picked folder
+    const tok = (document.getElementById('set-webmcp-fs-token') || {}).value || '';
+    try {
+      if (handle) await saveHandle(handle, 'webmcp-fs');   // persist so boot can reconnect silently
+      this.webmcp.connectFolder(handle, tok);              // throws a friendly error if no folder/token
+      this.renderWebmcpStatus();
+    } catch (e) { if (lab) lab.textContent = e.message; }
   }
 
   _showSettingsTab(name) {
@@ -19858,6 +19890,8 @@ class App {
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
+    { const ft = document.getElementById('set-webmcp-fs-token'); if (ft && this.webmcp) ft.value = (this.webmcp.storedFs && this.webmcp.storedFs()) || ''; }
+    { const fl = document.getElementById('set-webmcp-fs-folder'); if (fl) loadHandle('webmcp-fs').then((h) => { fl.textContent = h ? handleName(h) : '—'; if (h && !this._webmcpFsHandle) this._webmcpFsHandle = h; }).catch(() => {}); }
     this.renderWebmcpStatus();
     chk('set-retention', s.retention_enabled);
     chk('set-tg-enabled', s.telegram_enabled);
@@ -20471,7 +20505,8 @@ class NotePane {
 
 
 
-const LS_KEY = 'weir-webmcp';   // localStorage "port:token" — origin-scoped, never in backups/FSA folder
+const LS_KEY = 'weir-webmcp';      // localStorage "port:token" (socket transport) — origin-scoped, never in backups
+const LS_FS = 'weir-webmcp-fs';    // localStorage machine token (fs transport; the folder handle persists via fsmount 'webmcp-fs')
 
 // Compact projection for tool output — never dump whole records at the model.
 function projItem(store, it, full) {
@@ -21582,21 +21617,38 @@ function initWebmcp({ store, app, fetch }) {
   }
 
   const read = () => { try { return localStorage.getItem(LS_KEY) || ''; } catch { return ''; } };
+  const readFs = () => { try { return localStorage.getItem(LS_FS) || ''; } catch { return ''; } };
   const api = {
     available: !!wm,
     state: () => (wm ? wm.state : 'unavailable'),
+    mode: () => (readFs() ? 'fs' : (read() ? 'socket' : 'none')),
     stored: read,
+    storedFs: readFs,
+    // localhost transport — a port:token string (ws/http via the bridge extension).
     connect(connStr) {
       const v = String(connStr || '').trim();
       if (!/^\d+:[0-9a-f]{8,}/i.test(v)) throw new Error('expected port:token (e.g. 7801:…)');
-      try { localStorage.setItem(LS_KEY, v); } catch { /* private mode */ }
-      if (wm) wm.connect(v);
+      try { localStorage.setItem(LS_KEY, v); localStorage.removeItem(LS_FS); } catch { /* private mode */ }
+      if (wm) { wm.folder = null; wm.connect(v); }
     },
-    disconnect() { try { localStorage.removeItem(LS_KEY); } catch { /* ignore */ } if (wm) wm.disconnect(); },
+    // fs transport — a folder handle + a bare machine token (no port, no extension).
+    // The CALLER persists the handle (saveHandle('webmcp-fs')); this stores the token
+    // and drives the shim's fs path. See TRANSPORTS.md §6.1.
+    connectFolder(handle, token) {
+      const t = String(token || '').trim();
+      if (!handle) throw new Error('pick a folder first');
+      if (!t) throw new Error('a machine token is required (the bridge prints it: --transport fs --info)');
+      if (!wm) throw new Error('the webmcp shim is not loaded');
+      try { localStorage.setItem(LS_FS, t); localStorage.removeItem(LS_KEY); } catch { /* private mode */ }
+      wm.folder = handle; wm.connect(t);
+    },
+    disconnect() { try { localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_FS); } catch { /* ignore */ } if (wm) { wm.folder = null; wm.disconnect(); } },
   };
 
+  // Auto-reconnect a SOCKET connection on load. The fs path reconnects from boot.js
+  // instead — it needs the persisted folder handle + a permission re-grant gesture.
   const stored = read();
-  if (wm && stored) { try { wm.connect(stored); } catch { /* bad stored string */ } }
+  if (wm && stored && !readFs()) { try { wm.connect(stored); } catch { /* bad stored string */ } }
   return api;
 }
 
@@ -21633,7 +21685,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '62c187b';          // short content hash of the bundle (build id)
+const COMMIT = '02f0357';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -21755,6 +21807,15 @@ async function boot() {
   const webmcp = initWebmcp({ store, app, fetch: gcuFetch });
   app.webmcp = webmcp;
   app.renderWebmcpStatus(webmcp ? webmcp.state() : 'unavailable');
+  // WebMCP over a folder (fs transport): reconnect silently if a folder handle was
+  // persisted and permission is still granted (no prompt — else reconnect via Settings,
+  // which has the user gesture). Mirrors the Courier's boot reconnect.
+  if (webmcp && webmcp.storedFs && webmcp.storedFs()) {
+    try {
+      const h = await loadHandle('webmcp-fs');
+      if (h && (await handlePermission(h)) === 'granted') webmcp.connectFolder(h, webmcp.storedFs());
+    } catch { /* reconnect via Settings */ }
+  }
 
   const retainer = new Retainer(store);   // archives expired items (never deletes); off until enabled
   retainer.start();
