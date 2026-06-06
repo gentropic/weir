@@ -17,8 +17,13 @@ import { facetsOf, FACETS } from './glass.js';
 import { listModels } from './llm.js';
 import { getKey } from './llmkeys.js';
 
-const LS_KEY = 'weir-webmcp';      // localStorage "port:token" (socket transport) — origin-scoped, never in backups
-const LS_FS = 'weir-webmcp-fs';    // localStorage machine token (fs transport; the folder handle persists via fsmount 'webmcp-fs')
+const LS_KEY = 'weir-webmcp';      // localStorage "port:token" (socket transport) — origin-scoped (no cross-origin read)
+// fs-transport machine token. NOTE: this is a CLUSTER-shared secret (the same token
+// authorizes every machine syncing the folder), and localStorage CAN ride a browser
+// profile backup/sync — so its blast radius is wider than LS_KEY's loopback gate.
+// Mitigations are scope-the-cluster-tightly + the bridge's --allow capability gate
+// (webmcp TRANSPORTS §4.1). The folder handle itself persists via fsmount key 'webmcp-fs'.
+const LS_FS = 'weir-webmcp-fs';
 
 // Compact projection for tool output — never dump whole records at the model.
 function projItem(store, it, full) {
