@@ -9,7 +9,8 @@
 
 import '../../vendor/vfs.js';            // → VFS, IDBBackend, OPFSBackend, FSAABackend, path, …
 import '../../vendor/bridge-client.js';  // → gcuFetch, hasBridge, bridgeVersion, clearBridgeCache
-import '../../vendor/webmcp-shim.js';    // → window.gcuWebMCP + navigator.modelContext polyfill (IIFE)
+import '../../vendor/webmcp-fs-channel.js'; // → globalThis.GcuFsChannel (fs-transport core; load before the shim)
+import '../../vendor/webmcp-shim.js';    // → window.gcuWebMCP + navigator.modelContext polyfill (IIFE; fs transport via GcuFsChannel)
 import '../../vendor/librarian.js';      // → Librarian (BM25F/CSR search engine; before search.js)
 import '../../vendor/yaml.js';           // → parse, emit, scalar/mapNode/seqNode (@gcu/yaml strict subset; for stacks frontmatter)
 import '../../vendor/cm6.min.js';        // → window.CM6 (CodeMirror 6 IIFE bundle; the stacks note editor)
