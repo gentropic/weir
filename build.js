@@ -235,3 +235,12 @@ const outPath = path.join(ROOT, 'index.html');
 fs.writeFileSync(outPath, html);
 const kb = (fs.statSync(outPath).size / 1024).toFixed(1);
 console.log(`Built index.html (${kb} KB) — build ${buildId}`);
+
+// Stamp the build id into the service-worker cache name so each meaningful build
+// auto-busts the SW cache — no manual bump, no forgetting. `buildId` is the bundle
+// (js+css) content hash, so a content-only deploy (data lives in the VFS, not the
+// cache) leaves it unchanged and won't churn returning clients.
+const swPath = path.join(ROOT, 'sw.js');
+const sw = fs.readFileSync(swPath, 'utf8');
+const swNew = sw.replace(/const CACHE = 'weir-shell-[^']*';/, `const CACHE = 'weir-shell-${buildId}';`);
+if (swNew !== sw) { fs.writeFileSync(swPath, swNew); console.log(`Stamped sw.js cache → weir-shell-${buildId}`); }
