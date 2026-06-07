@@ -575,6 +575,16 @@ body {
 .backlink { color: var(--au-info); font-size: 12.5px; cursor: pointer; }
 .backlink:hover { text-decoration: underline; }
 
+/* ↔ glass knowledge-graph "Related" block on an expanded item (GLASS §10) */
+.related { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--au-border); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.rel-edge, .rel-sugg { display: inline-flex; align-items: center; gap: 4px; }
+.rel-sugg .backlink { opacity: .82; }
+.rel-type { color: var(--au-fg-soft); font-family: var(--au-font-mono); font-size: 10px; opacity: .8; }
+.rel-suggest-head { opacity: .65; }
+.rel-ok, .rel-x { background: none; border: 0; cursor: pointer; font-size: 12px; line-height: 1; padding: 0 1px; color: var(--au-fg-soft); }
+.rel-ok:hover { color: var(--au-info); }
+.rel-x:hover { color: var(--au-warn); }
+
 /* CM6 autocomplete tooltip ([[ wiki-link picker) — themed to the dark surfaces */
 .cm-tooltip.cm-tooltip-autocomplete { background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius); box-shadow: 0 8px 28px rgba(0,0,0,0.45); }
 .cm-tooltip-autocomplete > ul { font-family: var(--au-font-mono); font-size: 12px; max-height: 18em; }

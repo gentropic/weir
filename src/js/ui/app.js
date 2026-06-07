@@ -1669,6 +1669,7 @@ export class App {
     inner += '</div>';
     inner += this._annotationNotesHtml(it);   // 📝 notes ABOUT this item (annotation targets)
     inner += this._backlinksHtml(it);         // ← wiki [[ref]] backlinks (a different relation)
+    inner += this._relatedHtml(it);           // ↔ glass knowledge-graph: typed `related` edges + suggestions
     return inner;
   }
 
@@ -1725,6 +1726,8 @@ export class App {
     const row = e.target.closest('.item');
     if (!row) return;
     const id = row.dataset.id;
+    const relB = e.target.closest('[data-relact]');   // ↔ KG ratify/dismiss/unrelate (✓/✕ on the Related block)
+    if (relB) { e.stopPropagation(); this.doRelate(relB.dataset.relact, id, relB.dataset.reltarget); return; }
     const tagEl = e.target.closest('.tag[data-tag]');
     if (tagEl) { e.stopPropagation(); this.filterByTag(tagEl.dataset.tag); return; }
     const cnEl = e.target.closest('.callno');
@@ -2146,6 +2149,22 @@ export class App {
     this.renderReviewStatus();
     const row = this._reviewRows().find((r) => r.dataset.id === id); if (row) row.remove();
     this._reviewReselect();
+  }
+
+  // Knowledge-graph gesture from the expanded item (GLASS §10). `fromId` = the expanded
+  // item; `toGlass` = the target card's glass_id. ratify → store the typed edge (human-
+  // decided, source 'human'); unrelate → drop it; dismiss → hide the suggestion this
+  // session. Clears the cached suggestions so a ratified item drops out + re-renders.
+  async doRelate(action, fromId, toGlass) {
+    const it = this.store.getItem(fromId);
+    if (!it || !it.glass_id || !toGlass) return;
+    try {
+      if (action === 'ratify') this.store.relateCards(it.glass_id, toGlass, { type: 'related', source: 'human' });
+      else if (action === 'unrelate') this.store.unrelateCards(it.glass_id, toGlass);
+      else if (action === 'dismiss') { (this._relDismissed || (this._relDismissed = new Set())).add(it.glass_id + '|' + toGlass); }
+    } catch (e) { this._catStatus(`relate failed: ${e.message}`); return; }
+    if (action !== 'dismiss') { this._relSugg?.delete(it.glass_id); await this.store.flush(); }
+    this.renderStream();
   }
 
   closeHealth() { document.getElementById('health-overlay').hidden = true; }
@@ -3120,6 +3139,39 @@ export class App {
     if (!sources.length) return '';
     const rows = sources.slice(0, 50).map((s) => `<a class="backlink" data-target="${escapeHtml(s.id)}" title="${escapeHtml(s.path || s.feed_id || '')}">${escapeHtml(s.title || s.path || s.id)}</a>`).join('');
     return `<div class="backlinks"><span class="bl-head">← linked from (${sources.length})</span>${rows}</div>`;
+  }
+
+  // The glass knowledge-graph "Related" block on an expanded catalog item (GLASS §10):
+  // ratified typed `related` edges (outgoing + backlinks, navigable) PLUS on-demand
+  // facet-overlap SUGGESTIONS you ratify (✓) or dismiss (✕) — decides-vs-proposes: a
+  // suggestion is only an edge once you ratify. Cataloged items only. Suggestions are
+  // cached per card (proposeRelated is an O(cards) pass) and recomputed after a ratify.
+  _relatedHtml(it) {
+    if (!it.glass_id || !this.store.cards.get(it.glass_id)) return '';
+    const { outgoing, backlinks } = this.store.relatedOf(it.glass_id);
+    const dismissed = this._relDismissed || (this._relDismissed = new Set());
+    let sugg = (this._relSugg || (this._relSugg = new Map())).get(it.glass_id);
+    if (sugg === undefined) { sugg = this.store.proposeRelated(it.glass_id, { limit: 6 }); this._relSugg.set(it.glass_id, sugg); }
+    sugg = sugg.filter((s) => !dismissed.has(it.glass_id + '|' + s.glass_id));
+    if (!outgoing.length && !backlinks.length && !sugg.length) return '';
+
+    const nav = (ref) => (ref && this.store.getItem(ref)) ? ` data-target="${escapeHtml(ref)}"` : '';
+    const typeTag = (t) => (t && t !== 'related') ? `<span class="rel-type">${escapeHtml(t)}</span>` : '';
+    const edge = (e, out) => `<span class="rel-edge"><a class="backlink"${nav(e.document_ref)}>${escapeHtml(e.title || e.glass_id)}</a>${typeTag(e.type)}`
+      + (out ? `<button class="rel-x" data-relact="unrelate" data-reltarget="${escapeHtml(e.glass_id)}" title="remove this edge">✕</button>` : '')
+      + '</span>';
+    const suggestion = (s) => {
+      const why = Object.values(s.shared || {}).flat().slice(0, 4).join(', ');
+      return `<span class="rel-sugg"><a class="backlink"${nav(s.document_ref)} title="shared: ${escapeHtml(why)}">${escapeHtml(s.title || s.glass_id)}</a>`
+        + `<button class="rel-ok" data-relact="ratify" data-reltarget="${escapeHtml(s.glass_id)}" title="relate — shared: ${escapeHtml(why)}">✓</button>`
+        + `<button class="rel-x" data-relact="dismiss" data-reltarget="${escapeHtml(s.glass_id)}" title="dismiss suggestion">✕</button></span>`;
+    };
+
+    let html = '<div class="related">';
+    const n = outgoing.length + backlinks.length;
+    if (n) html += `<span class="bl-head">↔ related (${n})</span>` + outgoing.map((e) => edge(e, true)).join('') + backlinks.map((e) => edge(e, false)).join('');
+    if (sugg.length) html += `<span class="bl-head rel-suggest-head">suggested</span>` + sugg.map(suggestion).join('');
+    return html + '</div>';
   }
   // Notes that ANNOTATE this item (W3C target) — distinct from wiki [[ref]] backlinks.
   _annotationNotesHtml(item) {
