@@ -4811,7 +4811,7 @@ async function gcuFetch(url, opts = {}) {
 
 // ── vendor/webmcp-fs-channel.js ──
 
-// fs-channel.js — @gcu/webmcp `fs` transport core. See TRANSPORTS.md §3.
+// fs-channel.js — @gcu/gcumcp `fs` transport core. See TRANSPORTS.md §3.
 //
 // Dependency-free protocol shared by the bridge (node fs) and the shim (browser
 // FSA). PURE over injected adapters, so it runs anywhere and tests without a real
@@ -5101,10 +5101,10 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
 
 // ── vendor/webmcp-shim.js ──
 
-// @gcu/webmcp shim — WebMCP polyfill + WebSocket/HTTP bridge client.
+// @gcu/gcumcp shim — WebMCP polyfill + WebSocket/HTTP bridge client.
 // Generic: knows nothing about any specific app. Drop it into any page; it
 // installs navigator.modelContext (registerTool/unregisterTool) and a small
-// window.gcuWebMCP control surface, then relays tool calls to a @gcu/webmcp
+// window.gcuWebMCP control surface, then relays tool calls to a @gcu/gcumcp
 // bridge over localhost. Tries WebSocket first; falls back to HTTP long-polling
 // (which works from file:// origins where WS is blocked).
 //
@@ -5315,11 +5315,11 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
   }
 
   // Derive the per-app HMAC key identically to the bridge: HKDF(token, salt='',
-  // info='webmcp-fs|<app id>'), then HMAC-SHA256 over the canonical string → hex.
+  // info='gcumcp-fs|<app id>'), then HMAC-SHA256 over the canonical string → hex.
   async function _fsHmac(token, id) {
     var enc = new TextEncoder();
     var ikm = await crypto.subtle.importKey('raw', enc.encode(token), 'HKDF', false, ['deriveBits']);
-    var bits = await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: enc.encode('webmcp-fs|' + id) }, ikm, 256);
+    var bits = await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: enc.encode('gcumcp-fs|' + id) }, ikm, 256);
     var key = await crypto.subtle.importKey('raw', bits, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
     return async function (str) {
       var sig = await crypto.subtle.sign('HMAC', key, enc.encode(str));
@@ -5341,7 +5341,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
       randomId: function () { return _randHex(8); },
       onMessage: function (msg) { _handleMessage(msg); },
       onState: function (s) { if (s === 'closed') _setState('disconnected'); },   // 'connected' is set on `welcome`
-      onWarn: function (m) { if (typeof console !== 'undefined') console.warn('[gcu-webmcp] fs:', m); },   // always-on (forged/stale frames)
+      onWarn: function (m) { if (typeof console !== 'undefined') console.warn('[gcumcp] fs:', m); },   // always-on (forged/stale frames)
     });
     var t = { type: 'fs', channel: channel, token: token, polling: true, timer: null };
     _transport = t;
@@ -5353,7 +5353,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
       if (busy || !t.polling) return;
       busy = true;
       Promise.resolve().then(function () { return channel.tick(); })
-        .catch(function (e) { if (typeof console !== 'undefined') console.error('[gcu-webmcp] fs tick', e); })
+        .catch(function (e) { if (typeof console !== 'undefined') console.error('[gcumcp] fs tick', e); })
         .then(function () { busy = false; });
     }, FS_POLL_MS);
   }
@@ -5364,7 +5364,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     if (msg.type === 'welcome') { _clientId = msg.id; _setState('connected'); }
     else if (msg.type === 'tool_invoke') { _handleInvoke(msg); }
     else if (msg.type === 'ping') { _send({ type: 'pong' }); }
-    else if (msg.type === 'error') { console.error('[gcu-webmcp]', msg.message); _setState('error'); }
+    else if (msg.type === 'error') { console.error('[gcumcp]', msg.message); _setState('error'); }
   }
 
   // ── connect (fs when a folder is injected; else try WS, fall back to HTTP) ──
@@ -5379,7 +5379,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
       _teardownTransport();
       clearTimeout(_reconnectTimer);
       _connectFs(fsToken).catch(function (e) {
-        console.error('[gcu-webmcp] fs connection failed:', e.message || e);
+        console.error('[gcumcp] fs connection failed:', e.message || e);
         _setState('error');
         if (_portAndToken) _reconnectTimer = setTimeout(function () { _connect(_portAndToken); }, 5000);
       });
@@ -5402,7 +5402,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     var useHttp = forceHttp || !!_fetch || (typeof location !== 'undefined' && location.protocol === 'file:');
     (useHttp ? _connectHttp(port, token) : _connectWs(port, token).catch(function () { return _connectHttp(port, token); }))
       .catch(function (e) {
-        console.error('[gcu-webmcp] connection failed:', e.message || e);
+        console.error('[gcumcp] connection failed:', e.message || e);
         _setState('error');
         if (_portAndToken) _reconnectTimer = setTimeout(function () { _connect(_portAndToken); }, 5000);
       });
@@ -5466,7 +5466,8 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     set folder(h) { _folder = h || null; },   // inject a FileSystemDirectoryHandle ⇒ fs transport
   };
   if (typeof window !== 'undefined') {
-    window.gcuWebMCP = api;
+    window.gcuMCP = api;
+    window.gcuWebMCP = api;   // back-compat alias (the pre-rename global; weir still uses this)
     // Back-compat alias for pages migrating from the Auditable-bundled shim.
     if (!window.__auditable_mcp) window.__auditable_mcp = api;
   }
@@ -21831,7 +21832,7 @@ const TOOLS = [
 function initWebmcp({ store, app, fetch }) {
   if (typeof navigator === 'undefined' || !navigator.modelContext) return null;   // shim absent
   const mc = navigator.modelContext;
-  const wm = (typeof window !== 'undefined') ? window.gcuWebMCP : null;
+  const wm = (typeof window !== 'undefined') ? (window.gcuMCP || window.gcuWebMCP) : null;
 
   const tools = buildWeirTools({
     store,
@@ -21918,7 +21919,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'f5e05bc';          // short content hash of the bundle (build id)
+const COMMIT = '3e2a882';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

@@ -1180,7 +1180,7 @@ const TOOLS = [
 export function initWebmcp({ store, app, fetch }) {
   if (typeof navigator === 'undefined' || !navigator.modelContext) return null;   // shim absent
   const mc = navigator.modelContext;
-  const wm = (typeof window !== 'undefined') ? window.gcuWebMCP : null;
+  const wm = (typeof window !== 'undefined') ? (window.gcuMCP || window.gcuWebMCP) : null;
 
   const tools = buildWeirTools({
     store,
