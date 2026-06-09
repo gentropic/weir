@@ -254,7 +254,7 @@
         <div class="set-row"><span>status: <b id="set-sync-state">—</b></span><button class="btn-link" id="set-sync-toggle" type="button">connect</button></div>
         <label class="set-row">role<select id="set-sync-role" class="field"><option value="hub">hub — fetches + owns the corpus</option><option value="reader">reader — no polling; read + annotate</option></select></label>
         <label class="set-row check"><input type="checkbox" id="set-sync-auto"> sync automatically in the background</label>
-        <div class="set-row"><span id="set-sync-msg" class="hint">—</span><button class="btn-link" id="set-sync-now" type="button">sync now</button></div>
+        <div class="set-row"><span id="set-sync-msg" class="hint">—</span><span><button class="btn-link" id="set-sync-reset" type="button" title="Forget what's been synced; the next sync re-scans + re-uploads everything. Use to recover if Dropbox and weir have drifted.">reset</button> &nbsp; <button class="btn-link" id="set-sync-now" type="button">sync now</button></span></div>
         <div class="hint">Mirror the corpus across your devices over a shared <code>GCU-sync</code> Dropbox app folder (<code>/Apps/GCU-sync/weir</code>). Connect once per device. The <b>hub</b> polls feeds; <b>readers</b> (e.g. a tablet) skip polling and receive the corpus via sync. Role changes take effect on reload. The first full sync of a large corpus is slow.</div>
       </section>
       </div>

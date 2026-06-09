@@ -255,6 +255,11 @@ async function boot() {
       return { pushed, pulled };
     } catch (e) { app.renderSyncStatus?.('error'); throw e; }
   };
+  app.syncReset = async () => {   // forget the manifest → the next sync re-scans + re-uploads everything (recover from manifest/remote drift)
+    try { await store.vfs.unlink('/sync-state.json'); } catch { /* already gone */ }
+    if (syncEngine) syncEngine._manifest = null;
+    return true;
+  };
   dropboxConnected().then((c) => { app._syncReady = !!c; app.renderSyncStatus?.(c ? 'idle' : 'off'); });
   runner.add({ name: 'sync', intervalMs: 120_000, enabled: () => store.getSettings().sync_auto && app._syncReady, tick: () => app.syncNow() });
 
@@ -266,7 +271,7 @@ async function boot() {
       return catalogStoreItem(store, id, { provider, model: o.model || s.catalog_model, baseUrl: o.baseUrl || s.catalog_base_url, key, fetch: gcuFetch, ...o });
     },
     dropbox: { connect: connectDropbox, disconnect: disconnectDropbox, connected: dropboxConnected, token: getDropboxToken },
-    sync: { now: () => app.syncNow(), engine: () => syncEngine, role: () => app.syncRole },
+    sync: { now: () => app.syncNow(), reset: () => app.syncReset(), engine: () => syncEngine, role: () => app.syncRole },
     webmcp, search, parseFeed, feedAdapter, gcuFetch };
 
   try {

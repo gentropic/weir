@@ -1325,7 +1325,7 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
         <div class="set-row"><span>status: <b id="set-sync-state">—</b></span><button class="btn-link" id="set-sync-toggle" type="button">connect</button></div>
         <label class="set-row">role<select id="set-sync-role" class="field"><option value="hub">hub — fetches + owns the corpus</option><option value="reader">reader — no polling; read + annotate</option></select></label>
         <label class="set-row check"><input type="checkbox" id="set-sync-auto"> sync automatically in the background</label>
-        <div class="set-row"><span id="set-sync-msg" class="hint">—</span><button class="btn-link" id="set-sync-now" type="button">sync now</button></div>
+        <div class="set-row"><span id="set-sync-msg" class="hint">—</span><span><button class="btn-link" id="set-sync-reset" type="button" title="Forget what's been synced; the next sync re-scans + re-uploads everything. Use to recover if Dropbox and weir have drifted.">reset</button> &nbsp; <button class="btn-link" id="set-sync-now" type="button">sync now</button></span></div>
         <div class="hint">Mirror the corpus across your devices over a shared <code>GCU-sync</code> Dropbox app folder (<code>/Apps/GCU-sync/weir</code>). Connect once per device. The <b>hub</b> polls feeds; <b>readers</b> (e.g. a tablet) skip polling and receive the corpus via sync. Role changes take effect on reload. The first full sync of a large corpus is slow.</div>
       </section>
       </div>
@@ -17475,6 +17475,11 @@ class App {
       try { const r = await this.syncNow?.(); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
       catch (e) { if (el) el.textContent = 'error: ' + e.message; }
     });
+    document.getElementById('set-sync-reset')?.addEventListener('click', async () => {
+      if (!confirm('Reset sync state? The next sync re-scans and re-uploads everything (use this if Dropbox and weir have drifted).')) return;
+      await this.syncReset?.();
+      const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'sync state reset — next sync re-uploads everything';
+    });
     document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder());
     document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder());
     const sv = document.getElementById('smart-views');
@@ -22638,7 +22643,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'd9ba06f';          // short content hash of the bundle (build id)
+const COMMIT = '2e6999c';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -22862,6 +22867,11 @@ async function boot() {
       return { pushed, pulled };
     } catch (e) { app.renderSyncStatus?.('error'); throw e; }
   };
+  app.syncReset = async () => {   // forget the manifest → the next sync re-scans + re-uploads everything (recover from manifest/remote drift)
+    try { await store.vfs.unlink('/sync-state.json'); } catch { /* already gone */ }
+    if (syncEngine) syncEngine._manifest = null;
+    return true;
+  };
   dropboxConnected().then((c) => { app._syncReady = !!c; app.renderSyncStatus?.(c ? 'idle' : 'off'); });
   runner.add({ name: 'sync', intervalMs: 120_000, enabled: () => store.getSettings().sync_auto && app._syncReady, tick: () => app.syncNow() });
 
@@ -22873,7 +22883,7 @@ async function boot() {
       return catalogStoreItem(store, id, { provider, model: o.model || s.catalog_model, baseUrl: o.baseUrl || s.catalog_base_url, key, fetch: gcuFetch, ...o });
     },
     dropbox: { connect: connectDropbox, disconnect: disconnectDropbox, connected: dropboxConnected, token: getDropboxToken },
-    sync: { now: () => app.syncNow(), engine: () => syncEngine, role: () => app.syncRole },
+    sync: { now: () => app.syncNow(), reset: () => app.syncReset(), engine: () => syncEngine, role: () => app.syncRole },
     webmcp, search, parseFeed, feedAdapter, gcuFetch };
 
   try {

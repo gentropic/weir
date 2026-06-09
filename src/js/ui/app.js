@@ -207,6 +207,11 @@ export class App {
       try { const r = await this.syncNow?.(); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
       catch (e) { if (el) el.textContent = 'error: ' + e.message; }
     });
+    document.getElementById('set-sync-reset')?.addEventListener('click', async () => {
+      if (!confirm('Reset sync state? The next sync re-scans and re-uploads everything (use this if Dropbox and weir have drifted).')) return;
+      await this.syncReset?.();
+      const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'sync state reset — next sync re-uploads everything';
+    });
     document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder());
     document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder());
     const sv = document.getElementById('smart-views');
