@@ -6,7 +6,7 @@
 import assert from 'node:assert';
 import { VFS } from '../vendor/vfs.js';
 import { Store } from '../src/js/store/store.js';
-import { simhash, hamming64 } from '../src/js/store/schema.js';
+import { simhash, hamming64, mergeStateDeltas } from '../src/js/store/schema.js';
 
 const vfs = await VFS.create();          // memory, persists for this instance
 const store = new Store(vfs);
@@ -439,6 +439,26 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.match(await s.getContent('mig:1'), /legacy body one/, 'content readable from the migrated pack');
   assert.match(await s.getContent('mig:2'), /legacy body two/, 'second item too');
   assert.equal(await s._migrateContent(), 0, 'migration is idempotent (nothing left to move)');
+}
+
+// ── 2e merge core: read/archived/saved latest-at; tags as per-(item,tag) add/remove events ──
+{
+  const A = { i1: { read: { v: true, at: 100 }, tags: { kriging: { v: true, at: 100, src: 'human' } } },
+              i2: { saved: { v: true, at: 100 } } };
+  const B = { i1: { read: { v: false, at: 200 }, tags: { kriging: { v: false, at: 50 }, geo: { v: true, at: 200, src: 'llm' } } } };
+  const m = mergeStateDeltas([A, B]);
+  assert.equal(m.i1.read, false, 'scalar: latest-at wins (B read=false@200 over A@100)');
+  assert.equal(m.i2.saved, true, 'item present in only one delta carries through');
+  assert.deepEqual(m.i1.tags.sort(), ['geo', 'kriging'], 'kriging add@100 beats remove@50; geo added@200');
+  assert.equal(m.i1.tag_src.kriging, 'human', 'present tag keeps provenance');
+  assert.equal(m.i1.tag_src.geo, 'llm', 'provenance is per-tag');
+  // a remove NEWER than the add wins; order-independent
+  const C = { i1: { tags: { geo: { v: false, at: 300 } } } };
+  assert.ok(!mergeStateDeltas([A, B, C]).i1.tags.includes('geo'), 'newer remove (300) drops geo');
+  assert.ok(!mergeStateDeltas([C, B, A]).i1.tags.includes('geo'), 'merge is order-independent');
+  assert.ok(mergeStateDeltas([A, B, C]).i1.tags.includes('kriging'), 'kriging still present');
+  assert.deepEqual(mergeStateDeltas([]), {}, 'empty input → empty merge');
+  assert.deepEqual(mergeStateDeltas([null, {}]), {}, 'tolerates null/empty deltas');
 }
 
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

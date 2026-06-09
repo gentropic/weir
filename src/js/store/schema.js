@@ -95,6 +95,42 @@ const DAY_MS = 86_400_000;
 
 export function now() { return Date.now(); }
 
+// Merge per-device sync state deltas (SYNC.md 2e) into the effective state per item. Each delta is
+// { [itemId]: { read?:{v,at}, archived?:{v,at}, saved?:{v,at}, tags?:{ [tag]:{v,at,src} } } }.
+// Scalars (read/archived/saved): latest-`at` wins. Tags: each (item,tag) is an add(v:true)/remove
+// (v:false) event; the latest event per (item,tag) decides presence, and a present tag keeps its
+// `src` (→ tag_src provenance). Pure — same inputs always merge the same way, order-independent.
+export function mergeStateDeltas(deltas) {
+  const scalar = {};   // itemId → { field → {v, at} }  (keep the max-at event)
+  const tagEv = {};    // itemId → { tag → {v, at, src} }
+  for (const delta of deltas || []) {
+    if (!delta) continue;
+    for (const [itemId, fields] of Object.entries(delta)) {
+      for (const f of ['read', 'archived', 'saved']) {
+        const e = fields[f]; if (!e) continue;
+        const cur = (scalar[itemId] || (scalar[itemId] = {}))[f];
+        if (!cur || e.at > cur.at) scalar[itemId][f] = { v: !!e.v, at: e.at };
+      }
+      for (const [tag, e] of Object.entries(fields.tags || {})) {
+        if (!e) continue;
+        const cur = (tagEv[itemId] || (tagEv[itemId] = {}))[tag];
+        if (!cur || e.at > cur.at) tagEv[itemId][tag] = { v: !!e.v, at: e.at, src: e.src };
+      }
+    }
+  }
+  const out = {};
+  for (const itemId of new Set([...Object.keys(scalar), ...Object.keys(tagEv)])) {
+    const r = {};
+    const sc = scalar[itemId] || {};
+    for (const f of ['read', 'archived', 'saved']) if (sc[f]) r[f] = sc[f].v;
+    const tags = [], tag_src = {};
+    for (const [tag, e] of Object.entries(tagEv[itemId] || {})) if (e.v) { tags.push(tag); if (e.src) tag_src[tag] = e.src; }
+    if (tags.length) { r.tags = tags; r.tag_src = tag_src; }
+    out[itemId] = r;
+  }
+  return out;
+}
+
 // FNV-1a → 8 hex chars. Deterministic; used to disambiguate fs keys.
 export function hash32(s) {
   let h = 0x811c9dc5;
