@@ -138,7 +138,7 @@ export class Store {
     await this._pool([...this.feeds.keys()], (fid) => this._loadShard(fid));
     await this._loadCatalog();
     await this._loadVocab();
-    await this._migrateContent();   // legacy per-item content files → per-feed packs (one-time, verified)
+    this._migrateContent().catch((e) => console.error('content migration', e));   // BACKGROUND (not awaited): legacy per-item files → packs. getContent falls back to the legacy file meanwhile, so boot never freezes on it.
   }
 
   // Re-read the whole store from the VFS, replacing the in-memory index. Used after a sync
@@ -579,7 +579,9 @@ export class Store {
     // (e.g. /stacks/<path>) instead of the per-feed content pack.
     if (rec.content_path) return this._readText(rec.content_path, null);
     const m = await this._loadContentShard(rec.feed_id);
-    return m.get(fsKey(rec.id)) ?? null;
+    const v = m.get(fsKey(rec.id));
+    if (v != null) return v;
+    return this._readText(this._contentPath(rec.feed_id, rec.id), null);   // legacy per-item file (migration still pending)
   }
 
   // Replace an item's stored content (e.g. fetched full article). Marks `full`
@@ -656,6 +658,7 @@ export class Store {
       const back = (await this._readText(packPath, '')).split('\n').filter((l) => l.trim()).length;
       if (back === files.length) { try { await this.vfs.rm(dir, { recursive: true }); } catch { /* leave it; re-run is safe */ } moved++; }
     }
+    if (moved) { this._contentShards.clear(); this._contentLRU = []; }   // drop any stale-empty cached packs read mid-migration
     return moved;
   }
 
