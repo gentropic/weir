@@ -181,9 +181,22 @@ content-compare** (no feed — the memory/test path). `push()` uploads N-wide wi
 (smoke uses mocks) and runs only on the 2nd+ sync.
 
 **Next — 2e: state/note delta-merge.** read/saved/tags live inside the item shards today, so two
-devices editing the same shard last-writer-wins. The clean fix is per-instance `state/<id>.json`
-deltas (union, latest-`at` per field) + notes unioned by id (§3/§5). The `reader`-doesn't-poll
-role already keeps the corpus single-writer, shrinking the conflict surface meanwhile.
+devices editing the same shard last-writer-wins. The clean fix: state lives in per-device deltas
+`/state/<instance_id>.json` (each device writes only its own → no shard collision); on hydrate,
+items come from the corpus shards (state-stripped) and ALL deltas are applied (latest-`at` per
+field). Notes union by id (§3/§5). The `reader`-doesn't-poll role already keeps the corpus
+single-writer, shrinking the conflict surface meanwhile. **Foundation shipped 2026-06-09:** a
+per-device `sync_instance_id` (settings, device-local, excluded from sync). The state-storage
+change itself is correctness-critical (the user's curation) → a focused, well-tested piece, not a
+marathon-tail rush.
+
+**Deferred — 2f: optional gzip of the content packs.** Content is HTML (~3–4× under gzip). Compress
+at the **STORAGE** layer (`/content/<feed>.ndjson.gz`): the sync engine mirrors the bytes
+agnostically (zero engine change), the store gzips on write / gunzips on read (lazy + LRU-cached →
+negligible CPU). **Content packs ONLY** — the eager item/catalog shards would add a decompress-all
+cost to boot. ~96 MB → ~45 MB. Browser-native `CompressionStream`; one-time recompress migration;
+no per-pack toggle (mixed state isn't worth it). Worth it for mobile-data pulls + corpus growth —
+ranked below 2e (this is bytes; 2e is correctness).
 
 The first full sync is inherently a full upload (initial replication); 2d makes every sync
 *after* it cheap.

@@ -99,6 +99,10 @@ export class Store {
       await this.vfs.writeFile('/meta.json', JSON.stringify({ schema: SCHEMA_VERSION, created: now() }, null, 2));
     }
     this.settings = { ...DEFAULT_SETTINGS, ...(await this._readJSON('/settings.json', {})) };
+    if (!this.settings.sync_instance_id) {   // per-device id for sync state-deltas (SYNC.md 2e) — generate once, device-local
+      this.settings.sync_instance_id = (globalThis.crypto?.randomUUID?.() || String(Math.random()).slice(2)).slice(0, 12);
+      await this.vfs.writeFile('/settings.json', JSON.stringify(this.settings, null, 2));
+    }
     this.tags = await this._readJSON('/tags.json', {});
 
     // Smart views — seed the type defaults on first run; persisted thereafter

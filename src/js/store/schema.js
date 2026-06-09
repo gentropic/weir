@@ -56,6 +56,7 @@ export const DEFAULT_SETTINGS = {
   auto_check_updates: true,              // background-refresh the PWA shell on load
   sync_role: 'hub',                      // multi-device sync (SYNC.md): 'hub' (fetches + owns the corpus) | 'reader' (no polling; reads + annotates). Per-device, never synced.
   sync_auto: false,                      // run the background Dropbox push/pull loop when connected (opt-in; manual sync always available)
+  sync_instance_id: '',                  // per-device id for sync state-deltas (SYNC.md 2e); generated once on first hydrate. Device-local, never synced.
   owner_name: '',                        // your display name — used by the Courier's README/exports (NEVER hardcoded; '' → neutral "the owner")
   courier_name: 'Laney',                 // the Courier collaborator's display name
   courier_author: 'laney',               // author tag stamped on dispatches ingested from the Courier
