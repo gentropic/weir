@@ -16,7 +16,8 @@ import { catalogStoreItem } from './cataloger.js';
 import { SearchIndex } from './search.js';
 import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
-import { handleDropboxRedirect, connectDropbox, disconnectDropbox, dropboxConnected, getDropboxToken } from './dropbox.js';
+import { handleDropboxRedirect, connectDropbox, disconnectDropbox, dropboxConnected, getDropboxToken, makeDropboxRemote } from './dropbox.js';
+import { SyncEngine } from './sync.js';
 import { TelegramInflux } from './telegram.js';
 import { StacksStore } from './stacks.js';
 import { Courier, DEFAULT_COURIER } from './courier.js';
@@ -138,7 +139,10 @@ async function boot() {
   })();
 
   app.mount();
-  poller.start();
+  // The `reader` role never polls — the `hub` is the corpus's single writer (SYNC.md §2);
+  // a reader receives the corpus via sync instead. Sync, UI, and note-taking run on both.
+  app.syncRole = store.getSettings().sync_role || 'hub';
+  if (app.syncRole !== 'reader') poller.start();
 
   (async () => {
     try {
@@ -226,6 +230,33 @@ async function boot() {
     tick: async () => { app._courierDirty = false; await app.courier.publish().catch(() => {}); },
   });
 
+  // Dropbox cloud sync (SYNC.md) — mirror the corpus to the GCU-sync app folder when
+  // connected. Manual sync (app.syncNow / __weir.sync.now) always works; the background loop
+  // is opt-in via the sync_auto setting. First cut is a full content-compare mirror (the
+  // change-cursor diff is the efficiency follow-up), so the FIRST sync of a large corpus is slow.
+  let syncEngine = null;
+  async function ensureSyncEngine() {
+    if (syncEngine) return syncEngine;
+    if (!(await dropboxConnected())) return null;
+    syncEngine = new SyncEngine({ local: store.vfs, remote: await makeDropboxRemote(), store });
+    return syncEngine;
+  }
+  app.syncNow = async () => {
+    const eng = await ensureSyncEngine();
+    if (!eng) return { skipped: 'not connected' };
+    app.renderSyncStatus?.('syncing');
+    try {
+      await store.flush();                  // persist in-memory changes before they mirror
+      const pushed = await eng.push();       // local → GCU-sync
+      const pulled = await eng.pull();       // GCU-sync → local (+ store.reload on changes)
+      app.renderStream?.(); app.renderCounts?.();
+      app.renderSyncStatus?.('idle');
+      return { pushed, pulled };
+    } catch (e) { app.renderSyncStatus?.('error'); throw e; }
+  };
+  dropboxConnected().then((c) => { app._syncReady = !!c; app.renderSyncStatus?.(c ? 'idle' : 'off'); });
+  runner.add({ name: 'sync', intervalMs: 120_000, enabled: () => store.getSettings().sync_auto && app._syncReady, tick: () => app.syncNow() });
+
   window.__weir = { store, poller, router, drip, retainer, linkResolver, stacks, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();
@@ -234,6 +265,7 @@ async function boot() {
       return catalogStoreItem(store, id, { provider, model: o.model || s.catalog_model, baseUrl: o.baseUrl || s.catalog_base_url, key, fetch: gcuFetch, ...o });
     },
     dropbox: { connect: connectDropbox, disconnect: disconnectDropbox, connected: dropboxConnected, token: getDropboxToken },
+    sync: { now: () => app.syncNow(), engine: () => syncEngine, role: () => app.syncRole },
     webmcp, search, parseFeed, feedAdapter, gcuFetch };
 
   try {

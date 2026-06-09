@@ -54,6 +54,8 @@ export const DEFAULT_SETTINGS = {
   telegram_allowed_id: 0,                // owner's Telegram user id — only ingest from you (0 = auto-bind on first message)
   catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
+  sync_role: 'hub',                      // multi-device sync (SYNC.md): 'hub' (fetches + owns the corpus) | 'reader' (no polling; reads + annotates). Per-device, never synced.
+  sync_auto: false,                      // run the background Dropbox push/pull loop when connected (opt-in; manual sync always available)
   owner_name: '',                        // your display name — used by the Courier's README/exports (NEVER hardcoded; '' → neutral "the owner")
   courier_name: 'Laney',                 // the Courier collaborator's display name
   courier_author: 'laney',               // author tag stamped on dispatches ingested from the Courier

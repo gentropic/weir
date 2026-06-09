@@ -11039,6 +11039,8 @@ const DEFAULT_SETTINGS = {
   telegram_allowed_id: 0,                // owner's Telegram user id — only ingest from you (0 = auto-bind on first message)
   catalog_base_url: '',                  // for ollama/custom (e.g. http://localhost:11434)
   auto_check_updates: true,              // background-refresh the PWA shell on load
+  sync_role: 'hub',                      // multi-device sync (SYNC.md): 'hub' (fetches + owns the corpus) | 'reader' (no polling; reads + annotates). Per-device, never synced.
+  sync_auto: false,                      // run the background Dropbox push/pull loop when connected (opt-in; manual sync always available)
   owner_name: '',                        // your display name — used by the Courier's README/exports (NEVER hardcoded; '' → neutral "the owner")
   courier_name: 'Laney',                 // the Courier collaborator's display name
   courier_author: 'laney',               // author tag stamped on dispatches ingested from the Courier
@@ -11923,6 +11925,14 @@ async function getDropboxToken() {
 
 // Forget the connection (clears the vault refresh token + the in-memory access token).
 async function disconnectDropbox() { _dbxAccess = null; try { await saveKey(DBX_VAULT_SLOT, ''); } catch { /* best effort */ } }
+
+// Build the REMOTE VFS for sync (SYNC.md): a DropboxBackend rooted at this surface's subtree
+// of the shared GCU-sync app folder (/Apps/GCU-sync/<root>, default /weir), with our getToken
+// injected. The SyncEngine mirrors the local VFS against this — it never knows it's Dropbox.
+// (A `cache`-wrap for offline-first + a change-cursor diff are the efficiency follow-ups.)
+async function makeDropboxRemote(root = '/weir') {
+  return VFS.create({ type: 'dropbox', getToken: getDropboxToken, root });
+}
 
 // ── src/js/store/store.js ──
 
@@ -22344,9 +22354,10 @@ function initWebmcp({ store, app, fetch }) {
 
 
 
+
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '425b7fa';          // short content hash of the bundle (build id)
+const COMMIT = '7b0fc51';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -22454,7 +22465,10 @@ async function boot() {
   })();
 
   app.mount();
-  poller.start();
+  // The `reader` role never polls — the `hub` is the corpus's single writer (SYNC.md §2);
+  // a reader receives the corpus via sync instead. Sync, UI, and note-taking run on both.
+  app.syncRole = store.getSettings().sync_role || 'hub';
+  if (app.syncRole !== 'reader') poller.start();
 
   (async () => {
     try {
@@ -22542,6 +22556,33 @@ async function boot() {
     tick: async () => { app._courierDirty = false; await app.courier.publish().catch(() => {}); },
   });
 
+  // Dropbox cloud sync (SYNC.md) — mirror the corpus to the GCU-sync app folder when
+  // connected. Manual sync (app.syncNow / __weir.sync.now) always works; the background loop
+  // is opt-in via the sync_auto setting. First cut is a full content-compare mirror (the
+  // change-cursor diff is the efficiency follow-up), so the FIRST sync of a large corpus is slow.
+  let syncEngine = null;
+  async function ensureSyncEngine() {
+    if (syncEngine) return syncEngine;
+    if (!(await dropboxConnected())) return null;
+    syncEngine = new SyncEngine({ local: store.vfs, remote: await makeDropboxRemote(), store });
+    return syncEngine;
+  }
+  app.syncNow = async () => {
+    const eng = await ensureSyncEngine();
+    if (!eng) return { skipped: 'not connected' };
+    app.renderSyncStatus?.('syncing');
+    try {
+      await store.flush();                  // persist in-memory changes before they mirror
+      const pushed = await eng.push();       // local → GCU-sync
+      const pulled = await eng.pull();       // GCU-sync → local (+ store.reload on changes)
+      app.renderStream?.(); app.renderCounts?.();
+      app.renderSyncStatus?.('idle');
+      return { pushed, pulled };
+    } catch (e) { app.renderSyncStatus?.('error'); throw e; }
+  };
+  dropboxConnected().then((c) => { app._syncReady = !!c; app.renderSyncStatus?.(c ? 'idle' : 'off'); });
+  runner.add({ name: 'sync', intervalMs: 120_000, enabled: () => store.getSettings().sync_auto && app._syncReady, tick: () => app.syncNow() });
+
   window.__weir = { store, poller, router, drip, retainer, linkResolver, stacks, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();
@@ -22550,6 +22591,7 @@ async function boot() {
       return catalogStoreItem(store, id, { provider, model: o.model || s.catalog_model, baseUrl: o.baseUrl || s.catalog_base_url, key, fetch: gcuFetch, ...o });
     },
     dropbox: { connect: connectDropbox, disconnect: disconnectDropbox, connected: dropboxConnected, token: getDropboxToken },
+    sync: { now: () => app.syncNow(), engine: () => syncEngine, role: () => app.syncRole },
     webmcp, search, parseFeed, feedAdapter, gcuFetch };
 
   try {

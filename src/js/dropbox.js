@@ -1,3 +1,5 @@
+import { VFS } from '../../vendor/vfs.js';   // dev-clarity; stripped at build, resolves via concat order
+
 // Dropbox sync auth (SYNC.md) — the CONSUMER-side OAuth for weir's cloud sync.
 //
 // Browser-only PKCE (S256, no client secret), proven by examples/dropbox-spike.html.
@@ -93,4 +95,12 @@ async function getDropboxToken() {
 // Forget the connection (clears the vault refresh token + the in-memory access token).
 async function disconnectDropbox() { _dbxAccess = null; try { await saveKey(DBX_VAULT_SLOT, ''); } catch { /* best effort */ } }
 
-export { connectDropbox, handleDropboxRedirect, getDropboxToken, disconnectDropbox, dropboxConnected, dbxRedirectUri, dbxB64url, dbxRandVerifier, dbxChallenge };
+// Build the REMOTE VFS for sync (SYNC.md): a DropboxBackend rooted at this surface's subtree
+// of the shared GCU-sync app folder (/Apps/GCU-sync/<root>, default /weir), with our getToken
+// injected. The SyncEngine mirrors the local VFS against this — it never knows it's Dropbox.
+// (A `cache`-wrap for offline-first + a change-cursor diff are the efficiency follow-ups.)
+async function makeDropboxRemote(root = '/weir') {
+  return VFS.create({ type: 'dropbox', getToken: getDropboxToken, root });
+}
+
+export { connectDropbox, handleDropboxRedirect, getDropboxToken, disconnectDropbox, dropboxConnected, makeDropboxRemote, dbxRedirectUri, dbxB64url, dbxRandVerifier, dbxChallenge };
