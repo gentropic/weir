@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>numen · Dropbox PKCE + app-folder spike</title>
+<!--
+  Feasibility spike for SYNC.md (weir cloud VFS backend). Proves the browser-only path:
+  Dropbox OAuth via PKCE (S256, NO client secret) → write/read/list inside a sandboxed
+  App folder, all over CORS (no proxy, no server, no @gcu/bridge). Open this on the
+  target device (the S10 FE tablet) and run the round-trip. Zero-dep, single file.
+
+  Setup (one-time, your Dropbox account):
+   1. dropbox.com/developers/apps → Create app → "Scoped access" → "App folder" →
+      name it (e.g. weir-spike). Access is sandboxed to /Apps/<name>/.
+   2. Settings tab → copy the "App key" → paste it below (stored in localStorage).
+   3. Settings tab → "Redirect URIs" → add the exact URI this page shows below
+      (http://localhost:… for desktop dev, and/or the deployed https URL for the tablet).
+   4. Permissions tab → enable: files.content.write, files.content.read,
+      files.metadata.read, account_info.read → Submit.
+   5. Reload, Connect, Run round-trip.
+-->
+<style>
+  :root { color-scheme: dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 760px; margin: 0 auto; padding: 18px;
+         background: #15171a; color: #e6e8ea; }
+  h1 { font-size: 18px; }
+  code { background: #23262b; padding: 1px 5px; border-radius: 4px; word-break: break-all; }
+  input { font: inherit; padding: 8px; width: 100%; box-sizing: border-box; background: #23262b;
+          color: inherit; border: 1px solid #3a3f47; border-radius: 6px; }
+  button { font: inherit; padding: 9px 16px; margin: 4px 6px 4px 0; border: 0; border-radius: 8px;
+           background: #2f6fed; color: #fff; cursor: pointer; }
+  button.alt { background: #3a3f47; }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { margin: 12px 0; }
+  .hint { color: #98a2b0; font-size: 13px; }
+  #status { font-weight: 600; }
+  pre { background: #0e1013; border: 1px solid #2a2e34; border-radius: 8px; padding: 12px;
+        white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow: auto; font-size: 13px; }
+  .ok { color: #5ad17a; } .bad { color: #ff6b6b; } .dim { color: #98a2b0; }
+</style>
+</head>
+<body>
+<h1>numen · Dropbox PKCE + app-folder spike</h1>
+<p class="hint">Proves the browser-only sync path from <code>SYNC.md</code>: PKCE OAuth (no secret) +
+app-folder write/read/list over CORS. Setup steps are in this file's source comment.</p>
+
+<div class="row">
+  <label class="hint">Dropbox <b>App key</b> (from your app's Settings tab):</label>
+  <input id="appkey" placeholder="your app key" autocomplete="off" spellcheck="false">
+</div>
+<div class="row hint">Register this exact <b>Redirect URI</b> in your Dropbox app:<br><code id="redir"></code></div>
+
+<div class="row">
+  <button id="connect">Connect Dropbox</button>
+  <button id="test" class="alt" disabled>Run round-trip test</button>
+  <button id="logout" class="alt" disabled>Disconnect</button>
+</div>
+<div class="row" id="status">not connected</div>
+<pre id="log"></pre>
+
+<script>
+'use strict';
+// ── endpoints ──
+const AUTH = 'https://www.dropbox.com/oauth2/authorize';
+const TOKEN = 'https://api.dropboxapi.com/oauth2/token';
+const RPC = 'https://api.dropboxapi.com/2/';
+const CONTENT = 'https://content.dropboxapi.com/2/';
+const SCOPES = 'files.content.write files.content.read files.metadata.read account_info.read';
+const REDIRECT = location.origin + location.pathname;   // must match what you register
+const $ = (id) => document.getElementById(id);
+const log = (msg, cls) => { const l = $('log'); l.innerHTML += `<span class="${cls||''}">${msg}</span>\n`; l.scrollTop = l.scrollHeight; };
+
+$('redir').textContent = REDIRECT;
+$('appkey').value = localStorage.getItem('dbx_appkey') || '';
+$('appkey').addEventListener('input', () => localStorage.setItem('dbx_appkey', $('appkey').value.trim()));
+
+// ── PKCE helpers ──
+const b64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function randVerifier() { const a = new Uint8Array(48); crypto.getRandomValues(a); return b64url(a); }
+async function challenge(verifier) { return b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))); }
+
+// ── token state (localStorage; a real backend would use the OPFS-encrypted vault) ──
+const getTok = () => { try { return JSON.parse(localStorage.getItem('dbx_tok') || 'null'); } catch { return null; } };
+const setTok = (t) => localStorage.setItem('dbx_tok', JSON.stringify(t));
+const clrTok = () => localStorage.removeItem('dbx_tok');
+
+function reflect() {
+  const t = getTok();
+  $('status').innerHTML = t ? `<span class="ok">connected</span>${t.refresh_token ? ' · has refresh token' : ''}` : 'not connected';
+  $('test').disabled = !t; $('logout').disabled = !t;
+}
+
+// ── OAuth: step 1 (redirect) ──
+$('connect').addEventListener('click', async () => {
+  const key = $('appkey').value.trim();
+  if (!key) { log('✗ paste your app key first', 'bad'); return; }
+  const verifier = randVerifier();
+  sessionStorage.setItem('dbx_verifier', verifier);
+  const url = `${AUTH}?client_id=${encodeURIComponent(key)}&response_type=code&token_access_type=offline`
+    + `&code_challenge=${await challenge(verifier)}&code_challenge_method=S256`
+    + `&scope=${encodeURIComponent(SCOPES)}&redirect_uri=${encodeURIComponent(REDIRECT)}`;
+  location.href = url;
+});
+
+// ── OAuth: step 2 (exchange the code on redirect-back) ──
+async function maybeExchange() {
+  const p = new URLSearchParams(location.search);
+  const code = p.get('code'), err = p.get('error');
+  if (err) { log(`✗ authorize error: ${err} — ${p.get('error_description') || ''}`, 'bad'); history.replaceState({}, '', REDIRECT); return; }
+  if (!code) return;
+  const verifier = sessionStorage.getItem('dbx_verifier');
+  history.replaceState({}, '', REDIRECT);   // strip ?code from the URL
+  if (!verifier) { log('✗ lost the PKCE verifier (sessionStorage) — try Connect again', 'bad'); return; }
+  log('exchanging code for a token…', 'dim');
+  const body = new URLSearchParams({ grant_type: 'authorization_code', code, code_verifier: verifier,
+    client_id: $('appkey').value.trim(), redirect_uri: REDIRECT });
+  const r = await fetch(TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+  const j = await r.json();
+  if (!r.ok) { log(`✗ token exchange failed (${r.status}): ${JSON.stringify(j)}`, 'bad'); return; }
+  setTok(j); reflect();
+  log(`✓ connected — access token acquired${j.refresh_token ? ' (+ refresh token for offline)' : ''}`, 'ok');
+}
+
+// ── the round-trip: account → upload → download (verify) → list ──
+const dbxArg = (o) => ({ 'Dropbox-API-Arg': JSON.stringify(o) });
+async function test() {
+  const t = getTok(); if (!t) return;
+  const auth = { Authorization: `Bearer ${t.access_token}` };
+  const path = '/numen-spike.txt';
+  const payload = `numen spike — written ${new Date().toISOString()} from ${navigator.userAgent}`;
+  try {
+    log('— round-trip start —', 'dim');
+    // who am I?
+    let r = await fetch(RPC + 'users/get_current_account', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: 'null' });
+    if (!r.ok) throw new Error(`get_current_account ${r.status}: ${await r.text()}`);
+    const acct = await r.json();
+    log(`✓ account: ${acct.name?.display_name} <${acct.email}>`, 'ok');
+    // write
+    r = await fetch(CONTENT + 'files/upload', { method: 'POST', headers: { ...auth, ...dbxArg({ path, mode: 'overwrite', mute: true }), 'Content-Type': 'application/octet-stream' }, body: payload });
+    if (!r.ok) throw new Error(`upload ${r.status}: ${await r.text()}`);
+    const meta = await r.json();
+    log(`✓ wrote ${meta.path_display} (${meta.size} bytes, rev ${meta.rev})`, 'ok');
+    // read back
+    r = await fetch(CONTENT + 'files/download', { method: 'POST', headers: { ...auth, ...dbxArg({ path }) } });
+    if (!r.ok) throw new Error(`download ${r.status}: ${await r.text()}`);
+    const got = await r.text();
+    log(got === payload ? '✓ read back — content matches' : `✗ read back MISMATCH: ${got}`, got === payload ? 'ok' : 'bad');
+    // list
+    r = await fetch(RPC + 'files/list_folder', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ path: '' }) });
+    if (!r.ok) throw new Error(`list_folder ${r.status}: ${await r.text()}`);
+    const list = await r.json();
+    log(`✓ app folder lists ${list.entries.length} entr${list.entries.length === 1 ? 'y' : 'ies'}: ${list.entries.map((e) => e.name).join(', ')}`, 'ok');
+    log('— round-trip OK: browser → Dropbox app-folder works here —', 'ok');
+  } catch (e) {
+    log(`✗ ${e.message}`, 'bad');
+    if (String(e.message).includes('401')) log('  (token expired — disconnect + reconnect; the real backend will use the refresh token)', 'dim');
+  }
+}
+$('test').addEventListener('click', test);
+$('logout').addEventListener('click', () => { clrTok(); reflect(); log('disconnected (token cleared)', 'dim'); });
+
+reflect();
+maybeExchange();
+</script>
+</body>
+</html>
