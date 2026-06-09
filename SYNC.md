@@ -160,5 +160,35 @@ desktop FSA-folder option remains for those who don't want any account.
   for the hub to enact, decides-vs-proposes) · other providers (Drive/OneDrive/WebDAV) ·
   true real-time multi-master (probably never — the role split is the better answer).
 
+---
+
+## 8. Implementation status (2026-06-09)
+
+**Shipped + live** (weir `main`): the auth seam (`dropbox.js` — PKCE → OPFS vault →
+`getDropboxToken`), the vendored `DropboxBackend` (`@gcu/vfs` 0.2.0), `store.reload()`, the
+mirror engine (`sync.js`), the live wiring (`hub`/`reader` roles, `app.syncNow`, a runner loop,
+the Settings → **Cloud sync** pane + a flight-deck status), and **2d.1** — a manifest
+(`/sync-state.json`, local-only/excluded) + a **stat-based push diff** so ongoing pushes upload
+only changed shards, not the whole corpus.
+
+**Next — 2d.2: cursor-incremental pull** (the download-side win; the bottleneck today, since
+pull still content-compares every remote file). The backend already exposes `changes(cursor)` /
+`latestCursor()` / `longpoll()`. Design: after the one-time full-mirror bootstrap, store
+`latestCursor()` in the manifest; subsequent pulls call `changes(cursor)` → for each delta
+entry map `path_display` → a VFS path (strip the backend's `root`), download files / unlink
+deletions, advance the cursor. Fall back to the full mirror when the remote has no change feed
+(the memory VFS in tests). **Validate on a small folder against live Dropbox first** — it's
+Dropbox-coupled (path mapping, delete `.tag`) and not fully offline-testable.
+
+**Then — 2e: state/note delta-merge.** read/saved/tags live inside the item shards today, so two
+devices editing the same shard last-writer-wins. The clean fix is per-instance `state/<id>.json`
+deltas (union, latest-`at` per field) + notes unioned by id (§3/§5). The `reader`-doesn't-poll
+role already keeps the corpus single-writer, shrinking the conflict surface meanwhile.
+
+The first full sync is inherently a full upload (initial replication); 2d makes every sync
+*after* it cheap.
+
+---
+
 See also: SPEC §10 (the original deferral), the Courier (`src/js/courier.js`, the *other*
 sync-agnostic exchange seam), STACKS.md (notes/annotations are the satellite's main output).
