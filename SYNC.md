@@ -180,15 +180,27 @@ content-compare** (no feed — the memory/test path). `push()` uploads N-wide wi
 **Still validate the live path-mapping on a small scale** — the incremental path is Dropbox-coupled
 (smoke uses mocks) and runs only on the 2nd+ sync.
 
-**Next — 2e: state/note delta-merge.** read/saved/tags live inside the item shards today, so two
-devices editing the same shard last-writer-wins. The clean fix: state lives in per-device deltas
-`/state/<instance_id>.json` (each device writes only its own → no shard collision); on hydrate,
-items come from the corpus shards (state-stripped) and ALL deltas are applied (latest-`at` per
-field). Notes union by id (§3/§5). The `reader`-doesn't-poll role already keeps the corpus
-single-writer, shrinking the conflict surface meanwhile. **Foundation shipped 2026-06-09:** a
-per-device `sync_instance_id` (settings, device-local, excluded from sync). The state-storage
-change itself is correctness-critical (the user's curation) → a focused, well-tested piece, not a
-marathon-tail rush.
+**Next — 2e: state/note delta-merge.** Today `read`/`archived`/`saved`/`tags` (+ the derived
+`search_text`, `expires_at`, and the `tag_src` provenance map) live ON the item record and persist
+in the item shard — so two devices touching a shard last-writer-wins. Move state into per-device
+deltas `/state/<instance_id>.json` (each device writes ONLY its own → no shard collision). Precise
+model (from the store recon — `setState` 711, `addTag`/`removeTag`/`addTagBulk` 731–770):
+- **Delta shape:** `{ [item_id]: { read?:{v,at}, archived?:{v,at}, saved?:{v,at}, tags?:{ [tag]:{v,at,src} } } }`.
+- **read/archived/saved** are scalars → **latest-`at` wins**; recompute `expires_at` on a `saved` change.
+- **tags** are a SET → each `(item,tag)` is an add/remove **event** with `at` (+ `src` → `tag_src`);
+  merge keeps the latest event per `(item,tag)`, rebuilds `tags`/`tag_src` from survivors, then
+  re-derives `search_text`.
+- **mutations** update the in-memory item + derived fields AND append the event to the local delta
+  (dirty the DELTA, not the shard).
+- **shards** become corpus-only (strip state + `search_text`; re-derive on hydrate).
+- **hydrate:** items from shards → apply all `/state/*.json` (latest-`at`) → recompute derived.
+- **migration:** existing shard-state → seed the local instance's delta, then rewrite shards
+  corpus-only (one-time, the same pattern as the content migration).
+- **sync:** `/state/*.json` join the sync set (per-instance → never collide). Notes union by id (§3/§5).
+
+**Foundation shipped 2026-06-09:** the per-device `sync_instance_id` (settings, device-local). The
+storage change is correctness-critical (the user's curation) → a focused, well-tested build (the
+store smoke already covers state through reload/rename/backup), NOT a marathon-tail rush.
 
 **Deferred — 2f: optional gzip of the content packs.** Content is HTML (~3–4× under gzip). Compress
 at the **STORAGE** layer (`/content/<feed>.ndjson.gz`): the sync engine mirrors the bytes
