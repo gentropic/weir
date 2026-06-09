@@ -3385,8 +3385,8 @@ export class App {
     const bar = document.getElementById('sync-status');
     let barTxt = '';
     if (state === 'syncing') {
-      const pct = prog && prog.total ? Math.round((prog.done / prog.total) * 100) : null;
-      barTxt = pct != null ? `sync ${pct}%` : 'sync…';
+      if (prog && prog.phase === 'scan') barTxt = 'scan…';
+      else { const pct = prog && prog.total ? Math.round((prog.done / prog.total) * 100) : null; barTxt = pct != null ? `sync ${pct}%` : 'sync…'; }
     } else barTxt = state === 'idle' ? 'sync' : state === 'error' ? 'sync err' : '';
     if (bar) { bar.textContent = barTxt; bar.dataset.state = state || 'off'; }
     const lab = document.getElementById('set-sync-state');
@@ -3395,7 +3395,7 @@ export class App {
     if (btn) btn.textContent = (state && state !== 'off') ? 'disconnect' : 'connect';
     if (state === 'syncing' && prog) {
       const msg = document.getElementById('set-sync-msg');
-      if (msg) msg.textContent = `${prog.phase === 'push' ? 'uploading' : 'downloading'} ${prog.done}${prog.total ? '/' + prog.total : ''}…`;
+      if (msg) msg.textContent = prog.phase === 'scan' ? `scanning ${prog.done || ''} files…` : `${prog.phase === 'push' ? 'uploading' : 'downloading'} ${prog.done}${prog.total ? '/' + prog.total : ''}…`;
     }
   }
 

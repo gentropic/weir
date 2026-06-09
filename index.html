@@ -14166,6 +14166,18 @@ async function syncCollectPaths(vfs) {
   return (await syncListTree(vfs, '/')).filter((p) => !SYNC_EXCLUDE.has(p));
 }
 
+// walk the tree once, calling onFile(path, stat) per non-excluded file — used by push so it
+// stats every file a SINGLE time (and can report scan progress) instead of list-then-restat.
+async function syncWalkStat(vfs, dir, onFile) {
+  let names; try { names = await vfs.readdir(dir); } catch { return; }
+  for (const name of names) {
+    const p = dir === '/' ? '/' + name : dir + '/' + name;
+    let st; try { st = await vfs.stat(p); } catch { continue; }
+    if (st.type === 'directory') await syncWalkStat(vfs, p, onFile);
+    else if (!SYNC_EXCLUDE.has(p)) onFile(p, st);
+  }
+}
+
 function syncBytesEqual(a, b) {
   if (!a || !b || a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
@@ -14241,13 +14253,13 @@ class SyncEngine {
   // with retry. Does NOT delete remote files gone locally (needs tombstones, 2e; weir never-deletes).
   async push() {
     const man = await this._loadManifest();
-    const paths = await syncCollectPaths(this.local);
-    const toUpload = [];
-    for (const p of paths) {
-      let st; try { st = await this.local.stat(p); } catch { continue; }
+    const toUpload = []; let scanned = 0;
+    await syncWalkStat(this.local, '/', (p, st) => {
+      scanned++;
+      if (scanned % 256 === 0) this._progress('scan', scanned, 0);
       const sig = this._sig(st);
       if (this._changed(man.files[p], sig)) toUpload.push({ p, sig });
-    }
+    });
     let pushed = 0;
     this._progress('push', 0, toUpload.length);
     await syncPool(toUpload, this.concurrency, async ({ p, sig }) => {
@@ -14259,7 +14271,7 @@ class SyncEngine {
       if (pushed % PROGRESS_EVERY === 0 || pushed === toUpload.length) this._progress('push', pushed, toUpload.length);
     });
     await this._saveManifest();
-    return { pushed, skipped: paths.length - toUpload.length, scanned: paths.length };
+    return { pushed, skipped: scanned - toUpload.length, scanned };
   }
 
   // remote → local. Three modes: incremental (have a cursor + a change feed), bootstrap (have a
@@ -14302,6 +14314,7 @@ class SyncEngine {
   // hub that just pushed everything downloads nothing — they're all in the manifest), then
   // capture the cursor so every later pull is an incremental delta.
   async _bootstrapPull(man, be) {
+    this._progress('scan', 0, 0);   // walking the remote tree (Dropbox list calls) can take a moment
     const paths = (await syncCollectPaths(this.remote)).filter((p) => !man.files[p]);
     let pulled = 0;
     this._progress('pull', 0, paths.length);
@@ -14321,6 +14334,7 @@ class SyncEngine {
   }
 
   async _fullMirrorPull(man) {
+    this._progress('scan', 0, 0);
     const paths = await syncCollectPaths(this.remote);
     let pulled = 0;
     for (const p of paths) {
@@ -20548,8 +20562,8 @@ class App {
     const bar = document.getElementById('sync-status');
     let barTxt = '';
     if (state === 'syncing') {
-      const pct = prog && prog.total ? Math.round((prog.done / prog.total) * 100) : null;
-      barTxt = pct != null ? `sync ${pct}%` : 'sync…';
+      if (prog && prog.phase === 'scan') barTxt = 'scan…';
+      else { const pct = prog && prog.total ? Math.round((prog.done / prog.total) * 100) : null; barTxt = pct != null ? `sync ${pct}%` : 'sync…'; }
     } else barTxt = state === 'idle' ? 'sync' : state === 'error' ? 'sync err' : '';
     if (bar) { bar.textContent = barTxt; bar.dataset.state = state || 'off'; }
     const lab = document.getElementById('set-sync-state');
@@ -20558,7 +20572,7 @@ class App {
     if (btn) btn.textContent = (state && state !== 'off') ? 'disconnect' : 'connect';
     if (state === 'syncing' && prog) {
       const msg = document.getElementById('set-sync-msg');
-      if (msg) msg.textContent = `${prog.phase === 'push' ? 'uploading' : 'downloading'} ${prog.done}${prog.total ? '/' + prog.total : ''}…`;
+      if (msg) msg.textContent = prog.phase === 'scan' ? `scanning ${prog.done || ''} files…` : `${prog.phase === 'push' ? 'uploading' : 'downloading'} ${prog.done}${prog.total ? '/' + prog.total : ''}…`;
     }
   }
 
@@ -22533,7 +22547,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '26f7b93';          // short content hash of the bundle (build id)
+const COMMIT = 'e530911';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
