@@ -1,24 +1,20 @@
-// weir sync engine (SYNC.md) — Move 2: a provider-agnostic file MIRROR between the local
-// VFS and a remote one (a cache-wrapped @gcu/vfs DropboxBackend in production; a memory VFS
-// in tests). The engine never knows it's Dropbox — it copies files between two VFS trees,
-// so Drive/OneDrive/WebDAV are later mounts, not rewrites.
+// weir sync engine (SYNC.md) — a provider-agnostic file sync between the local VFS and a
+// remote one (a @gcu/vfs DropboxBackend in production; a memory VFS in tests). The engine
+// never knows it's Dropbox — it copies files between two VFS trees, so Drive/OneDrive/WebDAV
+// are later mounts, not rewrites.
 //
-// This first cut is correctness-first: a CONTENT-COMPARE mirror over the whole store tree
-// minus device-local files. Deliberately NOT YET (each a tracked follow-up):
-//   • efficiency — diff via the DropboxBackend change cursor + Dropbox content_hash instead
-//     of reading every file each pass;
-//   • hub/reader roles (SYNC.md §2) — a reader must not push the corpus;
-//   • conflict resolution + state/note delta-merge (SYNC.md §3/§5);
-//   • live wiring (boot mount + store.reload() after pull) + the settings UI.
-// It is not wired into the app yet — it's the tested core the next moves build on.
+// Efficiency (2d): a local MANIFEST (/sync-state.json, excluded) holds per-file signatures
+// (so push skips unchanged files — a cheap stat, no read/upload) and the pull CURSOR. Pull is
+// incremental when the remote backend exposes a change feed (Dropbox changes()/latestCursor()):
+// after a one-time bootstrap it only fetches deltas. A backend with no change feed (the memory
+// VFS in tests) falls back to a full content-compare mirror. Uploads run N-wide with retry so
+// the first big push is fast + survives throttling.
+//
+// Deferred (SYNC.md §8): per-instance state/note delta-merge (2e) for clean concurrent
+// read-state; cross-device deletion via tombstones (push never deletes remote today).
 
-// What replicates: the WHOLE store tree EXCEPT device-local files. An exclude list (not an
-// include list) is deliberate — the store's dirs are many (/feeds, /items, /content,
-// /catalog, /schema/vocab, /stacks, …) and a missed dir = silently-unsynced data, so we
-// sync-by-default and name only what must stay local. settings.json holds the device's role,
-// mount, and connection; usage/health/the engine's own marker are local too.
 const SYNC_EXCLUDE = new Set(['/settings.json', '/usage.json', '/.health', '/sync-state.json']);
-const MANIFEST_PATH = '/sync-state.json';   // the excluded marker: per-file push signatures + (2d.2) the pull cursor
+const MANIFEST_PATH = '/sync-state.json';   // the excluded marker: per-file push signatures + the pull cursor
 
 // recursively list every file path under `dir` (directories are descended, not returned).
 async function syncListTree(vfs, dir) {
@@ -44,29 +40,48 @@ function syncBytesEqual(a, b) {
   return true;
 }
 
-// copy src:p → dst:p when dst is missing or differs. Returns true if it wrote. Reads BYTES so
-// it's correct for the text corpus (JSON/ndjson/html) AND binary stacks attachments alike.
+// copy src:p → dst:p when dst is missing or differs (content-compare; the cursor-less fallback).
 async function syncCopyIfDiffer(src, dst, p) {
   const data = await src.readFile(p, 'bytes');
   let cur = null; try { cur = await dst.readFile(p, 'bytes'); } catch { /* missing on dst */ }
   if (syncBytesEqual(cur, data)) return false;
-  const slash = p.lastIndexOf('/');
-  if (slash > 0) { try { await dst.mkdir(p.slice(0, slash), { recursive: true }); } catch { /* exists */ } }
+  await syncEnsureParent(dst, p);
   await dst.writeFile(p, data);
   return true;
 }
 
+async function syncEnsureParent(vfs, p) {
+  const slash = p.lastIndexOf('/');
+  if (slash > 0) { try { await vfs.mkdir(p.slice(0, slash), { recursive: true }); } catch { /* exists */ } }
+}
+
+function syncSleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// bounded-concurrency runner — `concurrency` workers drain the items. Returns the count done.
+async function syncPool(items, concurrency, fn) {
+  let i = 0, done = 0;
+  const worker = async () => { while (i < items.length) { const idx = i++; await fn(items[idx], idx); done++; } };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, worker));
+  return done;
+}
+
+// retry with backoff — Dropbox throttles a burst with 429s (surfaced as EIO by the backend).
+async function syncRetry(fn, tries = 3) {
+  let err;
+  for (let a = 0; a < tries; a++) { try { return await fn(); } catch (e) { err = e; if (a < tries - 1) await syncSleep(150 * Math.pow(4, a)); } }
+  throw err;
+}
+
 class SyncEngine {
-  constructor({ local, remote, store = null }) {
-    this.local = local;     // weir's live VFS (store.vfs)
-    this.remote = remote;   // the cloud VFS (DropboxBackend), or a memory VFS in tests
-    this.store = store;     // optional — for the post-pull re-hydrate
+  constructor({ local, remote, store = null, concurrency = 8 }) {
+    this.local = local;            // weir's live VFS (store.vfs)
+    this.remote = remote;          // the cloud VFS (DropboxBackend), or a memory VFS in tests
+    this.store = store;            // optional — for the post-pull re-hydrate
+    this.concurrency = concurrency;
     this._manifest = null;
   }
 
-  // The sync manifest (persisted locally, excluded from sync): path → {size, mtime} as last
-  // synced, so push can skip unchanged files with a cheap stat — no content read, no re-upload.
-  // (It also holds the pull cursor once the cursor-incremental pull lands; see 2d.2 in SYNC.md.)
+  // Manifest (persisted locally, excluded from sync): { cursor, files: { path: {size, mtime} } }.
   async _loadManifest() {
     if (this._manifest) return this._manifest;
     try { this._manifest = JSON.parse(await this.local.readFile(MANIFEST_PATH, 'utf8')); } catch { this._manifest = {}; }
@@ -77,32 +92,94 @@ class SyncEngine {
   _sig(st) { return { size: st.size || 0, mtime: st.modified ? +new Date(st.modified) : 0 }; }
   _changed(a, b) { return !a || a.size !== b.size || a.mtime !== b.mtime; }
 
-  // local → remote: upload only files new or changed since the last sync (cheap stat diff — no
-  // content read for unchanged files). Does NOT delete remote files that vanished locally:
-  // cross-device deletion needs tombstones (2d.2), and weir never-deletes anyway.
+  // the remote backend instance (for its change feed), via resolve() — mounts() only gives type.
+  _remoteBackend() { try { return this.remote.resolve('/').backend; } catch { return null; } }
+  // a Dropbox change-feed entry's path (e.g. /weir/items/x) → our VFS path (/items/x): strip root.
+  _entryToVfsPath(be, e) {
+    const root = (be && be._root) || '';
+    const dp = e.path_display || e.path_lower || '';
+    if (root && dp.toLowerCase().startsWith(root.toLowerCase() + '/')) return dp.slice(root.length);
+    if (root && dp.toLowerCase() === root.toLowerCase()) return '/';
+    return dp;
+  }
+
+  // local → remote: upload only files new/changed since last sync (cheap stat diff), N-wide
+  // with retry. Does NOT delete remote files gone locally (needs tombstones, 2e; weir never-deletes).
   async push() {
     const man = await this._loadManifest();
     const paths = await syncCollectPaths(this.local);
-    let pushed = 0, skipped = 0;
+    const toUpload = [];
     for (const p of paths) {
       let st; try { st = await this.local.stat(p); } catch { continue; }
       const sig = this._sig(st);
-      if (!this._changed(man.files[p], sig)) { skipped++; continue; }
-      const data = await this.local.readFile(p, 'bytes');
-      const slash = p.lastIndexOf('/'); if (slash > 0) { try { await this.remote.mkdir(p.slice(0, slash), { recursive: true }); } catch { /* exists */ } }
-      await this.remote.writeFile(p, data);
-      man.files[p] = sig; pushed++;
+      if (this._changed(man.files[p], sig)) toUpload.push({ p, sig });
     }
+    let pushed = 0;
+    await syncPool(toUpload, this.concurrency, async ({ p, sig }) => {
+      const data = await this.local.readFile(p, 'bytes');
+      await syncEnsureParent(this.remote, p);
+      await syncRetry(() => this.remote.writeFile(p, data));
+      man.files[p] = sig; pushed++;
+    });
     await this._saveManifest();
-    return { pushed, skipped, scanned: paths.length };
+    return { pushed, skipped: paths.length - toUpload.length, scanned: paths.length };
   }
 
-  // remote → local: copy every remote file the local lacks or that differs, record each in the
-  // manifest (so the next push doesn't echo it straight back), then re-hydrate the store.
-  // NOTE: this is the full content-compare bootstrap — it reads every remote file. The cheap
-  // cursor-incremental pull (changes()/latestCursor() are already in the backend) is 2d.2.
+  // remote → local. Three modes: incremental (have a cursor + a change feed), bootstrap (have a
+  // feed, no cursor yet — fetch only files not already synced, then capture the cursor), or full
+  // content-compare (no change feed — the memory/test path). Re-hydrates the store on changes.
   async pull() {
     const man = await this._loadManifest();
+    const be = this._remoteBackend();
+    const hasFeed = be && typeof be.changes === 'function' && typeof be.latestCursor === 'function';
+    if (hasFeed && man.cursor) return this._incrementalPull(man, be);
+    if (hasFeed) return this._bootstrapPull(man, be);
+    return this._fullMirrorPull(man);
+  }
+
+  async _incrementalPull(man, be) {
+    let cursor = man.cursor, pulled = 0, removed = 0, more = true;
+    while (more) {
+      const res = await be.changes(cursor);
+      for (const e of res.entries || []) {
+        const p = this._entryToVfsPath(be, e);
+        if (!p || p === '/' || SYNC_EXCLUDE.has(p)) continue;
+        const tag = e['.tag'];
+        if (tag === 'deleted') { try { await this.local.unlink(p); } catch { /* gone */ } delete man.files[p]; removed++; continue; }
+        if (tag !== 'file') continue;   // folder
+        const data = await syncRetry(() => this.remote.readFile(p, 'bytes'));
+        await syncEnsureParent(this.local, p);
+        await this.local.writeFile(p, data);
+        try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ }
+        pulled++;
+      }
+      cursor = res.cursor; more = res.has_more;
+    }
+    man.cursor = cursor; await this._saveManifest();
+    if ((pulled || removed) && this.store && typeof this.store.reload === 'function') await this.store.reload();
+    return { pulled, removed, mode: 'incremental' };
+  }
+
+  // First sync against a change-feed backend: download only files we haven't synced yet (so a
+  // hub that just pushed everything downloads nothing — they're all in the manifest), then
+  // capture the cursor so every later pull is an incremental delta.
+  async _bootstrapPull(man, be) {
+    const paths = (await syncCollectPaths(this.remote)).filter((p) => !man.files[p]);
+    let pulled = 0;
+    await syncPool(paths, this.concurrency, async (p) => {
+      const data = await syncRetry(() => this.remote.readFile(p, 'bytes'));
+      await syncEnsureParent(this.local, p);
+      await this.local.writeFile(p, data);
+      try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ }
+      pulled++;
+    });
+    try { man.cursor = await be.latestCursor(); } catch { /* leave null — retries as bootstrap */ }
+    await this._saveManifest();
+    if (pulled && this.store && typeof this.store.reload === 'function') await this.store.reload();
+    return { pulled, scanned: paths.length, mode: 'bootstrap' };
+  }
+
+  async _fullMirrorPull(man) {
     const paths = await syncCollectPaths(this.remote);
     let pulled = 0;
     for (const p of paths) {
@@ -111,8 +188,8 @@ class SyncEngine {
       try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ }
     }
     if (pulled) { await this._saveManifest(); if (this.store && typeof this.store.reload === 'function') await this.store.reload(); }
-    return { pulled, scanned: paths.length };
+    return { pulled, scanned: paths.length, mode: 'full' };
   }
 }
 
-export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, SYNC_EXCLUDE };
+export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, SYNC_EXCLUDE };

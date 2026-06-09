@@ -78,4 +78,51 @@ const r3 = await eng2.pull();
 assert.ok(r3.pulled >= 1, 'pull copied the remote feed file');
 assert.ok(sb.feeds.has('f1'), 'pull + store.reload() surfaces the synced feed in the live store');
 
+// ── bootstrap pull (change-feed backend, no cursor yet): fetch only not-yet-synced files,
+//    then capture the cursor so later pulls go incremental ──
+const MANIFEST = '/sync-state.json';
+const bsLocal = await mk();
+const bsRemote = await mk();
+await write(bsRemote, '/items/k.ndjson', '{"id":"k1"}');
+await write(bsRemote, '/feeds/k.json', '{"id":"k"}');
+const bsBe = bsRemote.resolve('/').backend;          // give the memory backend a (fake) change feed
+bsBe.latestCursor = async () => 'CUR-A';
+bsBe.changes = async (c) => ({ entries: [], cursor: c, has_more: false });
+const bsEng = new SyncEngine({ local: bsLocal, remote: bsRemote });
+const bs = await bsEng.pull();
+assert.equal(bs.mode, 'bootstrap', 'change feed + no cursor → bootstrap');
+assert.equal(bs.pulled, 2, `bootstrap fetches the 2 not-yet-synced files (got ${bs.pulled})`);
+assert.equal(await read(bsLocal, '/items/k.ndjson'), '{"id":"k1"}', 'bootstrap brought the file local');
+const bs2 = await bsEng.pull();
+assert.equal(bs2.mode, 'incremental', 'cursor captured → subsequent pulls are incremental');
+assert.equal(bs2.pulled || 0, 0, 'no deltas → incremental pulls nothing');
+
+// ── incremental pull: process a delta (add + delete), map paths (strip the backend root),
+//    advance the cursor ──
+const inLocal = await mk();
+await write(inLocal, MANIFEST, JSON.stringify({ cursor: 'c0', files: {} }));   // pre-seed a cursor
+await write(inLocal, '/feeds/old.json', '{"id":"old"}');                         // the delta will delete this
+const mockBe = {
+  _root: '/weir',
+  latestCursor: async () => 'cLatest',
+  changes: async () => ({
+    entries: [
+      { '.tag': 'file', path_display: '/weir/items/new.ndjson', name: 'new.ndjson' },
+      { '.tag': 'deleted', path_display: '/weir/feeds/old.json', name: 'old.json' },
+    ], cursor: 'c1', has_more: false,
+  }),
+};
+const mockRemote = {
+  resolve: () => ({ backend: mockBe }),
+  readFile: async (p) => { if (p === '/items/new.ndjson') return new TextEncoder().encode('{"id":"n1"}'); throw new Error('ENOENT ' + p); },
+};
+const inEng = new SyncEngine({ local: inLocal, remote: mockRemote });
+const inc = await inEng.pull();
+assert.equal(inc.mode, 'incremental', 'cursor + change feed → incremental');
+assert.equal(inc.pulled, 1, 'incremental fetched the added file');
+assert.equal(inc.removed, 1, 'incremental removed the deleted file');
+assert.equal(await read(inLocal, '/items/new.ndjson'), '{"id":"n1"}', 'added file mapped (/weir/… → /…) + written local');
+assert.equal(await read(inLocal, '/feeds/old.json'), null, 'deleted file removed locally');
+assert.equal(JSON.parse(await read(inLocal, MANIFEST)).cursor, 'c1', 'cursor advanced to the delta cursor');
+
 console.log('sync (engine mirror) smoke ok');
