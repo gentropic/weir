@@ -4,6 +4,7 @@
 import assert from 'node:assert';
 import { VFS } from '../vendor/vfs.js';
 import { SyncEngine, syncCollectPaths } from '../src/js/sync.js';
+import { Store } from '../src/js/store/store.js';
 
 const mk = () => VFS.create({ type: 'memory' });
 async function write(vfs, p, s) {
@@ -51,5 +52,19 @@ assert.equal(r2.pulled, 2, `pulled the changed shard + the new feed (got ${r2.pu
 assert.equal(await read(local, '/items/abc.ndjson'), '{"id":"i1"}\n{"id":"i2"}\n{"id":"i3"}', 'local shard updated from remote');
 assert.equal(await read(local, '/feeds/xyz.json'), '{"id":"xyz"}', 'new remote feed arrived locally');
 assert.equal((await eng.pull()).pulled, 0, 'second pull is a no-op');
+
+// ── store.reload(): a pull writes files underneath the store; reload() surfaces them ──
+const sa = new Store(await mk()); await sa._hydrate();
+await sa.vfs.writeFile('/feeds/f1.json', '{"id":"f1","title":"F1"}');
+assert.ok(!sa.feeds.has('f1'), 'store has not seen the file-only feed before reload');
+await sa.reload();
+assert.ok(sa.feeds.has('f1'), 'reload() picks up files written underneath the store');
+
+// ── pull + reload integration: the engine surfaces a synced feed in the live store ──
+const sb = new Store(await mk()); await sb._hydrate();
+const eng2 = new SyncEngine({ local: sb.vfs, remote: sa.vfs, store: sb });
+const r3 = await eng2.pull();
+assert.ok(r3.pulled >= 1, 'pull copied the remote feed file');
+assert.ok(sb.feeds.has('f1'), 'pull + store.reload() surfaces the synced feed in the live store');
 
 console.log('sync (engine mirror) smoke ok');

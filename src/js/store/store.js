@@ -129,6 +129,21 @@ export class Store {
     await this._loadVocab();
   }
 
+  // Re-read the whole store from the VFS, replacing the in-memory index. Used after a sync
+  // PULL writes files underneath us (SYNC.md): the files are authoritative, so we drop the
+  // in-memory state — and any pending debounced flush (the sync caller flushes BEFORE
+  // pulling, so nothing unsaved is lost) — and re-hydrate. Emits so the UI + search refresh.
+  async reload() {
+    if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
+    this.feeds.clear(); this.items.clear(); this.byFeed.clear(); this.archived.clear();
+    this.tombstones = []; this.tags = {}; this.savedViews = []; this.cards.clear(); this.vocab = {};
+    this._dirtyFeeds.clear(); this._dirtyCards.clear(); this._dirtyVocab.clear(); this._archivedDirty = false;
+    this._ensured.clear();
+    await this._hydrate();
+    this.emit('feeds', { reload: true });
+    this.emit('items', { reload: true });
+  }
+
   // Controlled-vocabulary / thesaurus store (GLASS §7), SKOS-shaped from the start
   // so it's a standard (exportable as JSON-LD, seedable from published SKOS) rather
   // than a bespoke format we'd have to migrate. One file per facet under
