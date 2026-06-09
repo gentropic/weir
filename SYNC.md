@@ -1,4 +1,4 @@
-# SYNC.md — weir multi-device sync (roles + a cloud VFS backend)
+# SYNC.md — weir multi-device sync (roles + a mounted cloud backend)
 
 Status: **design, not built.** This is the "third option for live-ish device-to-device
 sync" that SPEC §10 deferred "until the need is real." The need is now real: reading +
@@ -16,7 +16,7 @@ no protocol of weir's own). It *adds* a second tier for where that stance breaks
 | | local store | sync mechanism | weir code |
 |---|---|---|---|
 | **Desktop ↔ desktop** | FSA-mounted folder | your Dropbox/Syncthing/iCloud **daemon** mirrors the folder | **none** (works today) |
-| **Tablet / phone / pure-cloud** | IndexedDB / OPFS | a **cloud VFS backend** (Dropbox first), browser → cloud API | the new backend |
+| **Tablet / phone / pure-cloud** | IndexedDB / OPFS | a **mounted Dropbox VFS backend** + weir sync engine | backend → `@gcu/vfs`; mount + engine + auth → weir |
 
 Why the desktop trick can't carry mobile: it relies on a desktop **daemon** continuously
 mirroring a local folder. Mobile Dropbox (and iCloud/Drive) is **cloud-on-demand** — there
@@ -31,7 +31,7 @@ the cloud **API** directly: Dropbox v2 is CORS-enabled with a browser **PKCE** O
 (no client secret, no proxy, no `@gcu/bridge`, no server) — feasible in mobile Chrome.
 
 The FSA-into-your-sync-folder path **stays** as the zero-config desktop option. The cloud
-backend also works on desktop, so it doubles as the *one-mechanism-everywhere* choice.
+sync engine also works on desktop, so it doubles as the *one-mechanism-everywhere* choice.
 
 ---
 
@@ -75,22 +75,42 @@ So the only *multi-writer* data is small, per-instance-filed, and last-writer-wi
 
 ---
 
-## 4. The cloud VFS backend (Dropbox = impl #1)
+## 4. A `DropboxBackend`, mounted (the VFS is built for this) + a weir-side sync engine
 
-weir's storage is already a VFS with swappable backends (IndexedDB default, FSA optional).
-A cloud backend is a third impl — it does **not** change the store, hydrate, or
-packed-shard layers above it.
+The VFS already ships exactly the machinery for this: `BACKEND_TYPES` includes **`fetch`,
+`rest`** (remote backends), **`overlay`** (union), and **`cache`** (a local read-through
+cache over a slow backend) — and `_createBackend` accepts a `Backend` instance *or any
+duck-typed object with `readFile`/`stat`* as a mount. So Dropbox is a **sibling backend,
+mounted via the mount table** — the designed path, not a novelty. (Mounting it as the
+*primary* store at `/` would be wrong — a network hit per read — but that's not the plan.)
 
-- **API:** `files/upload`, `files/download`, `files/list_folder`(`/continue`,`/longpoll`),
-  `files/delete`. (Dropbox is CORS-clean — direct `fetch` from the page.)
-- **Auth:** PKCE OAuth (S256, no secret) → short-lived token + refresh token, scoped to a
-  Dropbox **App folder** (`/Apps/weir`, sandboxed). Least-privilege: weir can't see the
-  rest of your Dropbox — on-brand for *auditable by construction*.
-- **It's a sync target, not the live store.** Local reads/writes stay on IndexedDB/OPFS
-  (no per-read network hit); the cloud holds the packed shards + delta/note files. weir's
-  in-memory index hydrates locally, as today.
-- **Generalize later, not on n=1.** Extract a `RemoteBackend` interface once a *second*
-  provider (Drive / OneDrive / WebDAV / S3) actually shows up. Dropbox-specific first.
+- **`DropboxBackend`** — implements the Backend interface (`readFile`/`writeFile`/`readdir`/
+  `stat`/`remove`/`mkdir`) over the Dropbox HTTP API (`files/upload`, `download`,
+  `list_folder`[`/longpoll`], `delete`), app-folder-relative, with the PKCE token injected
+  via config (a `getToken()` callback). A peer of `rest`/`fetch`. (CORS-clean, no proxy —
+  proven by `examples/dropbox-spike.html`.)
+- **Mount it as a *secondary* mount, not the live store.** Mount at `/mnt/dropbox`; the
+  local store stays at `/` (IDB/OPFS). The sync engine copies between `/` and `/mnt/dropbox`.
+  **Or** wrap it in the existing **`cache`** backend for an offline-first *cached* mount
+  (reads hit the local cache; only misses + writes touch the network) — the cleaner
+  long-term shape, and the VFS already provides it.
+- **Provider-agnostic by construction** — the sync engine copies `/` ↔ `/mnt/<provider>`;
+  Drive/OneDrive/WebDAV become other mounted backends with **zero** sync-engine change.
+- **Where it lives → `@gcu/vfs`, via `spec_inbox`.** `DropboxBackend` is a reusable VFS
+  backend (a peer of `rest`/`fetch`) and **auditable will want sync too**, so its home is
+  `@gcu/vfs`'s `BACKEND_TYPES`, *not* weir-local. Hand it off: a spec → `../auditable/
+  spec_inbox/`, auditable's Claude implements it, both apps re-vendor `vfs.js`. **Never a
+  concurrent edit of `../auditable`.** *(The duck-typed-mount escape hatch means weir could
+  prototype a local `DropboxBackend` first to validate the design — then promote it upstream
+  — but the home is the VFS.)*
+
+What stays **weir-side** (its domain, not the backend's): the **PKCE auth** (acquire the
+token → inject as the backend's `getToken`), the **mount wiring**, the **`hub`/`reader`
+roles**, and the **sync orchestration + feed-aware merge** below:
+- **Push** — debounced copy of files the **store** already flags dirty (`_markCardDirty`/
+  `_markFeedDirty` + shard flush) from `/` to `/mnt/dropbox`.
+- **Pull** — a stored `list_folder` cursor + `longpoll` → copy changed shards/deltas from
+  `/mnt/dropbox` into `/` → re-hydrate the affected slice.
 
 ---
 
@@ -119,7 +139,9 @@ desktop FSA-folder option remains for those who don't want any account.
 
 ## 7. Scope / sequencing
 
-- **v1** — Dropbox `RemoteBackend` + PKCE app-folder auth · `hub`/`reader` roles ·
+- **v1** — **`DropboxBackend`** in `@gcu/vfs` (via `../auditable/spec_inbox/`) · weir mounts
+  it at `/mnt/dropbox` (optionally `cache`-wrapped) · PKCE app-folder auth · `hub`/`reader`
+  roles ·
   corpus read-only on satellites · `state/<id>.json` deltas · note sync · merge-on-hydrate
   · longpoll pull · debounced push.
 - **Deferred** — reader→hub **proposals** (a satellite queues "add feed" / "catalog this"

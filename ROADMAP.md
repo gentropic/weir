@@ -291,13 +291,17 @@ the trigger/query layer on top.
 The need is now real: read + note-take on the **S10 FE tablet** (`reasonable-excuse`)
 against the corpus fetched on the desktop (`zero-gravitas`). FSA-into-a-synced-folder
 covers desktop↔desktop with **zero code** (your Dropbox/Syncthing daemon mirrors the
-folder), but tablets have **no synced local folder** — so they need a **cloud VFS backend**
-(Dropbox first: CORS + browser PKCE app-folder auth, no proxy/server/extension). The
-unlock is **roles**: a `hub` is the only fetcher and **owns the corpus** (single writer →
-no conflicts); `reader` satellites never poll and write only their **own state/notes
-deltas** (per-instance files, union on hydrate). That turns scary multi-master into
-single-writer-corpus + small-delta-merge, leaning on the dedup/tombstone/never-reset guards
-already in the store. Full design in **SYNC.md**. v1: Dropbox `RemoteBackend` + PKCE
+folder), but tablets have **no synced local folder** — so they need a **mounted cloud
+backend** (Dropbox first: CORS + browser PKCE app-folder auth, no proxy/server/extension —
+proven by `examples/dropbox-spike.html`). The unlock is **roles**: a `hub` is the only
+fetcher and **owns the corpus** (single writer → no conflicts); `reader` satellites never
+poll and write only their **own state/notes deltas** (per-instance files, union on hydrate).
+That turns scary multi-master into single-writer-corpus + small-delta-merge, leaning on the
+dedup/tombstone/never-reset guards already in the store. Architecture: a **`DropboxBackend`
+mounted via the VFS** (a peer of the VFS's existing `rest`/`fetch`/`cache` backends — so it
+lives in **`@gcu/vfs`**, handed off via `../auditable/spec_inbox/` to auditable's Claude
+since auditable will sync too) + a **weir-side sync engine** (mount wiring at `/mnt/dropbox`,
+roles, feed-aware merge) + PKCE auth. Full design in **SYNC.md**. v1: DropboxBackend + PKCE
 app-folder + `hub`/`reader` + delta/note sync + longpoll pull. Deferred: reader→hub
 **proposals** (queue "add feed"/"catalog this" for the hub — decides-vs-proposes), other
 providers (Drive/OneDrive/WebDAV), real-time multi-master (the role split is the better
