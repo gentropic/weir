@@ -157,7 +157,9 @@ desktop FSA-folder option remains for those who don't want any account.
   corpus read-only on satellites · `state/<id>.json` deltas · note sync · merge-on-hydrate
   · longpoll pull · debounced push.
 - **Deferred** — reader→hub **proposals** (a satellite queues "add feed" / "catalog this"
-  for the hub to enact, decides-vs-proposes) · other providers (Drive/OneDrive/WebDAV) ·
+  for the hub to enact, decides-vs-proposes) · other providers (Drive/OneDrive/WebDAV — friction
+  analysis in `../auditable/spec_inbox/vfs-cloud-providers-spec.md`: WebDAV/OneDrive easy, Drive
+  fussy on its ID-based API) ·
   true real-time multi-master (probably never — the role split is the better answer).
 
 ---
