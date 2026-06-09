@@ -7,11 +7,12 @@ install. Re-vendor by running **`node tools/sync-vendor.mjs`** (auto-locates
 (`auditable/ext/librarian/SPEC.md` § Vendoring): **never hand-edit a vendored
 file** — fix upstream in canon, then re-sync.
 
-Source snapshot: `auditable@bba50e15`, vendored 2026-05-30.
+Source snapshot: `auditable@bba50e15`, vendored 2026-05-30. `vfs.js` re-vendored from
+`auditable@1d8fed4` (2026-06-09) for `DropboxBackend`.
 
 | Path | Source in auditable | Version | License | Notes |
 |------|---------------------|---------|---------|-------|
-| `vfs.js` | `ext/vfs/index.js` | @gcu/vfs 0.1.0 | MIT | Built single-file ESM bundle. Exports `VFS`, `IDBBackend`, `OPFSBackend`, `FSAABackend`, `MemoryBackend`, `path`, … Storage backbone (backend-swappable IDB / OPFS / FSA). |
+| `vfs.js` | `ext/vfs/index.js` | @gcu/vfs 0.2.0 | MIT | Built single-file ESM bundle. Exports `VFS`, `IDBBackend`, `OPFSBackend`, `FSAABackend`, `MemoryBackend`, `FetchBackend`, `RESTBackend`, `OverlayBackend`, `CacheBackend`, **`DropboxBackend`**, `path`, … Storage backbone (backend-swappable + mount table). **Re-vendored 2026-06-09 (`auditable@1d8fed4`, vfs 0.1.0→0.2.0) for `DropboxBackend`** — the cloud-sync backend (SYNC.md; spec'd via `spec_inbox`), mounted secondary + `cache`-wrapped, with `getToken` injected by weir's `src/js/dropbox.js`. Vendored separately (direct copy of the built bundle), not via `sync-vendor.mjs`. |
 | `bridge-client.js` | `../bridge` repo `client/bridge-client.js` | @gcu/bridge 0.3.6+ (gentropic/bridge@6c56584) | CC0-1.0 | Page-side fetch broker. Exports `gcuFetch`, `hasBridge`, `bridgeVersion`, `clearBridgeCache`. Re-vendored 2026-06-03 for the detectBridge marker-re-check fix (no sticky false-negative stranding the session on direct fetch). Probed non-blockingly for status; the poller's transport. |
 | `librarian.js` | `ext/librarian/index.js` (built bundle) | @gcu/librarian 0.2 (v2 CSR) | MIT | BM25F full-text search engine (unified typed-array CSR; lean folded mode, fuzzy/prefix, incremental addDoc/removeDoc, pack/unpack, scan). Vendored via `tools/sync-vendor.mjs` (never hand-edit — upstream-first per the librarian vendoring contract). Consumed by `src/js/search.js` (search v2). |
 | `webmcp-shim.js` | `../webmcp` repo `shim.js` | @gcu/webmcp 0.1.0 | MIT | WebMCP client shim. Plain IIFE — installs `window.gcuWebMCP` + a `navigator.modelContext` polyfill, relays tool calls to the @gcu/webmcp bridge. Three transports: WS / HTTP-long-poll over localhost (injectable `gcuFetch` routes HTTP through the bridge extension for the public-origin PWA), and **`fs`** — set `gcuWebMCP.folder = <FileSystemDirectoryHandle>` and connect with a bare token to relay over a shared (optionally synced) folder, no port/extension (uses `webmcp-fs-channel.js`). Consumed by `src/js/webmcp.js`. |

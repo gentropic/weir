@@ -12,8 +12,9 @@
 // the sync engine are separate (DropboxBackend → @gcu/vfs via spec_inbox; engine → weir).
 
 // PUBLIC PKCE client_id of the GCU-sync Dropbox app (App-folder access → /Apps/GCU-sync/).
-// TODO: paste the GCU-sync app key here (the spike used a throwaway one). Public, committable.
-const DBX_APP_KEY = 'PASTE-GCU-SYNC-APP-KEY';
+// A public client_id, not a secret (PKCE has no client secret; a stranger can't get tokens
+// with it — the auth code only reaches our registered redirect URIs), so it's committable.
+const DBX_APP_KEY = '6ax68bwdkwzrkog';
 const DBX_AUTHORIZE = 'https://www.dropbox.com/oauth2/authorize';
 const DBX_TOKEN = 'https://api.dropboxapi.com/oauth2/token';
 const DBX_SCOPES = 'files.content.write files.content.read files.metadata.read account_info.read';
