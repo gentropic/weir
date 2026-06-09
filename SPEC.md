@@ -902,6 +902,11 @@ Not promises; the design is incomplete here.
   v0.3 FSA directory + syncthing/rclone, treat the reader as offline-by-default
   with last-write-wins reconciliation. `Trystero` with paranoid encryption is a
   third option for live device-to-device sync; deferred until the need is real.
+  **Update (2026-06-09): the need is real** (read/annotate on the S10 FE tablet) and the
+  design has resolved — see **[SYNC.md](SYNC.md)**: **roles** (a `hub` owns the corpus as
+  single writer; `reader` satellites sync only state/notes deltas) collapse the CRDT/
+  multi-master problem, and a **cloud VFS backend** (Dropbox, CORS+PKCE) covers tablets,
+  which have no synced local folder for the FSA path.
 
 - **OPML import edge cases.** Your 1,249-entry OPML had 1,088 YouTube subs swept
   in. The importer needs to detect this and offer a separation pass: "import

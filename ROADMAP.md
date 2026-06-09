@@ -229,6 +229,19 @@ the trigger/query layer on top.
        later, not a block model.
     5. **Panes: one opt-in notes pane** beside the stream to start; grow to tabs/splits
        only if the prototype demands it. No Notion-level pane sprawl on day one.
+- **Pen / ink annotations (tablet stylus).** The reader tier (a Galaxy S10 FE with an
+  S Pen — see [SYNC.md](SYNC.md)) wants handwriting. Capture is feasible: **Pointer
+  Events** carry `pointerType:'pen'` + `pressure` + `tiltX/Y` on Chrome Android / S Pen,
+  so pressure-variable strokes are just pointer math → **SVG paths** (or a compact stroke
+  array), stored as an **annotation body or a stacks ink-note** — fits the existing W3C
+  annotation + markdown-note model (an ink body alongside text). The hard 20% is
+  **anchoring ink to *reflowable* HTML** (text reflows, ink doesn't). So MVP on **fixed
+  targets** — ink over an image / the mini-map / a page snapshot, plus standalone
+  **handwritten ink-notes** (canvas → SVG → stacks) — and defer reflow-anchored
+  ink-over-article (anchor to a text range, or snapshot the layout). Verdict: **not too
+  hard for an MVP** (capture + SVG-store + ink-notes is days); reflow-anchoring is the
+  deferred stretch. Pairs with sync (notes are the satellite's main output) and the notes
+  arc above.
 - **Stage 4 — holdings library (the glass endgame).** Extend glass from a *stream
   inbox* to also hold **static, undated holdings** — books (Dewey + Cutter, ready
   to inherit from Holocene), a papers shelf — so it's a literal LIS catalog, not
@@ -272,6 +285,23 @@ the trigger/query layer on top.
     `umap-js` vendors as source. Supersedes the loose "graph view" mentions in
     Stage 2/3.
 - Near-term Stage-0 follow-up: a **faceted catalog view** (see the corpus by facet).
+
+## Multi-device — sync + roles (see [SYNC.md](SYNC.md))
+
+The need is now real: read + note-take on the **S10 FE tablet** (`reasonable-excuse`)
+against the corpus fetched on the desktop (`zero-gravitas`). FSA-into-a-synced-folder
+covers desktop↔desktop with **zero code** (your Dropbox/Syncthing daemon mirrors the
+folder), but tablets have **no synced local folder** — so they need a **cloud VFS backend**
+(Dropbox first: CORS + browser PKCE app-folder auth, no proxy/server/extension). The
+unlock is **roles**: a `hub` is the only fetcher and **owns the corpus** (single writer →
+no conflicts); `reader` satellites never poll and write only their **own state/notes
+deltas** (per-instance files, union on hydrate). That turns scary multi-master into
+single-writer-corpus + small-delta-merge, leaning on the dedup/tombstone/never-reset guards
+already in the store. Full design in **SYNC.md**. v1: Dropbox `RemoteBackend` + PKCE
+app-folder + `hub`/`reader` + delta/note sync + longpoll pull. Deferred: reader→hub
+**proposals** (queue "add feed"/"catalog this" for the hub — decides-vs-proposes), other
+providers (Drive/OneDrive/WebDAV), real-time multi-master (the role split is the better
+answer).
 
 ## Near term — small UX / polish
 
