@@ -210,6 +210,16 @@ cost to boot. ~96 MB → ~45 MB. Browser-native `CompressionStream`; one-time re
 no per-pack toggle (mixed state isn't worth it). Worth it for mobile-data pulls + corpus growth —
 ranked below 2e (this is bytes; 2e is correctness).
 
+**Deferred — 2g: best-effort sync lock.** A `.synclock` (`{instance, at}`) on the GCU-sync folder,
+claimed before a sync and released after, so a second device skips/defers while one is mid-sync —
+so a pull can't catch a half-written push. **Honest caveat: it's *advisory*, not a true mutex.**
+Dropbox has no atomic compare-and-swap, and sync-propagation delay means two devices can both read
+"no lock", both claim, and both proceed (a TOCTOU window) — so it *reduces* interleaving, doesn't
+eliminate it; it also needs a TTL so a crashed holder can't block forever. **Complementary to 2e,
+not a substitute:** 2e (per-instance delta files) is the real fix — concurrent sync becomes safe at
+the DATA level (each device writes different files, no collision); the lock only tightens
+snapshot consistency. So 2e first; the lock is cheap insurance after.
+
 The first full sync is inherently a full upload (initial replication); 2d makes every sync
 *after* it cheap.
 
