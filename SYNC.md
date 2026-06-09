@@ -171,16 +171,16 @@ the Settings → **Cloud sync** pane + a flight-deck status), and **2d.1** — a
 (`/sync-state.json`, local-only/excluded) + a **stat-based push diff** so ongoing pushes upload
 only changed shards, not the whole corpus.
 
-**Next — 2d.2: cursor-incremental pull** (the download-side win; the bottleneck today, since
-pull still content-compares every remote file). The backend already exposes `changes(cursor)` /
-`latestCursor()` / `longpoll()`. Design: after the one-time full-mirror bootstrap, store
-`latestCursor()` in the manifest; subsequent pulls call `changes(cursor)` → for each delta
-entry map `path_display` → a VFS path (strip the backend's `root`), download files / unlink
-deletions, advance the cursor. Fall back to the full mirror when the remote has no change feed
-(the memory VFS in tests). **Validate on a small folder against live Dropbox first** — it's
-Dropbox-coupled (path mapping, delete `.tag`) and not fully offline-testable.
+**Shipped (2026-06-09) — 2d.2: cursor-incremental pull + concurrent uploads.** `pull()` now
+picks a mode from what the remote backend exposes (via `resolve('/').backend`): **incremental**
+(`changes(cursor)` deltas, mapping each `path_display` → VFS path by stripping `root`, unlink
+deletions, advance cursor), **bootstrap** (a feed but no cursor yet → fetch only files not in the
+manifest, then capture `latestCursor()` — so a hub that just pushed downloads nothing), or **full
+content-compare** (no feed — the memory/test path). `push()` uploads N-wide with retry+backoff.
+**Still validate the live path-mapping on a small scale** — the incremental path is Dropbox-coupled
+(smoke uses mocks) and runs only on the 2nd+ sync.
 
-**Then — 2e: state/note delta-merge.** read/saved/tags live inside the item shards today, so two
+**Next — 2e: state/note delta-merge.** read/saved/tags live inside the item shards today, so two
 devices editing the same shard last-writer-wins. The clean fix is per-instance `state/<id>.json`
 deltas (union, latest-`at` per field) + notes unioned by id (§3/§5). The `reader`-doesn't-poll
 role already keeps the corpus single-writer, shrinking the conflict surface meanwhile.
