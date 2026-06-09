@@ -22,6 +22,7 @@ import { inputMultiplier } from '../llm.js';
 import { channelIdOf } from '../affinity.js';
 
 const FLUSH_DELAY_MS = 250;
+const CONTENT_CACHE_MAX = 12;   // per-feed content packs kept in memory (LRU); each holds one feed's bodies
 
 export class Store {
   constructor(vfs) {
@@ -41,6 +42,9 @@ export class Store {
     this._dirtyFeeds = new Set();
     this._dirtyCards = new Set();     // card-shard buckets needing a rewrite
     this._dirtyVocab = new Set();     // facet vocab files needing a rewrite
+    this._contentShards = new Map();  // feedId → Map<fsKey(itemId), html>: lazily-loaded per-feed content packs
+    this._dirtyContent = new Set();   // feedIds whose content pack needs a rewrite
+    this._contentLRU = [];            // feedIds in load order, for cache eviction
     this._archivedDirty = false;
     this._ensured = new Set();       // dirs already mkdir'd
     this._listeners = new Map();
@@ -64,7 +68,8 @@ export class Store {
   _shardPath(feedId) { return `/items/${this.feedKey(feedId)}.ndjson`; }
   _feedPath(feedId) { return `/feeds/${this.feedKey(feedId)}.json`; }
   _contentDir(feedId) { return `/content/${this.feedKey(feedId)}`; }
-  _contentPath(feedId, itemId) { return `${this._contentDir(feedId)}/${fsKey(itemId)}.html`; }
+  _contentPath(feedId, itemId) { return `${this._contentDir(feedId)}/${fsKey(itemId)}.html`; }   // legacy per-item file (pre-pack; read only by migration)
+  _contentShardPath(feedId) { return `/content/${this.feedKey(feedId)}.ndjson`; }                 // per-feed content pack
   _feedSet(feedId) { let s = this.byFeed.get(feedId); if (!s) this.byFeed.set(feedId, s = new Set()); return s; }
 
   // ── low-level fs ──
@@ -133,6 +138,7 @@ export class Store {
     await this._pool([...this.feeds.keys()], (fid) => this._loadShard(fid));
     await this._loadCatalog();
     await this._loadVocab();
+    await this._migrateContent();   // legacy per-item content files → per-feed packs (one-time, verified)
   }
 
   // Re-read the whole store from the VFS, replacing the in-memory index. Used after a sync
@@ -144,6 +150,7 @@ export class Store {
     this.feeds.clear(); this.items.clear(); this.byFeed.clear(); this.archived.clear();
     this.tombstones = []; this.tags = {}; this.savedViews = []; this.cards.clear(); this.vocab = {};
     this._dirtyFeeds.clear(); this._dirtyCards.clear(); this._dirtyVocab.clear(); this._archivedDirty = false;
+    this._contentShards.clear(); this._dirtyContent.clear(); this._contentLRU = [];
     this._ensured.clear();
     await this._hydrate();
     this.emit('feeds', { reload: true });
@@ -299,7 +306,9 @@ export class Store {
     for (const p of [this._feedPath(id), this._shardPath(id)]) {
       try { await this.vfs.unlink(p); } catch { /* gone */ }
     }
-    try { await this.vfs.rm(this._contentDir(id), { recursive: true }); } catch { /* gone */ }
+    try { await this.vfs.rm(this._contentDir(id), { recursive: true }); } catch { /* gone (legacy per-item dir) */ }
+    try { await this.vfs.unlink(this._contentShardPath(id)); } catch { /* gone */ }
+    this._contentShards.delete(id); this._dirtyContent.delete(id);
     this.emit('feed', { id, removed: true });
   }
 
@@ -344,14 +353,17 @@ export class Store {
       if (!rec) continue;
       const newItemId = rekey(oldItemId);
       let html = null;
-      if (rec.has_content) { try { html = await this._readText(rec.content_path || this._contentPath(oldId, oldItemId), null); } catch { html = null; } }
+      if (rec.has_content) {
+        if (rec.content_path) { try { html = await this._readText(rec.content_path, null); } catch { html = null; } }
+        else { const om = await this._loadContentShard(oldId); html = om.get(fsKey(oldItemId)) ?? null; }
+      }
       rec.feed_id = newId;
       rec.id = newItemId;
       if (rec.content_path) rec.content_path = this._contentPath(newId, newItemId);
       if (oldItemId !== newItemId) this.items.delete(oldItemId);
       this.items.set(newItemId, rec);
       newSet.add(newItemId);
-      if (html != null) await this._writeContent(newId, newItemId, html);
+      if (html != null && !rec.content_path) { const nm = await this._loadContentShard(newId); nm.set(fsKey(newItemId), html); this._dirtyContent.add(newId); }
     }
     this.byFeed.delete(oldId);
     this.byFeed.set(newId, newSet);
@@ -382,6 +394,8 @@ export class Store {
     await this.flush();
     for (const p of [this._feedPath(oldId), this._shardPath(oldId)]) { try { await this.vfs.unlink(p); } catch { /* gone */ } }
     try { await this.vfs.rm(this._contentDir(oldId), { recursive: true }); } catch { /* gone */ }
+    try { await this.vfs.unlink(this._contentShardPath(oldId)); } catch { /* gone */ }
+    this._contentShards.delete(oldId); this._dirtyContent.delete(oldId);
 
     this.emit('feed', { id: newId, renamedFrom: oldId });
     return { renamed: newId, from: oldId, items: newSet.size, tombstones };
@@ -562,8 +576,10 @@ export class Store {
     const rec = this.items.get(String(id));
     if (!rec || !rec.has_content) return null;
     // Stacks entries (and anything else) may pin their body to a real tree path
-    // (e.g. /stacks/<path>) instead of the lazy /content/<feed>/… file.
-    return this._readText(rec.content_path || this._contentPath(rec.feed_id, rec.id), null);
+    // (e.g. /stacks/<path>) instead of the per-feed content pack.
+    if (rec.content_path) return this._readText(rec.content_path, null);
+    const m = await this._loadContentShard(rec.feed_id);
+    return m.get(fsKey(rec.id)) ?? null;
   }
 
   // Replace an item's stored content (e.g. fetched full article). Marks `full`
@@ -578,12 +594,69 @@ export class Store {
     this.emit('item', { id: rec.id });
   }
 
-  async _writeContent(feedId, itemId, html) {
-    await this._ensureDir(this._contentDir(feedId));
-    await this.vfs.writeFile(this._contentPath(feedId, itemId), String(html));
-  }
   async _deleteContent(rec) {
-    try { await this.vfs.unlink(this._contentPath(rec.feed_id, rec.id)); } catch { /* gone */ }
+    if (rec.content_path) return;   // stacks body — not ours to delete here
+    const m = await this._loadContentShard(rec.feed_id);
+    if (m.delete(fsKey(rec.id))) { this._dirtyContent.add(rec.feed_id); this._scheduleFlush(); }
+  }
+
+  // Write an item's body into its feed's pack (insert / full-fetch). Pack is keyed by fsKey(itemId).
+  async _writeContent(feedId, itemId, html) {
+    const m = await this._loadContentShard(feedId);
+    if (String(html).length) m.set(fsKey(itemId), String(html)); else m.delete(fsKey(itemId));
+    this._dirtyContent.add(feedId); this._scheduleFlush();
+  }
+
+  // ── per-feed content packs: one /content/<feed>.ndjson, {id,html} per line (id = fsKey(itemId)).
+  // Lazy-loaded into a bounded LRU cache (the bodies are the bulk; we don't hold them all). ──
+  async _loadContentShard(feedId) {
+    let m = this._contentShards.get(feedId);
+    if (m) { this._touchContent(feedId); return m; }
+    m = new Map();
+    const text = await this._readText(this._contentShardPath(feedId), '');
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try { const e = JSON.parse(line); if (e && e.id != null) m.set(String(e.id), e.html ?? ''); } catch { /* skip bad line */ }
+    }
+    this._contentShards.set(feedId, m); this._contentLRU.push(feedId); this._evictContent();
+    return m;
+  }
+  _touchContent(fid) { const i = this._contentLRU.indexOf(fid); if (i >= 0) this._contentLRU.splice(i, 1); this._contentLRU.push(fid); }
+  _evictContent() {   // drop LRU clean packs over the cap (never evict an unsaved one)
+    while (this._contentShards.size > CONTENT_CACHE_MAX) {
+      const fid = this._contentLRU.find((f) => !this._dirtyContent.has(f));
+      if (fid === undefined) break;
+      this._contentLRU.splice(this._contentLRU.indexOf(fid), 1);
+      this._contentShards.delete(fid);
+    }
+  }
+  async _writeContentShard(feedId) {
+    const m = this._contentShards.get(feedId);
+    if (!m || m.size === 0) { try { await this.vfs.unlink(this._contentShardPath(feedId)); } catch { /* gone */ } return; }
+    const lines = []; for (const [id, html] of m) lines.push(JSON.stringify({ id, html }));
+    await this.vfs.writeFile(this._contentShardPath(feedId), lines.join('\n'));
+  }
+
+  // One-time migration: legacy per-item content (/content/<feed>/<item>.html — a directory per
+  // feed) → per-feed packs (/content/<feed>.ndjson). Non-destructive + VERIFIED: write the pack,
+  // confirm its line count matches the source files, and only THEN remove the old directory.
+  // Idempotent — re-runs skip (no directories remain once migrated). Returns the feed count moved.
+  async _migrateContent() {
+    let entries; try { entries = await this.vfs.readdir('/content'); } catch { return 0; }
+    let moved = 0;
+    for (const name of entries) {
+      let st; try { st = await this.vfs.stat('/content/' + name); } catch { continue; }
+      if (st.type !== 'directory') continue;   // already a pack file (or unrelated)
+      const dir = '/content/' + name;
+      let files; try { files = (await this.vfs.readdir(dir)).filter((f) => f.endsWith('.html')); } catch { continue; }
+      const lines = await Promise.all(files.map(async (f) =>
+        JSON.stringify({ id: f.replace(/\.html$/, ''), html: await this._readText(dir + '/' + f, '') })));
+      const packPath = '/content/' + name + '.ndjson';
+      await this.vfs.writeFile(packPath, lines.join('\n'));
+      const back = (await this._readText(packPath, '')).split('\n').filter((l) => l.trim()).length;
+      if (back === files.length) { try { await this.vfs.rm(dir, { recursive: true }); } catch { /* leave it; re-run is safe */ } moved++; }
+    }
+    return moved;
   }
 
   // view: 'inbox' | 'saved' | 'archived' | undefined(=inbox-ish, excludes archived)
@@ -953,6 +1026,8 @@ export class Store {
     this._dirtyCards.clear();
     for (const f of this._dirtyVocab) await this._writeVocab(f);
     this._dirtyVocab.clear();
+    for (const fid of this._dirtyContent) await this._writeContentShard(fid);
+    this._dirtyContent.clear();
     if (this._archivedDirty) {
       await this.vfs.writeFile('/archived_index.ndjson', this.tombstones.map((t) => JSON.stringify(t)).join('\n'));
       this._archivedDirty = false;

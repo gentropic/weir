@@ -420,4 +420,25 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.ok(s2.listWorks(5).some((w) => w.size >= 3), 'listWorks surfaces the cluster');
 }
 
+// ── content migration: legacy per-item files (/content/<feed>/<item>.html) → per-feed pack ──
+{
+  const v = await VFS.create();
+  const s = new Store(v); await s._hydrate();
+  await s.putFeed({ id: 'mig', name: 'Mig', adapter: 'feed', url: 'http://mig/f' });
+  await s.upsertItems([{ id: 'mig:1', feed_id: 'mig', type: 'article', title: 'one' }, { id: 'mig:2', feed_id: 'mig', type: 'article', title: 'two' }]);
+  // simulate the OLD on-disk layout: a per-item html file + the item flagged has_content
+  await v.mkdir(s._contentDir('mig'), { recursive: true });
+  await v.writeFile(s._contentPath('mig', 'mig:1'), '<p>legacy body one</p>');
+  await v.writeFile(s._contentPath('mig', 'mig:2'), '<p>legacy body two</p>');
+  s.items.get('mig:1').has_content = true; s.items.get('mig:2').has_content = true;
+  const moved = await s._migrateContent();
+  assert.ok(moved >= 1, 'migration moved the legacy dir');
+  assert.equal(await v.exists(s._contentShardPath('mig')), true, 'per-feed pack written');
+  assert.equal(await v.exists(s._contentDir('mig')), false, 'legacy dir removed (only after verify)');
+  s._contentShards.clear(); s._contentLRU = [];   // drop cache → force a read from the migrated pack
+  assert.match(await s.getContent('mig:1'), /legacy body one/, 'content readable from the migrated pack');
+  assert.match(await s.getContent('mig:2'), /legacy body two/, 'second item too');
+  assert.equal(await s._migrateContent(), 0, 'migration is idempotent (nothing left to move)');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

@@ -14,13 +14,14 @@
 // read-state; cross-device deletion via tombstones (push never deletes remote today).
 
 const SYNC_EXCLUDE = new Set(['/settings.json', '/usage.json', '/.health', '/sync-state.json']);
-// Whole subtrees kept OUT of sync. /content holds one HTML file per item (~12.8k for a big
-// corpus) — the bulk of the file count, and re-fetchable on demand (getContent re-derives) —
-// so we sync the INDEX (feeds, item shards, catalog, vocab, notes), not the article bodies.
-// Packing those bodies into per-feed shards so they CAN sync (for offline reading) is a
-// deliberate follow-up; until then a reader fetches a body when it opens the item.
-const SYNC_EXCLUDE_PREFIXES = ['/content/'];
-function syncExcluded(p) { return SYNC_EXCLUDE.has(p) || SYNC_EXCLUDE_PREFIXES.some((pre) => p.startsWith(pre)); }
+// Content is stored as per-feed PACKS (/content/<feed>.ndjson) — those DO sync: hundreds of
+// files, offline-readable on the tablet. What stays OUT is any LEGACY per-item file
+// (/content/<feed>/<item>.html — nested, pre-pack), so a feed that hasn't migrated yet can't
+// drag thousands of files into the sync. After the one-time migration there are only packs.
+function syncExcluded(p) {
+  if (SYNC_EXCLUDE.has(p)) return true;
+  return p.startsWith('/content/') && p.indexOf('/', 9) !== -1;   // nested under /content/ = legacy per-item file
+}
 const MANIFEST_PATH = '/sync-state.json';   // the excluded marker: per-file push signatures + the pull cursor
 const CHECKPOINT = 100;      // save the manifest every N transferred files, so an interrupted big sync RESUMES (only the not-yet-recorded files re-transfer)
 const PROGRESS_EVERY = 25;   // emit a progress tick every N files
