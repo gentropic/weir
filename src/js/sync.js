@@ -15,6 +15,8 @@
 
 const SYNC_EXCLUDE = new Set(['/settings.json', '/usage.json', '/.health', '/sync-state.json']);
 const MANIFEST_PATH = '/sync-state.json';   // the excluded marker: per-file push signatures + the pull cursor
+const CHECKPOINT = 100;      // save the manifest every N transferred files, so an interrupted big sync RESUMES (only the not-yet-recorded files re-transfer)
+const PROGRESS_EVERY = 25;   // emit a progress tick every N files
 
 // recursively list every file path under `dir` (directories are descended, not returned).
 async function syncListTree(vfs, dir) {
@@ -73,11 +75,12 @@ async function syncRetry(fn, tries = 3) {
 }
 
 class SyncEngine {
-  constructor({ local, remote, store = null, concurrency = 8 }) {
+  constructor({ local, remote, store = null, concurrency = 8, onProgress = null }) {
     this.local = local;            // weir's live VFS (store.vfs)
     this.remote = remote;          // the cloud VFS (DropboxBackend), or a memory VFS in tests
     this.store = store;            // optional — for the post-pull re-hydrate
     this.concurrency = concurrency;
+    this._onProgress = onProgress; // optional ({phase, done, total}) → UI progress
     this._manifest = null;
   }
 
@@ -91,6 +94,7 @@ class SyncEngine {
   async _saveManifest() { try { await this.local.writeFile(MANIFEST_PATH, JSON.stringify(this._manifest)); } catch { /* best effort */ } }
   _sig(st) { return { size: st.size || 0, mtime: st.modified ? +new Date(st.modified) : 0 }; }
   _changed(a, b) { return !a || a.size !== b.size || a.mtime !== b.mtime; }
+  _progress(phase, done, total) { if (this._onProgress) { try { this._onProgress({ phase, done, total }); } catch { /* ignore */ } } }
 
   // the remote backend instance (for its change feed), via resolve() — mounts() only gives type.
   _remoteBackend() { try { return this.remote.resolve('/').backend; } catch { return null; } }
@@ -115,11 +119,14 @@ class SyncEngine {
       if (this._changed(man.files[p], sig)) toUpload.push({ p, sig });
     }
     let pushed = 0;
+    this._progress('push', 0, toUpload.length);
     await syncPool(toUpload, this.concurrency, async ({ p, sig }) => {
       const data = await this.local.readFile(p, 'bytes');
       await syncEnsureParent(this.remote, p);
       await syncRetry(() => this.remote.writeFile(p, data));
       man.files[p] = sig; pushed++;
+      if (pushed % CHECKPOINT === 0) await this._saveManifest();
+      if (pushed % PROGRESS_EVERY === 0 || pushed === toUpload.length) this._progress('push', pushed, toUpload.length);
     });
     await this._saveManifest();
     return { pushed, skipped: paths.length - toUpload.length, scanned: paths.length };
@@ -154,8 +161,9 @@ class SyncEngine {
         pulled++;
       }
       cursor = res.cursor; more = res.has_more;
+      man.cursor = cursor; await this._saveManifest();        // checkpoint per page → resumable across pages
+      this._progress('pull', pulled + removed);
     }
-    man.cursor = cursor; await this._saveManifest();
     if ((pulled || removed) && this.store && typeof this.store.reload === 'function') await this.store.reload();
     return { pulled, removed, mode: 'incremental' };
   }
@@ -166,12 +174,15 @@ class SyncEngine {
   async _bootstrapPull(man, be) {
     const paths = (await syncCollectPaths(this.remote)).filter((p) => !man.files[p]);
     let pulled = 0;
+    this._progress('pull', 0, paths.length);
     await syncPool(paths, this.concurrency, async (p) => {
       const data = await syncRetry(() => this.remote.readFile(p, 'bytes'));
       await syncEnsureParent(this.local, p);
       await this.local.writeFile(p, data);
       try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ }
       pulled++;
+      if (pulled % CHECKPOINT === 0) await this._saveManifest();
+      if (pulled % PROGRESS_EVERY === 0 || pulled === paths.length) this._progress('pull', pulled, paths.length);
     });
     try { man.cursor = await be.latestCursor(); } catch { /* leave null — retries as bootstrap */ }
     await this._saveManifest();

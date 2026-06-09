@@ -3381,14 +3381,22 @@ export class App {
   // ── settings ──
   // Cloud sync (Dropbox) state → status bar + settings (SYNC.md). States: off (not
   // connected), idle (connected), syncing, error. The toggle reflects connected-ness.
-  renderSyncStatus(state) {
-    const map = { syncing: 'sync…', idle: 'sync', error: 'sync err', off: '' };
+  renderSyncStatus(state, prog) {
     const bar = document.getElementById('sync-status');
-    if (bar) { bar.textContent = map[state] ?? ''; bar.dataset.state = state || 'off'; }
+    let barTxt = '';
+    if (state === 'syncing') {
+      const pct = prog && prog.total ? Math.round((prog.done / prog.total) * 100) : null;
+      barTxt = pct != null ? `sync ${pct}%` : 'sync…';
+    } else barTxt = state === 'idle' ? 'sync' : state === 'error' ? 'sync err' : '';
+    if (bar) { bar.textContent = barTxt; bar.dataset.state = state || 'off'; }
     const lab = document.getElementById('set-sync-state');
     if (lab) lab.textContent = (state && state !== 'off') ? state : 'not connected';
     const btn = document.getElementById('set-sync-toggle');
     if (btn) btn.textContent = (state && state !== 'off') ? 'disconnect' : 'connect';
+    if (state === 'syncing' && prog) {
+      const msg = document.getElementById('set-sync-msg');
+      if (msg) msg.textContent = `${prog.phase === 'push' ? 'uploading' : 'downloading'} ${prog.done}${prog.total ? '/' + prog.total : ''}…`;
+    }
   }
 
   async toggleSync() {

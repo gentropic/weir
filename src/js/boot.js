@@ -239,7 +239,7 @@ async function boot() {
   async function ensureSyncEngine() {
     if (syncEngine) return syncEngine;
     if (!(await dropboxConnected())) return null;
-    syncEngine = new SyncEngine({ local: store.vfs, remote: await makeDropboxRemote(), store });
+    syncEngine = new SyncEngine({ local: store.vfs, remote: await makeDropboxRemote(), store, onProgress: (p) => app.renderSyncStatus('syncing', p) });
     return syncEngine;
   }
   app.syncNow = async () => {
