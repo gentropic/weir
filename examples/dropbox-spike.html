@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>numen · Dropbox PKCE + app-folder spike</title>
+<title>weir-sync · Dropbox PKCE + app-folder spike</title>
 <!--
   Feasibility spike for SYNC.md (weir cloud VFS backend). Proves the browser-only path:
   Dropbox OAuth via PKCE (S256, NO client secret) → write/read/list inside a sandboxed
@@ -41,7 +41,7 @@
 </style>
 </head>
 <body>
-<h1>numen · Dropbox PKCE + app-folder spike</h1>
+<h1>weir-sync · Dropbox PKCE + app-folder spike</h1>
 <p class="hint">Proves the browser-only sync path from <code>SYNC.md</code>: PKCE OAuth (no secret) +
 app-folder write/read/list over CORS. Setup steps are in this file's source comment.</p>
 
@@ -129,8 +129,8 @@ const dbxArg = (o) => ({ 'Dropbox-API-Arg': JSON.stringify(o) });
 async function test() {
   const t = getTok(); if (!t) return;
   const auth = { Authorization: `Bearer ${t.access_token}` };
-  const path = '/numen-spike.txt';
-  const payload = `numen spike — written ${new Date().toISOString()} from ${navigator.userAgent}`;
+  const path = '/weir-sync-spike.txt';
+  const payload = `weir-sync spike — written ${new Date().toISOString()} from ${navigator.userAgent}`;
   try {
     log('— round-trip start —', 'dim');
     // who am I?
