@@ -201,6 +201,12 @@ export class App {
     document.getElementById('facets-head')?.addEventListener('contextmenu', (e) => { if (e.target.closest('button')) return; e.preventDefault(); this.facetsHeaderMenu(e.clientX, e.clientY); });
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
+    document.getElementById('set-sync-toggle')?.addEventListener('click', () => this.toggleSync());
+    document.getElementById('set-sync-now')?.addEventListener('click', async () => {
+      const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'syncing…';
+      try { const r = await this.syncNow?.(); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
+      catch (e) { if (el) el.textContent = 'error: ' + e.message; }
+    });
     document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder());
     document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder());
     const sv = document.getElementById('smart-views');
@@ -258,6 +264,7 @@ export class App {
     document.getElementById('courier-prop-close')?.addEventListener('click', () => { const o = document.getElementById('courier-prop-overlay'); if (o) o.hidden = true; });
     document.getElementById('courier-prop-body')?.addEventListener('click', (e) => this._courierPropAction(e));
     document.getElementById('telegram-status')?.addEventListener('click', () => this.openSettings());
+    document.getElementById('sync-status')?.addEventListener('click', () => this.openSettings());
     document.getElementById('review-close')?.addEventListener('click', () => this._reviewClose());
     document.getElementById('review-body')?.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-rvact]');
@@ -3372,6 +3379,24 @@ export class App {
   }
 
   // ── settings ──
+  // Cloud sync (Dropbox) state → status bar + settings (SYNC.md). States: off (not
+  // connected), idle (connected), syncing, error. The toggle reflects connected-ness.
+  renderSyncStatus(state) {
+    const map = { syncing: 'sync…', idle: 'sync', error: 'sync err', off: '' };
+    const bar = document.getElementById('sync-status');
+    if (bar) { bar.textContent = map[state] ?? ''; bar.dataset.state = state || 'off'; }
+    const lab = document.getElementById('set-sync-state');
+    if (lab) lab.textContent = (state && state !== 'off') ? state : 'not connected';
+    const btn = document.getElementById('set-sync-toggle');
+    if (btn) btn.textContent = (state && state !== 'off') ? 'disconnect' : 'connect';
+  }
+
+  async toggleSync() {
+    if (!this.dropbox) return;
+    if (await this.dropbox.connected()) { await this.dropbox.disconnect(); this.renderSyncStatus('off'); }
+    else { await this.dropbox.connect(); }   // PKCE redirect; the post-redirect boot finishes the connect
+  }
+
   // WebMCP (Claude Code bridge) connection state → status bar + settings.
   renderWebmcpStatus(state) {
     const s = state || (this.webmcp ? this.webmcp.state() : 'unavailable');
@@ -3483,6 +3508,9 @@ export class App {
     val('set-courier-owner', s.owner_name || '');
     val('set-courier-name', s.courier_name || 'Laney');
     val('set-courier-author', s.courier_author || 'laney');
+    val('set-sync-role', s.sync_role || 'hub');
+    chk('set-sync-auto', s.sync_auto);
+    this.dropbox?.connected().then((c) => this.renderSyncStatus(c ? 'idle' : 'off')).catch(() => {});
     document.getElementById('settings-msg').textContent = '';
     const aff = this.store.feedsWithAffinity();
     document.getElementById('affinity-status').textContent = aff ? `watch data on ${aff} feeds` : 'no watch data loaded';
@@ -3763,6 +3791,8 @@ export class App {
       owner_name: document.getElementById('set-courier-owner')?.value.trim() || '',
       courier_name: document.getElementById('set-courier-name')?.value.trim() || 'Laney',
       courier_author: (document.getElementById('set-courier-author')?.value.trim() || 'laney').toLowerCase(),
+      sync_role: document.getElementById('set-sync-role')?.value || 'hub',
+      sync_auto: chk('set-sync-auto'),
     };
     await this.store.setSettings(patch);
     if (this.courier) {   // keep the live Courier config in sync; re-publish so its README/exports reflect the new identity

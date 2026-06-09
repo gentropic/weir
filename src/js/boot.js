@@ -235,6 +235,7 @@ async function boot() {
   // is opt-in via the sync_auto setting. First cut is a full content-compare mirror (the
   // change-cursor diff is the efficiency follow-up), so the FIRST sync of a large corpus is slow.
   let syncEngine = null;
+  app.dropbox = { connect: connectDropbox, disconnect: disconnectDropbox, connected: dropboxConnected };   // for the settings UI
   async function ensureSyncEngine() {
     if (syncEngine) return syncEngine;
     if (!(await dropboxConnected())) return null;

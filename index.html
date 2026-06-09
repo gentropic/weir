@@ -1171,6 +1171,7 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
       </div>
       <div class="right">
         <span id="webmcp-status" title="WebMCP — Claude Code connection"></span>
+        <span id="sync-status" class="clickable" title="Cloud sync (Dropbox) — click for settings"></span>
         <span id="bridge-status">bridge: …</span>
         <span id="persist-status">—</span>
         <span>store <span id="storage-usage">— / —</span></span>
@@ -1318,6 +1319,14 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
         <label class="set-row">folder token<input type="text" id="set-webmcp-fs-token" class="field" autocomplete="off" spellcheck="false" placeholder="machine token (no port — fs transport)"></label>
         <label class="set-row check"><input type="checkbox" id="set-mcp-feed-removal"> let Claude prune feeds (the weir_removeFeed tool — deletes a dead feed + its items; off = Claude can’t)</label>
         <div class="hint">Lets Claude Code curate weir via <b>@gcu/webmcp</b> (query/tag items, manage feeds, write to the stacks). <b>Over localhost:</b> run <code>node webmcp-bridge.js --app weir --port 7801 --info</code>, paste the <code>port:token</code>, connect (uses the @gcu/bridge extension, like the cataloger). <b>Over a folder</b> (no port, no extension): run <code>… --transport fs --folder &lt;dir&gt; --info</code>, pick that folder here, paste the token, connect — sync the folder (e.g. Syncthing) to drive weir from another machine. weir remembers either (origin-local, never in backups).</div>
+      </section>
+      <section class="set-group">
+        <h4>Cloud sync (Dropbox)</h4>
+        <div class="set-row"><span>status: <b id="set-sync-state">—</b></span><button class="btn-link" id="set-sync-toggle" type="button">connect</button></div>
+        <label class="set-row">role<select id="set-sync-role" class="field"><option value="hub">hub — fetches + owns the corpus</option><option value="reader">reader — no polling; read + annotate</option></select></label>
+        <label class="set-row check"><input type="checkbox" id="set-sync-auto"> sync automatically in the background</label>
+        <div class="set-row"><span id="set-sync-msg" class="hint">—</span><button class="btn-link" id="set-sync-now" type="button">sync now</button></div>
+        <div class="hint">Mirror the corpus across your devices over a shared <code>GCU-sync</code> Dropbox app folder (<code>/Apps/GCU-sync/weir</code>). Connect once per device. The <b>hub</b> polls feeds; <b>readers</b> (e.g. a tablet) skip polling and receive the corpus via sync. Role changes take effect on reload. The first full sync of a large corpus is slow.</div>
       </section>
       </div>
       <div class="set-pane" data-pane="about" hidden>
@@ -17226,6 +17235,12 @@ class App {
     document.getElementById('facets-head')?.addEventListener('contextmenu', (e) => { if (e.target.closest('button')) return; e.preventDefault(); this.facetsHeaderMenu(e.clientX, e.clientY); });
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
+    document.getElementById('set-sync-toggle')?.addEventListener('click', () => this.toggleSync());
+    document.getElementById('set-sync-now')?.addEventListener('click', async () => {
+      const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'syncing…';
+      try { const r = await this.syncNow?.(); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
+      catch (e) { if (el) el.textContent = 'error: ' + e.message; }
+    });
     document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder());
     document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder());
     const sv = document.getElementById('smart-views');
@@ -17283,6 +17298,7 @@ class App {
     document.getElementById('courier-prop-close')?.addEventListener('click', () => { const o = document.getElementById('courier-prop-overlay'); if (o) o.hidden = true; });
     document.getElementById('courier-prop-body')?.addEventListener('click', (e) => this._courierPropAction(e));
     document.getElementById('telegram-status')?.addEventListener('click', () => this.openSettings());
+    document.getElementById('sync-status')?.addEventListener('click', () => this.openSettings());
     document.getElementById('review-close')?.addEventListener('click', () => this._reviewClose());
     document.getElementById('review-body')?.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-rvact]');
@@ -20397,6 +20413,24 @@ class App {
   }
 
   // ── settings ──
+  // Cloud sync (Dropbox) state → status bar + settings (SYNC.md). States: off (not
+  // connected), idle (connected), syncing, error. The toggle reflects connected-ness.
+  renderSyncStatus(state) {
+    const map = { syncing: 'sync…', idle: 'sync', error: 'sync err', off: '' };
+    const bar = document.getElementById('sync-status');
+    if (bar) { bar.textContent = map[state] ?? ''; bar.dataset.state = state || 'off'; }
+    const lab = document.getElementById('set-sync-state');
+    if (lab) lab.textContent = (state && state !== 'off') ? state : 'not connected';
+    const btn = document.getElementById('set-sync-toggle');
+    if (btn) btn.textContent = (state && state !== 'off') ? 'disconnect' : 'connect';
+  }
+
+  async toggleSync() {
+    if (!this.dropbox) return;
+    if (await this.dropbox.connected()) { await this.dropbox.disconnect(); this.renderSyncStatus('off'); }
+    else { await this.dropbox.connect(); }   // PKCE redirect; the post-redirect boot finishes the connect
+  }
+
   // WebMCP (Claude Code bridge) connection state → status bar + settings.
   renderWebmcpStatus(state) {
     const s = state || (this.webmcp ? this.webmcp.state() : 'unavailable');
@@ -20508,6 +20542,9 @@ class App {
     val('set-courier-owner', s.owner_name || '');
     val('set-courier-name', s.courier_name || 'Laney');
     val('set-courier-author', s.courier_author || 'laney');
+    val('set-sync-role', s.sync_role || 'hub');
+    chk('set-sync-auto', s.sync_auto);
+    this.dropbox?.connected().then((c) => this.renderSyncStatus(c ? 'idle' : 'off')).catch(() => {});
     document.getElementById('settings-msg').textContent = '';
     const aff = this.store.feedsWithAffinity();
     document.getElementById('affinity-status').textContent = aff ? `watch data on ${aff} feeds` : 'no watch data loaded';
@@ -20788,6 +20825,8 @@ class App {
       owner_name: document.getElementById('set-courier-owner')?.value.trim() || '',
       courier_name: document.getElementById('set-courier-name')?.value.trim() || 'Laney',
       courier_author: (document.getElementById('set-courier-author')?.value.trim() || 'laney').toLowerCase(),
+      sync_role: document.getElementById('set-sync-role')?.value || 'hub',
+      sync_auto: chk('set-sync-auto'),
     };
     await this.store.setSettings(patch);
     if (this.courier) {   // keep the live Courier config in sync; re-publish so its README/exports reflect the new identity
@@ -22357,7 +22396,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '7b0fc51';          // short content hash of the bundle (build id)
+const COMMIT = '4a68215';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -22561,6 +22600,7 @@ async function boot() {
   // is opt-in via the sync_auto setting. First cut is a full content-compare mirror (the
   // change-cursor diff is the efficiency follow-up), so the FIRST sync of a large corpus is slow.
   let syncEngine = null;
+  app.dropbox = { connect: connectDropbox, disconnect: disconnectDropbox, connected: dropboxConnected };   // for the settings UI
   async function ensureSyncEngine() {
     if (syncEngine) return syncEngine;
     if (!(await dropboxConnected())) return null;

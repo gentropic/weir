@@ -100,6 +100,7 @@
       </div>
       <div class="right">
         <span id="webmcp-status" title="WebMCP — Claude Code connection"></span>
+        <span id="sync-status" class="clickable" title="Cloud sync (Dropbox) — click for settings"></span>
         <span id="bridge-status">bridge: …</span>
         <span id="persist-status">—</span>
         <span>store <span id="storage-usage">— / —</span></span>
@@ -247,6 +248,14 @@
         <label class="set-row">folder token<input type="text" id="set-webmcp-fs-token" class="field" autocomplete="off" spellcheck="false" placeholder="machine token (no port — fs transport)"></label>
         <label class="set-row check"><input type="checkbox" id="set-mcp-feed-removal"> let Claude prune feeds (the weir_removeFeed tool — deletes a dead feed + its items; off = Claude can’t)</label>
         <div class="hint">Lets Claude Code curate weir via <b>@gcu/webmcp</b> (query/tag items, manage feeds, write to the stacks). <b>Over localhost:</b> run <code>node webmcp-bridge.js --app weir --port 7801 --info</code>, paste the <code>port:token</code>, connect (uses the @gcu/bridge extension, like the cataloger). <b>Over a folder</b> (no port, no extension): run <code>… --transport fs --folder &lt;dir&gt; --info</code>, pick that folder here, paste the token, connect — sync the folder (e.g. Syncthing) to drive weir from another machine. weir remembers either (origin-local, never in backups).</div>
+      </section>
+      <section class="set-group">
+        <h4>Cloud sync (Dropbox)</h4>
+        <div class="set-row"><span>status: <b id="set-sync-state">—</b></span><button class="btn-link" id="set-sync-toggle" type="button">connect</button></div>
+        <label class="set-row">role<select id="set-sync-role" class="field"><option value="hub">hub — fetches + owns the corpus</option><option value="reader">reader — no polling; read + annotate</option></select></label>
+        <label class="set-row check"><input type="checkbox" id="set-sync-auto"> sync automatically in the background</label>
+        <div class="set-row"><span id="set-sync-msg" class="hint">—</span><button class="btn-link" id="set-sync-now" type="button">sync now</button></div>
+        <div class="hint">Mirror the corpus across your devices over a shared <code>GCU-sync</code> Dropbox app folder (<code>/Apps/GCU-sync/weir</code>). Connect once per device. The <b>hub</b> polls feeds; <b>readers</b> (e.g. a tablet) skip polling and receive the corpus via sync. Role changes take effect on reload. The first full sync of a large corpus is slow.</div>
       </section>
       </div>
       <div class="set-pane" data-pane="about" hidden>
