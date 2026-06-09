@@ -97,14 +97,14 @@ mounted via the mount table** — the designed path, not a novelty. (Mounting it
 - **Provider-agnostic by construction** — the sync engine copies `/` ↔ `/mnt/<provider>`;
   Drive/OneDrive/WebDAV become other mounted backends with **zero** sync-engine change.
 - **App structure — ONE GCU Dropbox app, subtrees by `root`.** Register a *single* app
-  ("GCU", App-folder access → `/Apps/GCU/`); each surface mounts its **subtree** via the
-  backend's `root` (weir `root:'/weir'` → `/Apps/GCU/weir`; auditable `root:'/auditable'`).
+  ("GCU-sync", App-folder access → `/Apps/GCU-sync/`); each surface mounts its **subtree** via the
+  backend's `root` (weir `root:'/weir'` → `/Apps/GCU-sync/weir`; auditable `root:'/auditable'`).
   Win: **one OAuth consent per *device*** covers all GCU surfaces (vs one-per-surface). The
   app key is a **public PKCE `client_id` — not a secret** — embedded in each *consumer's*
   OAuth code (weir, auditable), **never in `@gcu/vfs`** (the backend only sees `getToken()`'s
   output). Committing it is safe: a stranger can't get tokens with it (the auth code only
   reaches *your* registered redirect URIs). Trade-off: a GCU-app token can reach the whole
-  `/Apps/GCU/` tree (shared grant) — fine for first-party surfaces + your own data. **Escape
+  `/Apps/GCU-sync/` tree (shared grant) — fine for first-party surfaces + your own data. **Escape
   hatch:** a surface that must be isolated (untrusted/shared) gets its *own* app (`root:''` +
   its own key). *(Quota/identity is pooled under the one app — a scaling knob only if GCU ever
   has many users, not a personal-use concern.)*
