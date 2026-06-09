@@ -72,7 +72,9 @@ const $ = (id) => document.getElementById(id);
 const log = (msg, cls) => { const l = $('log'); l.innerHTML += `<span class="${cls||''}">${msg}</span>\n`; l.scrollTop = l.scrollHeight; };
 
 $('redir').textContent = REDIRECT;
-$('appkey').value = localStorage.getItem('dbx_appkey') || '';
+// Pre-filled with the spike's Dropbox app key. Safe to commit: under PKCE the app key
+// is a public client_id, not a secret (no client secret exists). Throwaway spike app.
+$('appkey').value = localStorage.getItem('dbx_appkey') || '7ei2w1mcgbqhgg1';
 $('appkey').addEventListener('input', () => localStorage.setItem('dbx_appkey', $('appkey').value.trim()));
 
 // ── PKCE helpers ──
