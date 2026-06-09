@@ -18,6 +18,7 @@
 // sync-by-default and name only what must stay local. settings.json holds the device's role,
 // mount, and connection; usage/health/the engine's own marker are local too.
 const SYNC_EXCLUDE = new Set(['/settings.json', '/usage.json', '/.health', '/sync-state.json']);
+const MANIFEST_PATH = '/sync-state.json';   // the excluded marker: per-file push signatures + (2d.2) the pull cursor
 
 // recursively list every file path under `dir` (directories are descended, not returned).
 async function syncListTree(vfs, dir) {
@@ -58,25 +59,58 @@ async function syncCopyIfDiffer(src, dst, p) {
 class SyncEngine {
   constructor({ local, remote, store = null }) {
     this.local = local;     // weir's live VFS (store.vfs)
-    this.remote = remote;   // the cloud VFS (cache-wrapped DropboxBackend), or a memory VFS in tests
+    this.remote = remote;   // the cloud VFS (DropboxBackend), or a memory VFS in tests
     this.store = store;     // optional — for the post-pull re-hydrate
+    this._manifest = null;
   }
 
-  // local → remote: copy every local file (in the sync set) the remote lacks or that differs.
+  // The sync manifest (persisted locally, excluded from sync): path → {size, mtime} as last
+  // synced, so push can skip unchanged files with a cheap stat — no content read, no re-upload.
+  // (It also holds the pull cursor once the cursor-incremental pull lands; see 2d.2 in SYNC.md.)
+  async _loadManifest() {
+    if (this._manifest) return this._manifest;
+    try { this._manifest = JSON.parse(await this.local.readFile(MANIFEST_PATH, 'utf8')); } catch { this._manifest = {}; }
+    if (!this._manifest.files) this._manifest.files = {};
+    return this._manifest;
+  }
+  async _saveManifest() { try { await this.local.writeFile(MANIFEST_PATH, JSON.stringify(this._manifest)); } catch { /* best effort */ } }
+  _sig(st) { return { size: st.size || 0, mtime: st.modified ? +new Date(st.modified) : 0 }; }
+  _changed(a, b) { return !a || a.size !== b.size || a.mtime !== b.mtime; }
+
+  // local → remote: upload only files new or changed since the last sync (cheap stat diff — no
+  // content read for unchanged files). Does NOT delete remote files that vanished locally:
+  // cross-device deletion needs tombstones (2d.2), and weir never-deletes anyway.
   async push() {
+    const man = await this._loadManifest();
     const paths = await syncCollectPaths(this.local);
-    let pushed = 0;
-    for (const p of paths) if (await syncCopyIfDiffer(this.local, this.remote, p)) pushed++;
-    return { pushed, scanned: paths.length };
+    let pushed = 0, skipped = 0;
+    for (const p of paths) {
+      let st; try { st = await this.local.stat(p); } catch { continue; }
+      const sig = this._sig(st);
+      if (!this._changed(man.files[p], sig)) { skipped++; continue; }
+      const data = await this.local.readFile(p, 'bytes');
+      const slash = p.lastIndexOf('/'); if (slash > 0) { try { await this.remote.mkdir(p.slice(0, slash), { recursive: true }); } catch { /* exists */ } }
+      await this.remote.writeFile(p, data);
+      man.files[p] = sig; pushed++;
+    }
+    await this._saveManifest();
+    return { pushed, skipped, scanned: paths.length };
   }
 
-  // remote → local: copy every remote file (in the sync set) the local lacks or that differs,
-  // then re-hydrate the store so the in-memory index reflects what arrived.
+  // remote → local: copy every remote file the local lacks or that differs, record each in the
+  // manifest (so the next push doesn't echo it straight back), then re-hydrate the store.
+  // NOTE: this is the full content-compare bootstrap — it reads every remote file. The cheap
+  // cursor-incremental pull (changes()/latestCursor() are already in the backend) is 2d.2.
   async pull() {
+    const man = await this._loadManifest();
     const paths = await syncCollectPaths(this.remote);
     let pulled = 0;
-    for (const p of paths) if (await syncCopyIfDiffer(this.remote, this.local, p)) pulled++;
-    if (pulled && this.store && typeof this.store.reload === 'function') await this.store.reload();
+    for (const p of paths) {
+      if (!(await syncCopyIfDiffer(this.remote, this.local, p))) continue;
+      pulled++;
+      try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ }
+    }
+    if (pulled) { await this._saveManifest(); if (this.store && typeof this.store.reload === 'function') await this.store.reload(); }
     return { pulled, scanned: paths.length };
   }
 }

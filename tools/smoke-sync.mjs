@@ -41,17 +41,28 @@ assert.equal(await read(remote, '/items/abc.ndjson'), '{"id":"i1"}\n{"id":"i2"}'
 assert.equal(await read(remote, '/content/abc/i1.html'), '<p>hi</p>', 'content mirrored');
 assert.equal(await read(remote, '/settings.json'), null, 'settings NOT mirrored (device-local)');
 
-// idempotent: a second push copies nothing
-assert.equal((await eng.push()).pushed, 0, 'second push is a no-op (nothing differs)');
+// manifest stat-diff: a second push uploads nothing (everything's unchanged)
+const r1b = await eng.push();
+assert.equal(r1b.pushed, 0, 'second push uploads nothing (manifest stat-diff)');
+assert.equal(r1b.skipped, 6, 'all 6 are skipped via the manifest');
+
+// change one local file → only it re-uploads
+await write(local, '/items/abc.ndjson', '{"id":"i1"}\n{"id":"i2"}\n{"id":"i9"}\n{"id":"i10"}');   // size differs
+const r1c = await eng.push();
+assert.equal(r1c.pushed, 1, `only the changed local file re-uploads (got ${r1c.pushed})`);
+assert.equal(r1c.skipped, 5, 'the other 5 are still skipped');
 
 // pull: changes on the remote flow back to local
-await write(remote, '/items/abc.ndjson', '{"id":"i1"}\n{"id":"i2"}\n{"id":"i3"}');   // remote gained an item
-await write(remote, '/feeds/xyz.json', '{"id":"xyz"}');                                // and a new feed
+await write(remote, '/items/abc.ndjson', '{"id":"r1"}\n{"id":"r2"}');   // a remote-side change
+await write(remote, '/feeds/xyz.json', '{"id":"xyz"}');                  // and a new feed
 const r2 = await eng.pull();
 assert.equal(r2.pulled, 2, `pulled the changed shard + the new feed (got ${r2.pulled})`);
-assert.equal(await read(local, '/items/abc.ndjson'), '{"id":"i1"}\n{"id":"i2"}\n{"id":"i3"}', 'local shard updated from remote');
+assert.equal(await read(local, '/items/abc.ndjson'), '{"id":"r1"}\n{"id":"r2"}', 'local shard updated from remote');
 assert.equal(await read(local, '/feeds/xyz.json'), '{"id":"xyz"}', 'new remote feed arrived locally');
 assert.equal((await eng.pull()).pulled, 0, 'second pull is a no-op');
+
+// pull recorded what it wrote → a follow-up push does NOT echo the pulled files back
+assert.equal((await eng.push()).pushed, 0, 'push does not echo just-pulled files (manifest updated on pull)');
 
 // ── store.reload(): a pull writes files underneath the store; reload() surfaces them ──
 const sa = new Store(await mk()); await sa._hydrate();
