@@ -28,6 +28,7 @@ import './dropbox.js';                   // → Dropbox sync auth (PKCE → getD
 import './store/store.js';               // → Store (uses VFS + schema globals)
 import './stacks.js';                    // → StacksStore (notes/files vault; uses store + yaml)
 import './courier.js';                   // → Courier (optional FS-backed collaborator exchange; uses store + stacks + VFS)
+import './sync.js';                      // → SyncEngine (provider-agnostic VFS mirror; the Dropbox cloud-sync engine, SYNC.md)
 import './search.js';                    // → SearchIndex (full-text v2 on Librarian; uses store + Librarian)
 import './parse/xml.js';                 // → parseXml (before feed)
 import './parse/sanitize.js';            // → sanitizeHtml (before feed)
