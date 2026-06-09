@@ -20,10 +20,15 @@ no protocol of weir's own). It *adds* a second tier for where that stance breaks
 
 Why the desktop trick can't carry mobile: it relies on a desktop **daemon** continuously
 mirroring a local folder. Mobile Dropbox (and iCloud/Drive) is **cloud-on-demand** — there
-is no continuously-synced local folder for a web app to FSA-mount, regardless of whether
-Chrome Android exposes the directory picker. So a tablet must talk to the cloud **API**
-directly. Dropbox v2 is CORS-enabled with a browser **PKCE** OAuth flow (no client secret,
-no proxy, no `@gcu/bridge`, no server) — confirmed feasible in mobile Chrome.
+is no continuously-synced local folder for a web app to mount. (Note: Chrome Android *did*
+ship the FSA pickers + persistent handles in **Chrome 132, Jan 2025** — caniuse lags on
+this — so the limit is *not* "no picker." It's that there's no synced local folder to pick,
+and Android backs handles with **SAF `content://` URIs** that **don't support atomic
+writes/renames** — so a picked folder can't safely be weir's store anyway; keep the mobile
+local store on **IndexedDB/OPFS**. SAF *can* reach Dropbox's DocumentsProvider, but that's
+a fragile, non-atomic, Android-only round-trip to the cloud.) So a tablet should talk to
+the cloud **API** directly: Dropbox v2 is CORS-enabled with a browser **PKCE** OAuth flow
+(no client secret, no proxy, no `@gcu/bridge`, no server) — feasible in mobile Chrome.
 
 The FSA-into-your-sync-folder path **stays** as the zero-config desktop option. The cloud
 backend also works on desktop, so it doubles as the *one-mechanism-everywhere* choice.
