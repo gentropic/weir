@@ -16,6 +16,7 @@ import { catalogStoreItem } from './cataloger.js';
 import { SearchIndex } from './search.js';
 import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
+import { handleDropboxRedirect, connectDropbox, disconnectDropbox, dropboxConnected, getDropboxToken } from './dropbox.js';
 import { TelegramInflux } from './telegram.js';
 import { StacksStore } from './stacks.js';
 import { Courier, DEFAULT_COURIER } from './courier.js';
@@ -48,6 +49,11 @@ async function boot() {
   document.title = `@gcu/weir`;
   initPwa();
   probeBridge();
+
+  // Returning from the Dropbox sync OAuth redirect? Exchange the code + stash the refresh
+  // token (in the OPFS vault) and strip ?code before anything else reads the URL. No-op
+  // when there's no redirect to handle (SYNC.md; the getToken seam for the DropboxBackend).
+  try { await handleDropboxRedirect(); } catch (e) { console.error('dropbox sync redirect', e); }
 
   // Pick the backend: if the user has mounted weir to a folder and the grant is
   // still live, run on it (File System Access). Anything off — no handle, lapsed
@@ -227,6 +233,7 @@ async function boot() {
       const key = o.key || (await getKey(provider));
       return catalogStoreItem(store, id, { provider, model: o.model || s.catalog_model, baseUrl: o.baseUrl || s.catalog_base_url, key, fetch: gcuFetch, ...o });
     },
+    dropbox: { connect: connectDropbox, disconnect: disconnectDropbox, connected: dropboxConnected, token: getDropboxToken },
     webmcp, search, parseFeed, feedAdapter, gcuFetch };
 
   try {

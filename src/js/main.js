@@ -24,6 +24,7 @@ import './biblio.js';                    // → detectBiblio, fetchBiblio (autho
 import './llm.js';                       // → chat, PROVIDERS, inputMultiplier (before store + cataloger)
 import './cataloger.js';                 // → catalogStoreItem (glass cataloger service; uses llm + glass)
 import './llmkeys.js';                   // → getKey/saveKey (OPFS LLM key vault, browser-only)
+import './dropbox.js';                   // → Dropbox sync auth (PKCE → getDropboxToken; refresh token in the llmkeys vault)
 import './store/store.js';               // → Store (uses VFS + schema globals)
 import './stacks.js';                    // → StacksStore (notes/files vault; uses store + yaml)
 import './courier.js';                   // → Courier (optional FS-backed collaborator exchange; uses store + stacks + VFS)
