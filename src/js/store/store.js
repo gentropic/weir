@@ -79,6 +79,13 @@ export class Store {
     try { return JSON.parse(t); } catch { return fallback; }
   }
 
+  // Bounded-concurrency map — overlaps IndexedDB reads (the boot hydrate read hundreds of
+  // shards one at a time, which was the slow-boot bottleneck). IDB serializes internally; JS
+  // is single-threaded so the Map writes inside the callbacks are race-free.
+  async _pool(items, fn, c = 16) {
+    for (let i = 0; i < items.length; i += c) await Promise.all(items.slice(i, i + c).map(fn));
+  }
+
   // ── hydrate ──
   async _hydrate() {
     for (const d of ['/feeds', '/items', '/content']) await this._ensureDir(d);
@@ -119,12 +126,11 @@ export class Store {
 
     let feedFiles = [];
     try { feedFiles = await this.vfs.readdir('/feeds'); } catch { /* empty */ }
-    for (const f of feedFiles) {
-      if (!f.endsWith('.json')) continue;
+    await this._pool(feedFiles.filter((f) => f.endsWith('.json')), async (f) => {
       const feed = await this._readJSON(`/feeds/${f}`, null);
       if (feed && feed.id) { this.feeds.set(feed.id, makeFeed(feed)); this._feedSet(feed.id); }
-    }
-    for (const fid of this.feeds.keys()) await this._loadShard(fid);
+    });
+    await this._pool([...this.feeds.keys()], (fid) => this._loadShard(fid));
     await this._loadCatalog();
     await this._loadVocab();
   }
@@ -195,9 +201,10 @@ export class Store {
     await this._ensureDir('/catalog');
     let files = [];
     try { files = await this.vfs.readdir('/catalog'); } catch { return; }
-    for (const f of files) {
-      if (!/^cards-[0-9a-f]{2}\.ndjson$/.test(f)) continue;
-      for (const line of (await this._readText(`/catalog/${f}`)).split('\n')) {
+    const cardFiles = files.filter((f) => /^cards-[0-9a-f]{2}\.ndjson$/.test(f));
+    const texts = await Promise.all(cardFiles.map((f) => this._readText(`/catalog/${f}`)));   // read shards concurrently
+    for (const text of texts) {
+      for (const line of text.split('\n')) {
         if (!line.trim()) continue;
         try { const c = JSON.parse(line); const gid = c.glass && c.glass.glass_id; if (gid) this.cards.set(String(gid), c); } catch { /* skip bad line */ }
       }
