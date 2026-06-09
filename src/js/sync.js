@@ -14,6 +14,13 @@
 // read-state; cross-device deletion via tombstones (push never deletes remote today).
 
 const SYNC_EXCLUDE = new Set(['/settings.json', '/usage.json', '/.health', '/sync-state.json']);
+// Whole subtrees kept OUT of sync. /content holds one HTML file per item (~12.8k for a big
+// corpus) — the bulk of the file count, and re-fetchable on demand (getContent re-derives) —
+// so we sync the INDEX (feeds, item shards, catalog, vocab, notes), not the article bodies.
+// Packing those bodies into per-feed shards so they CAN sync (for offline reading) is a
+// deliberate follow-up; until then a reader fetches a body when it opens the item.
+const SYNC_EXCLUDE_PREFIXES = ['/content/'];
+function syncExcluded(p) { return SYNC_EXCLUDE.has(p) || SYNC_EXCLUDE_PREFIXES.some((pre) => p.startsWith(pre)); }
 const MANIFEST_PATH = '/sync-state.json';   // the excluded marker: per-file push signatures + the pull cursor
 const CHECKPOINT = 100;      // save the manifest every N transferred files, so an interrupted big sync RESUMES (only the not-yet-recorded files re-transfer)
 const PROGRESS_EVERY = 25;   // emit a progress tick every N files
@@ -33,7 +40,7 @@ async function syncListTree(vfs, dir) {
 
 // the sync set for a tree: every file minus the device-local excludes.
 async function syncCollectPaths(vfs) {
-  return (await syncListTree(vfs, '/')).filter((p) => !SYNC_EXCLUDE.has(p));
+  return (await syncListTree(vfs, '/')).filter((p) => !syncExcluded(p));
 }
 
 // walk the tree once, calling onFile(path, stat) per non-excluded file — used by push so it
@@ -44,7 +51,7 @@ async function syncWalkStat(vfs, dir, onFile) {
     const p = dir === '/' ? '/' + name : dir + '/' + name;
     let st; try { st = await vfs.stat(p); } catch { continue; }
     if (st.type === 'directory') await syncWalkStat(vfs, p, onFile);
-    else if (!SYNC_EXCLUDE.has(p)) onFile(p, st);
+    else if (!syncExcluded(p)) onFile(p, st);
   }
 }
 
@@ -162,7 +169,7 @@ class SyncEngine {
       const res = await be.changes(cursor);
       for (const e of res.entries || []) {
         const p = this._entryToVfsPath(be, e);
-        if (!p || p === '/' || SYNC_EXCLUDE.has(p)) continue;
+        if (!p || p === '/' || syncExcluded(p)) continue;
         const tag = e['.tag'];
         if (tag === 'deleted') { try { await this.local.unlink(p); } catch { /* gone */ } delete man.files[p]; removed++; continue; }
         if (tag !== 'file') continue;   // folder

@@ -29,28 +29,28 @@ await write(local, '/settings.json', '{"sync_role":"hub","mount":"device-local"}
 // the sync set covers the corpus (incl. the easily-missed /items) and excludes settings
 const set = await syncCollectPaths(local);
 assert.ok(set.includes('/items/abc.ndjson'), 'item shards (/items) are in the sync set');
-assert.ok(set.includes('/content/abc/i1.html'), 'content is in the sync set');
+assert.ok(!set.includes('/content/abc/i1.html'), 'per-item content bodies are EXCLUDED (sync the index, not the bodies)');
 assert.ok(set.includes('/schema/vocab/domain.json'), 'nested vocab is in the sync set');
 assert.ok(!set.includes('/settings.json'), 'device-local settings is excluded');
 
 // push: local → remote mirrors the corpus, not settings
 const eng = new SyncEngine({ local, remote });
 const r1 = await eng.push();
-assert.equal(r1.pushed, 6, `pushed the 6 corpus files (got ${r1.pushed})`);
+assert.equal(r1.pushed, 5, `pushed the 5 index files — content excluded (got ${r1.pushed})`);
 assert.equal(await read(remote, '/items/abc.ndjson'), '{"id":"i1"}\n{"id":"i2"}', 'shard mirrored + content round-trips');
-assert.equal(await read(remote, '/content/abc/i1.html'), '<p>hi</p>', 'content mirrored');
+assert.equal(await read(remote, '/content/abc/i1.html'), null, 'content body NOT mirrored (excluded)');
 assert.equal(await read(remote, '/settings.json'), null, 'settings NOT mirrored (device-local)');
 
 // manifest stat-diff: a second push uploads nothing (everything's unchanged)
 const r1b = await eng.push();
 assert.equal(r1b.pushed, 0, 'second push uploads nothing (manifest stat-diff)');
-assert.equal(r1b.skipped, 6, 'all 6 are skipped via the manifest');
+assert.equal(r1b.skipped, 5, 'all 5 are skipped via the manifest');
 
 // change one local file → only it re-uploads
 await write(local, '/items/abc.ndjson', '{"id":"i1"}\n{"id":"i2"}\n{"id":"i9"}\n{"id":"i10"}');   // size differs
 const r1c = await eng.push();
 assert.equal(r1c.pushed, 1, `only the changed local file re-uploads (got ${r1c.pushed})`);
-assert.equal(r1c.skipped, 5, 'the other 5 are still skipped');
+assert.equal(r1c.skipped, 4, 'the other 4 are still skipped');
 
 // pull: changes on the remote flow back to local
 await write(remote, '/items/abc.ndjson', '{"id":"r1"}\n{"id":"r2"}');   // a remote-side change
