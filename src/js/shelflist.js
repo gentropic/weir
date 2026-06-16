@@ -106,9 +106,9 @@ ${body || '<p class="empty">No books found.</p>'}
 <script>
 const q = document.getElementById('q'), bks = [...document.querySelectorAll('.bk')], hds = [...document.querySelectorAll('h2')];
 // "shelved" checkboxes. BASELINE = what the catalog already marks shelved (the rows are
-// server-rendered `checked` from each book's meta — the source of truth). Working layer =
+// server-rendered checked from each book meta, the source of truth). Working layer =
 // localStorage (first load seeds from the catalog; after that, local ticks win). Export/
-// Import move the set as JSON — to sync ticks back into weir, or carry them between devices.
+// Import move the set as JSON, to sync ticks back into weir or carry them between devices.
 const KEY = 'weir-shelf-shelved', prog = document.getElementById('prog');
 const seeded = new Set(bks.filter((b) => b.querySelector('.shelved').checked).map((b) => b.dataset.id));
 let done; try { const ls = localStorage.getItem(KEY); done = ls ? new Set(JSON.parse(ls)) : new Set(seeded); } catch { done = new Set(seeded); }
