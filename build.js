@@ -193,6 +193,21 @@ function checkDuplicateDecls(js) {
 let js = processModules(path.join(SRC, 'js', 'main.js'), path.join(SRC, 'js'));
 checkDuplicateDecls(js);
 
+// A literal `</script>` anywhere in the inlined JS closes weir's single inline
+// <script> tag early in the browser (the HTML parser can't tell it's inside a JS
+// string), orphaning the rest of the bundle → "Unexpected end of input", blank app.
+// Modules that emit HTML strings must escape it as `<\/script>` (valid JS, still
+// `</script>` at runtime). Guard so this can never ship silently again. (Cost us a
+// broken deploy when shelflist.js's exported-HTML template had a raw close tag.)
+{
+  const m = js.match(/<\/script/i);
+  if (m) {
+    const at = js.indexOf(m[0]);
+    console.error(`Error: literal "${m[0]}" in the bundle would close weir's inline <script> early — escape it as "<\\/script>" in the module that emits HTML.\n  …${JSON.stringify(js.slice(Math.max(0, at - 50), at + 15))}…`);
+    process.exit(1);
+  }
+}
+
 const css = buildCss();
 // Build id = short content hash of the bundle. A git SHA can't go here (a commit
 // can't contain its own hash), so we hash the code itself: deterministic, changes

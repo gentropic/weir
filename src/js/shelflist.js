@@ -99,6 +99,6 @@ q.addEventListener('input', () => {
     while (s && s.tagName !== 'H2') { if (s.classList.contains('bk') && s.style.display !== 'none') any = true; s = s.nextElementSibling; }
     h.style.display = any ? '' : 'none'; }
 });
-</script>
+<\/script>
 </body></html>`;
 }

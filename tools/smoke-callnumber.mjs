@@ -53,6 +53,9 @@ assert.equal(renderReadable(v10), 'Manga : Slice-Of-Life · book Ashinano · YKK
 assert.ok(sortKey(v1) < sortKey(v3) && sortKey(v3) < sortKey(v10), 'volumes sort by seq, not year');
 // A same-year reprint of two different volumes still sorts by volume, not by title.
 assert.ok(sortKey(ykk(2, '2010')) < sortKey(ykk(11, '2010')), 'shared-year reprints still order by volume');
+// Decimal volumes (a manga "1.5") sort between 1 and 2 — and before 2 regardless of year.
+assert.ok(sortKey(ykk(1.5, '2019')) < sortKey(ykk(2, '2017')), 'volume 1.5 sorts before volume 2 (decimal-safe)');
+assert.ok(sortKey(ykk(1, '2000')) < sortKey(ykk(1.5, '2000')) && sortKey(ykk(1.5, '2000')) < sortKey(ykk(2, '2000')), '1 < 1.5 < 2');
 // A standalone book by the same author shelves with — and BEFORE — that author's series.
 const ashSolo = callNumber(card({ domain: ['manga'], entity: ['slice-of-life'], form: ['book'] }, { creator: ['Ashinano, Hitoshi'], date: '2008' }));
 assert.ok(sortKey(ashSolo) < sortKey(v1), 'standalone (no series) sorts before the author’s numbered series');

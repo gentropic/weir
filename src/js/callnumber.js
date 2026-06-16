@@ -187,6 +187,8 @@ export function sortKey(cn) {
   // regardless of the SEP char's collation — then the set code orders series among
   // themselves. (A bare '' would collide with SEP and sort high.)
   const ser = cn.series ? '1' + deriveCode(cn.series) : '0';
-  const seqPad = cn.seq != null ? String(cn.seq).padStart(4, '0') : '0000';
+  // Fixed-decimal pad so DECIMAL volumes sort right (a manga "1.5" between 1 and 2) —
+  // a plain integer padStart would put "1.5" after "2". 7 wide covers vol ≤ 9999.
+  const seqPad = cn.seq != null ? cn.seq.toFixed(2).padStart(7, '0') : '0000000';
   return [cn.cls || '00', cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', ser, seqPad, cn.year || '9999'].join(SEP);
 }
