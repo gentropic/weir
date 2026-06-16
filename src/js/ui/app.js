@@ -2774,9 +2774,19 @@ export class App {
       const url = b.isbn ? `https://openlibrary.org/isbn/${b.isbn}` : (b.lt_id ? `https://www.librarything.com/work/${b.lt_id}` : '');
       const seq = (b.seq != null && b.seq !== '' && Number.isFinite(Number(b.seq))) ? Number(b.seq) : undefined;   // volume number in a series
       const series = b.series ? String(b.series).trim() : undefined;
-      const structured = (b.ddc || b.lcc || b.isbn || series || seq != null)
-        ? { ddc: b.ddc || undefined, lcc: b.lcc || undefined, isbn: b.isbn || undefined, series, seq }
-        : undefined;
+      // MERGE the import's fields over any existing structured (don't replace) — so a
+      // re-import (e.g. LibraryThing, which carries no series/seq) refreshes isbn/ddc/lcc
+      // WITHOUT wiping series/seq that were stamped separately. (A wholesale replace
+      // clobbered YKK's series on a re-import.) Only set keys this import actually has.
+      const newStruct = {};
+      if (b.ddc) newStruct.ddc = b.ddc;
+      if (b.lcc) newStruct.lcc = b.lcc;
+      if (b.isbn) newStruct.isbn = b.isbn;
+      if (series) newStruct.series = series;
+      if (seq != null) newStruct.seq = seq;
+      const prior = this.store.items.get(id);
+      const merged = { ...((prior && prior.structured) || {}), ...newStruct };
+      const structured = Object.keys(merged).length ? merged : undefined;
       const tags = b.tags || [];
       return {
         id, feed_id: 'books', type: 'book', url,

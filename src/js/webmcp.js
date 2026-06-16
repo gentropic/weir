@@ -1016,7 +1016,7 @@ const TOOLS = [
   },
   {
     name: 'weir_addBook', fn: 'addBooks',
-    description: 'Add OR update owned/physical books in the holdings (the "Books" library) — e.g. cataloging a real shelf, or stamping series/seq onto books already there. Each book: title (required), author, isbn (→ Open Library fills cover/date/publisher), series + seq (the volume number — series+seq keep a numbered set TOGETHER and in volume order on the shelf; without seq a series scatters by year), date, tags (yours), ddc/lcc (display codes). To UPDATE an existing holding in place, pass its `id` (e.g. "book:269049145", from the shelf list / weir_queryItems) — read/saved/tags and the catalog card are preserved, but `structured` is REPLACED, so re-send its isbn/ddc/lcc alongside the new series/seq. Without an id a new book is created (keyed by isbn||title). Batch with `books:[…]` (preferred) or pass ONE book inline. Returns { inserted, updated, books }.',
+    description: 'Add OR update owned/physical books in the holdings (the "Books" library) — e.g. cataloging a real shelf, or stamping series/seq onto books already there. Each book: title (required), author, isbn (→ Open Library fills cover/date/publisher), series + seq (the volume number — series+seq keep a numbered set TOGETHER and in volume order on the shelf; without seq a series scatters by year), date, tags (yours), ddc/lcc (display codes). To UPDATE an existing holding in place, pass its `id` (e.g. "book:269049145", from the shelf list / weir_queryItems) — read/saved/tags and the catalog card are preserved, and `structured` is MERGED, so you only pass the fields you're changing (existing isbn/ddc/lcc/series/seq are kept; a plain LibraryThing re-import won't wipe a stamped series). Without an id a new book is created (keyed by isbn||title). Batch with `books:[…]` (preferred) or pass ONE book inline. Returns { inserted, updated, books }.',
     inputSchema: {
       type: 'object', properties: {
         books: {
@@ -1026,13 +1026,13 @@ const TOOLS = [
               id: { type: 'string', description: 'Existing holding id to UPDATE in place (e.g. "book:269049145"); omit to create a new book' },
               title: { type: 'string', description: 'Book title (per-volume for a series, e.g. "Yokohama Kaidashi Kikou, Vol. 3")' },
               author: { type: 'string', description: 'Author ("Surname, Given" or "Given Surname")' },
-              isbn: { type: 'string', description: 'ISBN-10/13 (enables Open Library enrichment; resend on an update — structured is replaced)' },
+              isbn: { type: 'string', description: 'ISBN-10/13 (enables Open Library enrichment)' },
               series: { type: 'string', description: 'Series title for a numbered set (e.g. "YKK")' },
               seq: { type: 'number', description: 'Volume number within the series' },
               date: { type: 'string', description: 'Publication date (year or ISO date)' },
               tags: { type: 'array', items: { type: 'string' }, description: 'Your tags (stamped as human; only applied when creating)' },
-              ddc: { type: 'string', description: 'Dewey number (display metadata; resend on an update)' },
-              lcc: { type: 'string', description: 'Library of Congress class (display metadata; resend on an update)' },
+              ddc: { type: 'string', description: 'Dewey number (display metadata)' },
+              lcc: { type: 'string', description: 'Library of Congress class (display metadata)' },
             }, required: ['title'],
           },
         },
