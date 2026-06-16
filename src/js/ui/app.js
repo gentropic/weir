@@ -195,6 +195,7 @@ export class App {
     });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
     document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
+    document.getElementById('cat-export')?.addEventListener('click', () => this.exportShelfList());
     document.getElementById('facet-guided')?.addEventListener('click', () => this.toggleFacetGuided());
     document.getElementById('facet-clear')?.addEventListener('click', () => this.clearFacetFilters());
     document.getElementById('view-sub')?.addEventListener('click', (e) => { const chip = e.target.closest('.fchip'); if (!chip || !this.catalog) return; if (chip.dataset.range === '1') { this.clearFacet(chip.dataset.facet); return; } if (chip.dataset.ex === '1') this.toggleFacetExclude(chip.dataset.facet, chip.dataset.term); else this.toggleFacet(chip.dataset.facet, chip.dataset.term); });
@@ -1043,6 +1044,22 @@ export class App {
     const b = document.getElementById('cat-shelf'); if (b) b.classList.toggle('active', this.catalogShelf);
     this._catStatus(this.catalogShelf ? 'shelf order — wandering by call number' : 'newest-first');
     this.renderStream();
+  }
+
+  // Export the BOOKS holdings as a standalone, mobile-first HTML shelf list (call-
+  // number order, grouped by class) — the walk-the-shelf checklist, built from the
+  // LIVE store so it's current. Same builder as tools/shelf-list.mjs; downloads a
+  // self-contained file (zero-dep Blob download, like the OPML/corpus exports).
+  exportShelfList() {
+    const books = [...this.store.items.values()].filter((it) => it.type === 'book' && !it.archived);
+    const sub = document.getElementById('view-sub');
+    if (!books.length) { if (sub) sub.textContent = 'no books in the library to export'; return; }
+    const html = buildShelfHtml(books, (it) => (it.glass_id && this.store.cards.get(it.glass_id)) || null);
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    const a = document.createElement('a'); a.href = url; a.download = 'weir-shelf.html'; a.click();
+    URL.revokeObjectURL(url);
+    const n = books.filter((it) => it.glass_id && this.store.cards.get(it.glass_id)).length;
+    if (sub) sub.textContent = `exported shelf list — ${books.length} books (${n} cataloged) → weir-shelf.html`;
   }
 
   toggleFacet(facet, term) {
@@ -2468,6 +2485,7 @@ export class App {
       this.searchText && this.searchText.trim() && { label: 'Save current search as view', kind: 'Command', run: () => this.saveSearchAsView() },
       { label: 'Catalog visible items with AI', kind: 'Command', run: () => this.catalogVisible() },
       this.catalog && { label: this.catalogShelf ? 'Shelf order: off (newest-first)' : 'Shelf order — wander by call number', kind: 'Command', run: () => this.toggleShelfOrder() },
+      { label: 'Export shelf list (books) → HTML', kind: 'Command', hint: 'call-number order, for the physical shelf', run: () => this.exportShelfList() },
       { label: 'Catalog all items with AI', kind: 'Command', run: () => this.catalogAll() },
       { label: 'Review queue', kind: 'Command', run: () => this.openReview() },
       this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },

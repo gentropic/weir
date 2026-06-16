@@ -1091,7 +1091,7 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
     </nav>
 
     <div class="rail-section" id="facets-section" style="display:none">
-      <div class="rail-label" id="facets-head">Facets <button id="facet-clear" class="btn-link" type="button" hidden title="Clear all facet selections">✕ clear</button> <button id="facet-guided" class="btn-link toggle" type="button" title="Narrow facets to the current selection — hide terms that would give an empty result (guided browsing). Off = show the whole vocabulary.">⊃ narrow</button> <button id="cat-shelf" class="btn-link" type="button" title="Shelf order — wander the catalog by glass call number (subject → form → author)">⊞ shelf</button> <button id="cat-run" class="btn-link" type="button" title="Catalog the shown items with AI (click again to stop)">catalog ▸</button></div>
+      <div class="rail-label" id="facets-head">Facets <button id="facet-clear" class="btn-link" type="button" hidden title="Clear all facet selections">✕ clear</button> <button id="facet-guided" class="btn-link toggle" type="button" title="Narrow facets to the current selection — hide terms that would give an empty result (guided browsing). Off = show the whole vocabulary.">⊃ narrow</button> <button id="cat-shelf" class="btn-link" type="button" title="Shelf order — wander the catalog by glass call number (subject → form → author)">⊞ shelf</button> <button id="cat-export" class="btn-link" type="button" title="Export the BOOKS holdings as a standalone HTML shelf list (call-number order) — a walk-the-shelf checklist for your phone">⤓ shelf list</button> <button id="cat-run" class="btn-link" type="button" title="Catalog the shown items with AI (click again to stop)">catalog ▸</button></div>
       <input id="facet-search" class="facet-search" type="text" placeholder="filter facets…" autocomplete="off" spellcheck="false">
       <div id="facets"></div>
     </div>
@@ -11663,6 +11663,113 @@ function sortKey(cn) {
   return [cn.cls || '00', cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', ser, seqPad, cn.year || '9999'].join(SEP);
 }
 
+// ── src/js/shelflist.js ──
+
+// Shelf list — build a self-contained, mobile-first HTML of the BOOKS holdings in
+// glass call-number (shelf) order, grouped by class·division. Pure + environment-
+// agnostic: given the book items + a card resolver, it returns the HTML string. Used
+// by BOTH the in-app export (live store) and tools/shelf-list.mjs (the on-disk
+// snapshot). Helpers live inside the function so nothing leaks a top-level name into
+// the flat-concat bundle.
+
+
+// books: array of book items (each may carry `structured.series`/`.seq`).
+// cardFor: (item) => glass card | null  (resolves the item's catalog card).
+// opts.stamp: a snapshot label (defaults to now).
+function buildShelfHtml(books, cardFor, opts = {}) {
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const titleCase = (s) => s.replace(/\b\w/g, (c) => c.toUpperCase());
+  const stamp = opts.stamp || new Date().toISOString().slice(0, 16).replace('T', ' ');
+
+  const rows = (books || []).map((b) => {
+    const s = b.structured || {};
+    const card = cardFor(b) || null;
+    const cn = card ? callNumber(card, { series: s.series, seq: s.seq }) : null;
+    const domainTerm = (cn && cn.terms && cn.terms.domain) ? cn.terms.domain : null;
+    return {
+      title: b.title || '(untitled)',
+      author: b.author || (card && (card.dublin_core.creator || [])[0]) || '',
+      series: s.series || null,
+      seq: (s.seq != null && s.seq !== '') ? s.seq : null,
+      cataloged: !!card,
+      coded: cn ? renderCoded(cn) : null,
+      sk: cn ? sortKey(cn) : '~~~',
+      cls: cn ? cn.cls : null,
+      className: cn ? (CLASS_NAMES[cn.cls] || 'General & reference') : null,
+      domain: domainTerm ? titleCase(domainTerm) : 'Unclassified',
+    };
+  });
+
+  // Shelf order: cataloged by call number (class → division → domain → form → author →
+  // series → volume); uncataloged sink to the end, by title.
+  const cataloged = rows.filter((r) => r.cataloged).sort((a, b) => (a.sk < b.sk ? -1 : a.sk > b.sk ? 1 : a.title.localeCompare(b.title)));
+  const uncataloged = rows.filter((r) => !r.cataloged).sort((a, b) => a.title.localeCompare(b.title));
+
+  let body = '', lastCls = null;
+  for (const r of cataloged) {
+    if (r.cls !== lastCls) { body += `<h2><span class="ci">${esc(r.cls)}</span>${esc(r.className)}</h2>`; lastCls = r.cls; }
+    const vol = r.seq != null ? `<span class="vol">${esc(r.series || 'vol')} ${esc(r.seq)}</span>` : '';
+    body += `<div class="bk"><code class="cn">${esc(r.coded)}</code><div class="meta"><span class="ti">${esc(r.title)}</span>${vol}<span class="dom">${esc(r.domain)}</span>${r.author ? `<span class="au">${esc(r.author)}</span>` : ''}</div></div>`;
+  }
+  if (uncataloged.length) {
+    body += `<h2 class="todo">Not yet cataloged · ${uncataloged.length}</h2>`;
+    for (const r of uncataloged) {
+      body += `<div class="bk"><code class="cn cn-none">—</code><div class="meta"><span class="ti">${esc(r.title)}</span>${r.author ? `<span class="au">${esc(r.author)}</span>` : ''}</div></div>`;
+    }
+  }
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>weir — shelf list</title>
+<style>
+:root { color-scheme: light dark; --bg:#15171a; --fg:#e7e3da; --dim:#9a958a; --line:#2c2f34; --acc:#d9a441; --cn:#7fb3d5; }
+* { box-sizing: border-box; }
+body { margin:0; padding:16px 14px 64px; background:var(--bg); color:var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height:1.35; -webkit-text-size-adjust:100%; }
+header { position:sticky; top:0; background:var(--bg); padding-bottom:10px; margin-bottom:6px; border-bottom:1px solid var(--line); z-index:2; }
+h1 { font-size:1.15rem; margin:0 0 2px; letter-spacing:.02em; }
+.sub { color:var(--dim); font-size:.78rem; }
+#q { width:100%; margin-top:10px; padding:9px 11px; font-size:1rem; border:1px solid var(--line);
+  border-radius:9px; background:#1d2024; color:var(--fg); }
+h2 { font-size:.74rem; text-transform:uppercase; letter-spacing:.14em; color:var(--acc);
+  margin:22px 0 7px; padding-bottom:3px; border-bottom:1px dashed var(--line); }
+h2.todo { color:var(--dim); }
+.ci { display:inline-block; min-width:2.2em; margin-right:9px; padding:0 5px; color:var(--bg); background:var(--acc);
+  border-radius:5px; text-align:center; font-weight:700; font-variant-numeric:tabular-nums; }
+.dom { font-size:.62rem; color:var(--dim); text-transform:uppercase; letter-spacing:.07em; }
+.bk { display:flex; gap:11px; align-items:baseline; padding:7px 2px; border-bottom:1px solid #1f2226; }
+.cn { font-family:"SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size:.72rem; color:var(--cn);
+  white-space:nowrap; flex:0 0 auto; min-width:9.5em; }
+.cn-none { color:var(--dim); }
+.meta { display:flex; flex-wrap:wrap; gap:3px 9px; align-items:baseline; }
+.ti { font-weight:600; }
+.au { color:var(--dim); font-size:.86rem; }
+.vol { font-size:.66rem; background:#2a2620; color:var(--acc); border:1px solid #3a342a;
+  padding:1px 6px; border-radius:20px; white-space:nowrap; }
+.empty { color:var(--dim); padding:20px 0; }
+@media (min-width:640px){ .cn { min-width:11em; } body { max-width:760px; margin:0 auto; } }
+</style></head><body>
+<header>
+  <h1>weir — shelf list</h1>
+  <div class="sub">${cataloged.length} cataloged · ${uncataloged.length} uncataloged · ${rows.length} books · snapshot ${esc(stamp)}</div>
+  <input id="q" type="search" placeholder="filter title / author / call number…" autocomplete="off">
+</header>
+<main id="list">
+${body || '<p class="empty">No books found.</p>'}
+</main>
+<script>
+const q = document.getElementById('q'), bks = [...document.querySelectorAll('.bk')], hds = [...document.querySelectorAll('h2')];
+q.addEventListener('input', () => {
+  const n = q.value.trim().toLowerCase();
+  for (const b of bks) b.style.display = (!n || b.textContent.toLowerCase().includes(n)) ? '' : 'none';
+  for (const h of hds) { let s = h.nextElementSibling, any = false;
+    while (s && s.tagName !== 'H2') { if (s.classList.contains('bk') && s.style.display !== 'none') any = true; s = s.nextElementSibling; }
+    h.style.display = any ? '' : 'none'; }
+});
+</script>
+</body></html>`;
+}
+
 // ── src/js/biblio.js ──
 
 // Bibliographic enricher — for items that ARE a paper or a book (an arXiv ID, a
@@ -17598,6 +17705,7 @@ class App {
     });
     document.getElementById('cat-run')?.addEventListener('click', () => this.catalogVisible());
     document.getElementById('cat-shelf')?.addEventListener('click', () => this.toggleShelfOrder());
+    document.getElementById('cat-export')?.addEventListener('click', () => this.exportShelfList());
     document.getElementById('facet-guided')?.addEventListener('click', () => this.toggleFacetGuided());
     document.getElementById('facet-clear')?.addEventListener('click', () => this.clearFacetFilters());
     document.getElementById('view-sub')?.addEventListener('click', (e) => { const chip = e.target.closest('.fchip'); if (!chip || !this.catalog) return; if (chip.dataset.range === '1') { this.clearFacet(chip.dataset.facet); return; } if (chip.dataset.ex === '1') this.toggleFacetExclude(chip.dataset.facet, chip.dataset.term); else this.toggleFacet(chip.dataset.facet, chip.dataset.term); });
@@ -18446,6 +18554,22 @@ class App {
     const b = document.getElementById('cat-shelf'); if (b) b.classList.toggle('active', this.catalogShelf);
     this._catStatus(this.catalogShelf ? 'shelf order — wandering by call number' : 'newest-first');
     this.renderStream();
+  }
+
+  // Export the BOOKS holdings as a standalone, mobile-first HTML shelf list (call-
+  // number order, grouped by class) — the walk-the-shelf checklist, built from the
+  // LIVE store so it's current. Same builder as tools/shelf-list.mjs; downloads a
+  // self-contained file (zero-dep Blob download, like the OPML/corpus exports).
+  exportShelfList() {
+    const books = [...this.store.items.values()].filter((it) => it.type === 'book' && !it.archived);
+    const sub = document.getElementById('view-sub');
+    if (!books.length) { if (sub) sub.textContent = 'no books in the library to export'; return; }
+    const html = buildShelfHtml(books, (it) => (it.glass_id && this.store.cards.get(it.glass_id)) || null);
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    const a = document.createElement('a'); a.href = url; a.download = 'weir-shelf.html'; a.click();
+    URL.revokeObjectURL(url);
+    const n = books.filter((it) => it.glass_id && this.store.cards.get(it.glass_id)).length;
+    if (sub) sub.textContent = `exported shelf list — ${books.length} books (${n} cataloged) → weir-shelf.html`;
   }
 
   toggleFacet(facet, term) {
@@ -19871,6 +19995,7 @@ class App {
       this.searchText && this.searchText.trim() && { label: 'Save current search as view', kind: 'Command', run: () => this.saveSearchAsView() },
       { label: 'Catalog visible items with AI', kind: 'Command', run: () => this.catalogVisible() },
       this.catalog && { label: this.catalogShelf ? 'Shelf order: off (newest-first)' : 'Shelf order — wander by call number', kind: 'Command', run: () => this.toggleShelfOrder() },
+      { label: 'Export shelf list (books) → HTML', kind: 'Command', hint: 'call-number order, for the physical shelf', run: () => this.exportShelfList() },
       { label: 'Catalog all items with AI', kind: 'Command', run: () => this.catalogAll() },
       { label: 'Review queue', kind: 'Command', run: () => this.openReview() },
       this.selectedId && { label: 'Tag selected item…', kind: 'Command', run: () => this.openTagEditor(this.selectedId) },
@@ -22854,7 +22979,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'b62df11';          // short content hash of the bundle (build id)
+const COMMIT = '2f83ef5';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
