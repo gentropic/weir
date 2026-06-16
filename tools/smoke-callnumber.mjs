@@ -63,6 +63,7 @@ assert.equal(DOMAIN_CODES.manga, 'MGA', 'curated manga code'); assert.equal(DOMA
 assert.equal(classOf('geology'), '36'); assert.equal(classOf('statistics'), '32'); assert.equal(classOf('mathematics'), '31');
 assert.equal(classOf('computer science'), '51'); assert.equal(classOf('data science'), '52'); assert.equal(classOf('language'), '71');
 assert.equal(classOf('economics'), '20', 'undivided class stays at x0'); assert.equal(classOf('medicine'), '40');
+assert.equal(classOf('image processing'), '51', 'image processing → CS & software'); assert.equal(classOf('cooking'), '91', 'cooking division'); assert.equal(classOf('gaming'), '93', 'games division');
 assert.equal(classOf('made-up-domain'), '00', 'unmapped → general (00)');
 
 // ── sort wanders by subject: a linear browse groups the shelf by topic ──

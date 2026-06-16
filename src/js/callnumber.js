@@ -51,7 +51,8 @@ export const CLASS_NAMES = {
   '53': 'Electronics & hardware', '54': 'Engineering', '55': 'Networking & security',
   '60': 'Arts & design',
   '70': 'Literature', '71': 'Language', '72': 'Comics & manga',
-  '80': 'History', '90': 'Recreation & practical',
+  '80': 'History',
+  '90': 'Recreation & lifestyle', '91': 'Cooking & food', '92': 'Crafts & making', '93': 'Games & hobbies',
 };
 const DOMAIN_CLASS = {
   // 00 — General & reference (also the fallback for anything unmapped)
@@ -76,6 +77,7 @@ const DOMAIN_CLASS = {
   // 5x — Technology & engineering (split)
   technology: '50', retrocomputing: '50', diy: '50', maker: '50', '3d printing': '50', 'home automation': '50', infrastructure: '50', simulation: '50', energy: '50',
   computing: '51', 'computer science': '51', programming: '51', software: '51', 'software development': '51', 'software engineering': '51', 'web development': '51', devops: '51', databases: '51', 'cloud computing': '51',
+  'image processing': '51', 'computer vision': '51', imaging: '51', 'signal processing': '51',
   'data science': '52', 'machine learning': '52', 'artificial intelligence': '52',
   electronics: '53', hardware: '53', 'embedded systems': '53', iot: '53',
   engineering: '54', 'mechanical engineering': '54', manufacturing: '54', robotics: '54', aerospace: '54', automotive: '54', aviation: '54',
@@ -89,10 +91,11 @@ const DOMAIN_CLASS = {
   manga: '72', comics: '72', anime: '72',
   // 80 — History
   history: '80', archaeology: '80',
-  // 90 — Recreation & practical
-  cooking: '90', food: '90', crafts: '90', crafting: '90', craft: '90', craftsmanship: '90', woodworking: '90', metalworking: '90',
-  gardening: '90', hobbies: '90', hobby: '90', gaming: '90', sports: '90', travel: '90', tourism: '90', collectibles: '90', pets: '90',
-  outdoor: '90', 'home improvement': '90', furniture: '90', stationery: '90', coffee: '90', lifestyle: '90', productivity: '90', 'self-help': '90',
+  // 9x — Recreation & practical (split)
+  lifestyle: '90', productivity: '90', 'self-help': '90', travel: '90', tourism: '90', outdoor: '90', sports: '90', collectibles: '90', pets: '90', 'home improvement': '90', furniture: '90', stationery: '90',
+  cooking: '91', food: '91', coffee: '91', baking: '91',
+  crafts: '92', crafting: '92', craft: '92', craftsmanship: '92', woodworking: '92', metalworking: '92', gardening: '92',
+  gaming: '93', hobbies: '93', hobby: '93',
 };
 // The 2-digit class for a domain TERM (the readable term, not its code). Unmapped → '00' (general).
 export function classOf(term) {
