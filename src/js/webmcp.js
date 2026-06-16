@@ -790,7 +790,45 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, ...r };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  // Add owned/physical books to the holdings (the "Books" library). title + author,
+  // plus optional isbn (→ Open Library enrichment fills gaps), series + seq (the
+  // volume; series+seq keep a set TOGETHER and in volume order via the call number —
+  // see callnumber.js), publish date, your tags, and DDC/LCC display codes. Reuses
+  // the LibraryThing import path, so it's idempotent: re-adding a book UPDATES it
+  // (matched by isbn or title) and never resets read/saved/tags. Batch via `books`,
+  // or pass one book's fields inline. Returns { inserted, updated, books }.
+  async function addBooks(input = {}) {
+    if (!app || !app.importBooks) throw new Error('addBooks is only available in the running app');
+    const list = Array.isArray(input.books) ? input.books : (input.title ? [input] : null);
+    if (!list || !list.length) throw new Error('pass books:[{ title, author?, isbn?, series?, seq?, date?, tags?, ddc?, lcc? }] (or a single book inline)');
+    const norm = list.map((b) => ({
+      // `id` (an existing holding, e.g. "book:269049145" from the shelf list) UPDATES
+      // that item in place; the import keys on lt_id, so strip the "book:" prefix.
+      lt_id: b.id ? String(b.id).replace(/^book:/, '') : (b.lt_id != null ? String(b.lt_id) : undefined),
+      title: String(b.title || '').trim(),
+      author: b.author ? String(b.author).trim() : undefined,
+      isbn: b.isbn ? String(b.isbn).replace(/[^0-9xX]/gi, '') : undefined,
+      series: b.series ? String(b.series).trim() : undefined,
+      seq: (b.seq != null && b.seq !== '' && Number.isFinite(Number(b.seq))) ? Number(b.seq) : undefined,
+      date: b.date || undefined,
+      tags: Array.isArray(b.tags) ? [...new Set(b.tags.map((t) => String(t).trim()).filter(Boolean))] : undefined,
+      ddc: b.ddc || undefined, lcc: b.lcc || undefined,
+    })).filter((b) => b.title);
+    if (!norm.length) throw new Error('every book needs a title');
+    // The import keys by lt_id (when targeting an existing holding) else by isbn||title;
+    // a collision inside one batch would silently drop a book, so reject it up front
+    // (a NEW series volume needs a per-VOLUME title or isbn; an UPDATE needs its id).
+    const seen = new Map();
+    for (const b of norm) {
+      const k = (b.lt_id ? 'id:' + b.lt_id : (b.isbn || b.title)).toLowerCase();
+      if (seen.has(k)) throw new Error(`two books share the dedup key "${k}" — give each a distinct title (e.g. include the volume), an isbn, or a distinct id`);
+      seen.set(k, true);
+    }
+    const res = await app.importBooks(norm, 'manual');
+    return { inserted: res.inserted, updated: res.updated, books: norm.length };
+  }
+
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -975,6 +1013,36 @@ const TOOLS = [
     description: 'Bring EVERY archived item back to active and clear its expiry (so retention won\'t re-shelve it) — the one-shot "I keep everything" restore that reverses an over-eager auto-archive sweep. Reversible; nothing is deleted. Returns { unarchived }.',
     inputSchema: { type: 'object', properties: {} },
     annotations: { title: 'Unarchive everything' },
+  },
+  {
+    name: 'weir_addBook', fn: 'addBooks',
+    description: 'Add OR update owned/physical books in the holdings (the "Books" library) — e.g. cataloging a real shelf, or stamping series/seq onto books already there. Each book: title (required), author, isbn (→ Open Library fills cover/date/publisher), series + seq (the volume number — series+seq keep a numbered set TOGETHER and in volume order on the shelf; without seq a series scatters by year), date, tags (yours), ddc/lcc (display codes). To UPDATE an existing holding in place, pass its `id` (e.g. "book:269049145", from the shelf list / weir_queryItems) — read/saved/tags and the catalog card are preserved, but `structured` is REPLACED, so re-send its isbn/ddc/lcc alongside the new series/seq. Without an id a new book is created (keyed by isbn||title). Batch with `books:[…]` (preferred) or pass ONE book inline. Returns { inserted, updated, books }.',
+    inputSchema: {
+      type: 'object', properties: {
+        books: {
+          type: 'array', description: 'The books to add/update (batch).',
+          items: {
+            type: 'object', properties: {
+              id: { type: 'string', description: 'Existing holding id to UPDATE in place (e.g. "book:269049145"); omit to create a new book' },
+              title: { type: 'string', description: 'Book title (per-volume for a series, e.g. "Yokohama Kaidashi Kikou, Vol. 3")' },
+              author: { type: 'string', description: 'Author ("Surname, Given" or "Given Surname")' },
+              isbn: { type: 'string', description: 'ISBN-10/13 (enables Open Library enrichment; resend on an update — structured is replaced)' },
+              series: { type: 'string', description: 'Series title for a numbered set (e.g. "YKK")' },
+              seq: { type: 'number', description: 'Volume number within the series' },
+              date: { type: 'string', description: 'Publication date (year or ISO date)' },
+              tags: { type: 'array', items: { type: 'string' }, description: 'Your tags (stamped as human; only applied when creating)' },
+              ddc: { type: 'string', description: 'Dewey number (display metadata; resend on an update)' },
+              lcc: { type: 'string', description: 'Library of Congress class (display metadata; resend on an update)' },
+            }, required: ['title'],
+          },
+        },
+        id: { type: 'string', description: 'Shortcut: update a single existing holding by id' },
+        title: { type: 'string', description: 'Shortcut: add/update a single book by its title (with the same sibling fields)' },
+        author: { type: 'string' }, isbn: { type: 'string' }, series: { type: 'string' }, seq: { type: 'number' },
+        date: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, ddc: { type: 'string' }, lcc: { type: 'string' },
+      },
+    },
+    annotations: { title: 'Add/update book(s) in holdings' },
   },
   {
     name: 'weir_catalogItem', fn: 'catalogItem',

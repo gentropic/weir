@@ -33,6 +33,28 @@ assert.equal(bare.domain, 'GEN', 'no domain → GEN');
 assert.equal(renderReadable(bare), 'Unclassified', 'readable handles empty');
 assert.ok(sortKey(bare).startsWith('GEN'), 'sortable even when bare');
 
+// ── a numbered series (YKK): seq keeps the set together + in VOLUME order ──
+// All volumes share author/subject/form, so before `seq` they'd sort by year and a
+// reprint (shared year) would scramble. With seq they group + order by volume.
+const ykk = (n, date) => callNumber(
+  card({ domain: ['comics'], entity: ['slice-of-life'], form: ['book'] }, { creator: ['Ashinano, Hitoshi'], date }),
+  { series: 'YKK', seq: n },
+);
+const v3 = ykk(3, '1996'), v10 = ykk(10, '2001'), v1 = ykk(1, '1994');
+assert.equal(v3.seq, 3, 'seq carried onto the call number');
+assert.equal(v3.series, 'YKK', 'series carried onto the call number');
+assert.equal(renderCoded(v3), 'COM·SLI·B·ASH·YKK·v.03', 'series volume coded: set code + zero-padded volume, no year');
+assert.equal(renderReadable(v10), 'Comics : Slice-Of-Life · book Ashinano · YKK vol. 10', 'series volume readable');
+// Volume order holds even when years are out of sequence (reprints): v1 < v3 < v10.
+assert.ok(sortKey(v1) < sortKey(v3) && sortKey(v3) < sortKey(v10), 'volumes sort by seq, not year');
+// A same-year reprint of two different volumes still sorts by volume, not by title.
+assert.ok(sortKey(ykk(2, '2010')) < sortKey(ykk(11, '2010')), 'shared-year reprints still order by volume');
+// A standalone book by the same author shelves with — and BEFORE — that author's series.
+const ashSolo = callNumber(card({ domain: ['comics'], entity: ['slice-of-life'], form: ['book'] }, { creator: ['Ashinano, Hitoshi'], date: '2008' }));
+assert.ok(sortKey(ashSolo) < sortKey(v1), 'standalone (no series) sorts before the author’s numbered series');
+// Non-series rendering is untouched by the new fields.
+assert.equal(renderCoded(ashSolo), 'COM·SLI·B·ASH·08', 'standalone coded unchanged (ends in year)');
+
 // ── sort wanders by subject: a linear browse groups the shelf by topic ──
 const cards = [
   callNumber(card({ domain: ['music'], entity: ['synthesis'], form: ['article'] }, { creator: ['Bo'], date: '2020' })),

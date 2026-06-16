@@ -53,38 +53,67 @@ function titleCase(s) { return String(s || '').replace(/\b\w/g, (c) => c.toUpper
 // Build the structured call number from a glass card. Picks the PRIMARY (first,
 // salience-ordered) domain + subdomain — the Ranganathan "class where most useful"
 // decision, made once. Keeps the readable terms alongside the codes for the UI.
-export function callNumber(card, { codes = DOMAIN_CODES } = {}) {
+//
+// `series` + `seq` (a series title + volume number) belong to a numbered set — a
+// manga/book series like YKK. Supplied via opts (the caller pulls them from the
+// item's `structured`) or carried on the card. They keep a series TOGETHER and in
+// VOLUME order on the shelf: the per-volume year would otherwise scatter a set
+// (reprints share a year; first editions span years). Absent for everything that
+// isn't a numbered series, where the call number is unchanged.
+export function callNumber(card, { codes = DOMAIN_CODES, series, seq } = {}) {
   const f = (card && card.facets) || {};
   const dc = (card && card.dublin_core) || {};
+  const st = (card && card.structured) || {};
   const domain = (f.domain || [])[0] || null;
   const sub = (f.entity || [])[0] || (f.process || [])[0] || null;
   const form = (f.form || [])[0] || null;
   const creator = (dc.creator || [])[0] || null;
   const year = (String(dc.date || '').match(/\d{4}/) || [null])[0];
+  const ser = ((series ?? st.series) ? String(series ?? st.series).trim() : '') || null;
+  const rawSeq = seq ?? st.seq;
+  const seqN = (rawSeq === 0 || rawSeq) && Number.isFinite(Number(rawSeq)) ? Number(rawSeq) : null;
   return {
     domain: domain ? codeFor(domain, codes) : 'GEN',
     sub: sub ? codeFor(sub, codes) : null,
     form: FORM_CODE[form] || (form ? String(form)[0].toUpperCase() : null),
     cutter: cutter(creator),
     year,
-    terms: { domain, sub, form, creator },   // for the readable rendering
+    series: ser,
+    seq: seqN,
+    terms: { domain, sub, form, creator, series: ser },   // for the readable rendering
   };
 }
 
 const SEP = '·';
-// Coded — spine-writable, Dewey-recognition feel. Year as 2 digits.
+// Coded — spine-writable, Dewey-recognition feel. A series volume ends in its set
+// code + zero-padded volume (`…·YOK·v.03`) — the volume is the disambiguator, so the
+// year drops off the spine; everything else ends in the 2-digit year as before.
 export function renderCoded(cn) {
-  return [cn.domain, cn.sub, cn.form, cn.cutter, cn.year && cn.year.slice(2)].filter(Boolean).join(SEP);
+  const head = [cn.domain, cn.sub, cn.form, cn.cutter];
+  const tail = cn.seq != null
+    ? [cn.series ? deriveCode(cn.series) : null, `v.${String(cn.seq).padStart(2, '0')}`]
+    : [cn.year && cn.year.slice(2)];
+  return [...head, ...tail].filter(Boolean).join(SEP);
 }
-// Readable — full words for the weir UI.
+// Readable — full words for the weir UI. A series volume reads "… · book Ashinano · YKK vol. 3"
+// (the set gets its own `·` segment; the per-volume year drops off in favour of the volume).
 export function renderReadable(cn) {
   const t = cn.terms || {};
   const subject = [t.domain, t.sub].filter(Boolean).map(titleCase).join(' : ');
-  const tail = [t.form, surnameOf(t.creator) || null, cn.year].filter(Boolean).join(' ');
-  return [subject || 'Unclassified', tail].filter(Boolean).join(' · ');
+  const tail = [t.form, surnameOf(t.creator) || null, cn.seq != null ? null : cn.year].filter(Boolean).join(' ');
+  const setSeg = cn.seq != null ? [t.series || null, `vol. ${cn.seq}`].filter(Boolean).join(' ') : null;
+  return [subject || 'Unclassified', tail, setSeg].filter(Boolean).join(' · ');
 }
 // Sort key — coded, uppercase, padded so a plain string sort wanders subject →
-// subdomain → form → author → year (missing fields sink to the end).
+// subdomain → form → author → SERIES → volume → year (missing fields sink to the
+// end). The series segment ('' for standalone, so they precede an author's series)
+// + the zero-padded volume keep a set together and in order; year is the final
+// tiebreak (so non-series behaviour — sort within an author by year — is unchanged).
 export function sortKey(cn) {
-  return [cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', cn.year || '9999'].join(SEP);
+  // Leading rank digit so a standalone book ('0') always precedes a series ('1…'),
+  // regardless of the SEP char's collation — then the set code orders series among
+  // themselves. (A bare '' would collide with SEP and sort high.)
+  const ser = cn.series ? '1' + deriveCode(cn.series) : '0';
+  const seqPad = cn.seq != null ? String(cn.seq).padStart(4, '0') : '0000';
+  return [cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', ser, seqPad, cn.year || '9999'].join(SEP);
 }

@@ -1029,7 +1029,11 @@ export class App {
   // not yet cataloged — only holdings have a shelf address.
   _callNumber(it) {
     const card = it.glass_id && this.store.cards.get(it.glass_id);
-    return card ? callNumber(card) : null;
+    if (!card) return null;
+    // series/seq live on the item's `structured` (set at import/add time) — pass them
+    // so a numbered set (e.g. a manga series) shelves together and in volume order.
+    const s = it.structured || {};
+    return callNumber(card, { series: s.series, seq: s.seq });
   }
 
   // Wander the shelf — toggle the catalog stream between recency and glass call-
@@ -2750,7 +2754,11 @@ export class App {
     const raws = books.map((b) => {
       const id = `book:${b.lt_id || `h${hash32(String(b.isbn || b.title || '').toLowerCase())}`}`;
       const url = b.isbn ? `https://openlibrary.org/isbn/${b.isbn}` : (b.lt_id ? `https://www.librarything.com/work/${b.lt_id}` : '');
-      const structured = (b.ddc || b.lcc || b.isbn) ? { ddc: b.ddc || undefined, lcc: b.lcc || undefined, isbn: b.isbn || undefined } : undefined;
+      const seq = (b.seq != null && b.seq !== '' && Number.isFinite(Number(b.seq))) ? Number(b.seq) : undefined;   // volume number in a series
+      const series = b.series ? String(b.series).trim() : undefined;
+      const structured = (b.ddc || b.lcc || b.isbn || series || seq != null)
+        ? { ddc: b.ddc || undefined, lcc: b.lcc || undefined, isbn: b.isbn || undefined, series, seq }
+        : undefined;
       const tags = b.tags || [];
       return {
         id, feed_id: 'books', type: 'book', url,
