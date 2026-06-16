@@ -11692,6 +11692,7 @@ function buildShelfHtml(books, cardFor, opts = {}) {
     const cn = card ? callNumber(card, { series: s.series, seq: s.seq }) : null;
     const domainTerm = (cn && cn.terms && cn.terms.domain) ? cn.terms.domain : null;
     return {
+      id: b.id,
       title: b.title || '(untitled)',
       author: b.author || (card && (card.dublin_core.creator || [])[0]) || '',
       series: s.series || null,
@@ -11710,17 +11711,20 @@ function buildShelfHtml(books, cardFor, opts = {}) {
   const cataloged = rows.filter((r) => r.cataloged).sort((a, b) => (a.sk < b.sk ? -1 : a.sk > b.sk ? 1 : a.title.localeCompare(b.title)));
   const uncataloged = rows.filter((r) => !r.cataloged).sort((a, b) => a.title.localeCompare(b.title));
 
+  // Each row is a <label> wrapping a checkbox so tapping anywhere on it toggles
+  // "shelved" (handy while walking the shelf); state persists in localStorage by the
+  // book's stable item id.
+  const row = (r, coded, extra = '') =>
+    `<label class="bk" data-id="${esc(r.id)}"><input type="checkbox" class="shelved"><code class="cn${coded ? '' : ' cn-none'}">${esc(coded || '—')}</code><div class="meta"><span class="ti">${esc(r.title)}</span>${extra}${r.author ? `<span class="au">${esc(r.author)}</span>` : ''}</div></label>`;
   let body = '', lastCls = null;
   for (const r of cataloged) {
     if (r.cls !== lastCls) { body += `<h2><span class="ci">${esc(r.cls)}</span>${esc(r.className)}</h2>`; lastCls = r.cls; }
     const vol = r.seq != null ? `<span class="vol">${esc(r.series || 'vol')} ${esc(r.seq)}</span>` : '';
-    body += `<div class="bk"><code class="cn">${esc(r.coded)}</code><div class="meta"><span class="ti">${esc(r.title)}</span>${vol}<span class="dom">${esc(r.domain)}</span>${r.author ? `<span class="au">${esc(r.author)}</span>` : ''}</div></div>`;
+    body += row(r, r.coded, `${vol}<span class="dom">${esc(r.domain)}</span>`);
   }
   if (uncataloged.length) {
     body += `<h2 class="todo">Not yet cataloged · ${uncataloged.length}</h2>`;
-    for (const r of uncataloged) {
-      body += `<div class="bk"><code class="cn cn-none">—</code><div class="meta"><span class="ti">${esc(r.title)}</span>${r.author ? `<span class="au">${esc(r.author)}</span>` : ''}</div></div>`;
-    }
+    for (const r of uncataloged) body += row(r, null);
   }
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -11742,7 +11746,11 @@ h2.todo { color:var(--dim); }
 .ci { display:inline-block; min-width:2.2em; margin-right:9px; padding:0 5px; color:var(--bg); background:var(--acc);
   border-radius:5px; text-align:center; font-weight:700; font-variant-numeric:tabular-nums; }
 .dom { font-size:.62rem; color:var(--dim); text-transform:uppercase; letter-spacing:.07em; }
-.bk { display:flex; gap:11px; align-items:baseline; padding:7px 2px; border-bottom:1px solid #1f2226; }
+.bk { display:flex; gap:10px; align-items:baseline; padding:8px 2px; border-bottom:1px solid #1f2226; cursor:pointer; }
+.shelved { flex:0 0 auto; width:18px; height:18px; accent-color:var(--acc); align-self:flex-start; margin-top:2px; }
+.bk.done { opacity:.42; }
+.bk.done .ti { text-decoration:line-through; }
+#prog { color:var(--acc); }
 .cn { font-family:"SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size:.72rem; color:var(--cn);
   white-space:nowrap; flex:0 0 auto; min-width:9.5em; }
 .cn-none { color:var(--dim); }
@@ -11756,7 +11764,7 @@ h2.todo { color:var(--dim); }
 </style></head><body>
 <header>
   <h1>weir — shelf list</h1>
-  <div class="sub">${cataloged.length} cataloged · ${uncataloged.length} uncataloged · ${rows.length} books · snapshot ${esc(stamp)}</div>
+  <div class="sub">${cataloged.length} cataloged · ${uncataloged.length} uncataloged · ${rows.length} books · <span id="prog">0 shelved</span> · snapshot ${esc(stamp)}</div>
   <input id="q" type="search" placeholder="filter title / author / call number…" autocomplete="off">
 </header>
 <main id="list">
@@ -11764,6 +11772,21 @@ ${body || '<p class="empty">No books found.</p>'}
 </main>
 <script>
 const q = document.getElementById('q'), bks = [...document.querySelectorAll('.bk')], hds = [...document.querySelectorAll('h2')];
+// "shelved" checkboxes — persisted in localStorage by each book's stable item id, so
+// ticks survive reopening the file (per browser origin; serve it for phone persistence).
+const KEY = 'weir-shelf-shelved', prog = document.getElementById('prog');
+let done; try { done = new Set(JSON.parse(localStorage.getItem(KEY) || '[]')); } catch { done = new Set(); }
+const upd = () => { if (prog) prog.textContent = done.size + ' shelved'; };
+for (const b of bks) {
+  const id = b.dataset.id, cb = b.querySelector('.shelved');
+  if (done.has(id)) { cb.checked = true; b.classList.add('done'); }
+  cb.addEventListener('change', () => {
+    cb.checked ? (done.add(id), b.classList.add('done')) : (done.delete(id), b.classList.remove('done'));
+    try { localStorage.setItem(KEY, JSON.stringify([...done])); } catch {}
+    upd();
+  });
+}
+upd();
 q.addEventListener('input', () => {
   const n = q.value.trim().toLowerCase();
   for (const b of bks) b.style.display = (!n || b.textContent.toLowerCase().includes(n)) ? '' : 'none';
@@ -22984,7 +23007,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '708bf8d';          // short content hash of the bundle (build id)
+const COMMIT = 'b6bd8ce';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
