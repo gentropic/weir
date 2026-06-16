@@ -22488,7 +22488,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // or pass one book's fields inline. Returns { inserted, updated, books }.
   async function addBooks(input = {}) {
     if (!app || !app.importBooks) throw new Error('addBooks is only available in the running app');
-    const list = Array.isArray(input.books) ? input.books : (input.title ? [input] : null);
+    const list = Array.isArray(input.books) ? input.books : ((input.title || input.id) ? [input] : null);
     if (!list || !list.length) throw new Error('pass books:[{ title, author?, isbn?, series?, seq?, date?, tags?, ddc?, lcc? }] (or a single book inline)');
     const norm = list.map((b) => ({
       // `id` (an existing holding, e.g. "book:269049145" from the shelf list) UPDATES
@@ -22503,8 +22503,8 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       tags: Array.isArray(b.tags) ? [...new Set(b.tags.map((t) => String(t).trim()).filter(Boolean))] : undefined,
       ddc: b.ddc || undefined, lcc: b.lcc || undefined,
       shelved: (b.shelved != null) ? !!b.shelved : undefined,
-    })).filter((b) => b.title);
-    if (!norm.length) throw new Error('every book needs a title');
+    })).filter((b) => b.title || b.lt_id);   // NEW books need a title; an UPDATE (by id) does not — so { id, shelved:true } works
+    if (!norm.length) throw new Error('pass new books with a title, or { id, … } to update an existing holding');
     // The import keys by lt_id (when targeting an existing holding) else by isbn||title;
     // a collision inside one batch would silently drop a book, so reject it up front
     // (a NEW series volume needs a per-VOLUME title or isbn; an UPDATE needs its id).
@@ -22714,7 +22714,7 @@ const TOOLS = [
           items: {
             type: 'object', properties: {
               id: { type: 'string', description: 'Existing holding id to UPDATE in place (e.g. "book:269049145"); omit to create a new book' },
-              title: { type: 'string', description: 'Book title (per-volume for a series, e.g. "Yokohama Kaidashi Kikou, Vol. 3")' },
+              title: { type: 'string', description: 'Book title (required for a NEW book; omit when updating an existing holding by id, e.g. a shelved-status write)' },
               author: { type: 'string', description: 'Author ("Surname, Given" or "Given Surname")' },
               isbn: { type: 'string', description: 'ISBN-10/13 (enables Open Library enrichment)' },
               series: { type: 'string', description: 'Series title for a numbered set (e.g. "YKK")' },
@@ -22724,7 +22724,7 @@ const TOOLS = [
               ddc: { type: 'string', description: 'Dewey number (display metadata)' },
               lcc: { type: 'string', description: 'Library of Congress class (display metadata)' },
               shelved: { type: 'boolean', description: 'Physical-shelf status — round-trips with the shelf-list export’s "shelved" JSON; preloads the sheet checkboxes' },
-            }, required: ['title'],
+            },
           },
         },
         id: { type: 'string', description: 'Shortcut: update a single existing holding by id' },
@@ -23028,7 +23028,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '07e083b';          // short content hash of the bundle (build id)
+const COMMIT = '57a1b25';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
