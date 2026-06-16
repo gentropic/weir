@@ -7,7 +7,7 @@
 //   outFile  defaults to <storeDir>\..\weir-shelf.html
 import fs from 'node:fs';
 import path from 'node:path';
-import { callNumber, renderCoded, renderReadable, sortKey } from '../src/js/callnumber.js';
+import { callNumber, renderCoded, renderReadable, sortKey, CLASS_NAMES } from '../src/js/callnumber.js';
 
 const STORE = process.argv[2] || 'C:/Users/endar/Documents/weir';
 const OUT = process.argv[3] || path.join(STORE, '..', 'weir-shelf.html');
@@ -48,6 +48,8 @@ const rows = books.map((b) => {
     coded: cn ? renderCoded(cn) : null,
     readable: cn ? renderReadable(cn) : null,
     sk: cn ? sortKey(cn) : '~~~',
+    cls: cn ? cn.cls : null,
+    className: cn ? (CLASS_NAMES[cn.cls] || 'General & reference') : null,
     domain: domainTerm ? domainTerm.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Unclassified',
   };
 });
@@ -60,12 +62,14 @@ const uncataloged = rows.filter((r) => !r.cataloged).sort((a, b) => a.title.loca
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
 
-// Group cataloged rows by domain so the sheet reads like shelf sections.
-let body = '', lastDomain = null;
+// Group cataloged rows by MAIN CLASS so the sheet reads like real shelf sections;
+// within a class the rows are already in call-number order (class → domain → …), so
+// a muted domain tag on each row shows the sub-shelf as you scan.
+let body = '', lastCls = null;
 for (const r of cataloged) {
-  if (r.domain !== lastDomain) { body += `<h2>${esc(r.domain)}</h2>`; lastDomain = r.domain; }
+  if (r.cls !== lastCls) { body += `<h2><span class="ci">${esc(r.cls)}</span>${esc(r.className)}</h2>`; lastCls = r.cls; }
   const vol = r.seq != null ? `<span class="vol">${esc(r.series || 'vol')} ${esc(r.seq)}</span>` : '';
-  body += `<div class="bk"><code class="cn">${esc(r.coded)}</code><div class="meta"><span class="ti">${esc(r.title)}</span>${vol}${r.author ? `<span class="au">${esc(r.author)}</span>` : ''}</div></div>`;
+  body += `<div class="bk"><code class="cn">${esc(r.coded)}</code><div class="meta"><span class="ti">${esc(r.title)}</span>${vol}<span class="dom">${esc(r.domain)}</span>${r.author ? `<span class="au">${esc(r.author)}</span>` : ''}</div></div>`;
 }
 if (uncataloged.length) {
   body += `<h2 class="todo">Not yet cataloged · ${uncataloged.length}</h2>`;
@@ -90,6 +94,9 @@ h1 { font-size:1.15rem; margin:0 0 2px; letter-spacing:.02em; }
 h2 { font-size:.74rem; text-transform:uppercase; letter-spacing:.14em; color:var(--acc);
   margin:22px 0 7px; padding-bottom:3px; border-bottom:1px dashed var(--line); }
 h2.todo { color:var(--dim); }
+.ci { display:inline-block; min-width:1.5em; margin-right:9px; padding:0 4px; color:var(--bg); background:var(--acc);
+  border-radius:5px; text-align:center; font-weight:700; }
+.dom { font-size:.62rem; color:var(--dim); text-transform:uppercase; letter-spacing:.07em; }
 .bk { display:flex; gap:11px; align-items:baseline; padding:7px 2px; border-bottom:1px solid #1f2226; }
 .cn { font-family:"SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size:.72rem; color:var(--cn);
   white-space:nowrap; flex:0 0 auto; min-width:9.5em; }

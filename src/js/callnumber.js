@@ -32,6 +32,55 @@ const FORM_CODE = {
   track: 'K', podcast: 'D', status: 'S', commit: 'C', issue: 'I', note: 'N',
 };
 
+// Main classes — a deliberate disciplinary SEQUENCE so the shelf groups related
+// fields instead of scattering them alphabetically by code (geology/geostatistics/
+// mining together; CS/programming/data-science together). This is glass's OWN
+// backbone (the universal "main classes" pattern that Dewey/LC/UDC all use) — NOT
+// Dewey's copyrighted schedules: 9 classes, our groupings, leading the call number
+// like a class digit. Class 1 doubles as the fallback for any unmapped domain.
+export const CLASS_NAMES = {
+  1: 'General & reference', 2: 'Philosophy & psychology', 3: 'Social sciences',
+  4: 'Mathematics & natural science', 5: 'Technology & engineering', 6: 'Arts & design',
+  7: 'Literature & comics', 8: 'History', 9: 'Recreation & practical',
+};
+const DOMAIN_CLASS = {
+  // 1 — General & reference (also the fallback for anything unmapped)
+  reference: '1', academia: '1', news: '1', journalism: '1', media: '1', publishing: '1', writing: '1', communication: '1', information: '1',
+  // 2 — Philosophy & psychology
+  philosophy: '2', psychology: '2', ethics: '2', logic: '2', 'cognitive science': '2', neuroscience: '2',
+  // 3 — Social sciences
+  'social sciences': '3', sociology: '3', anthropology: '3', economics: '3', finance: '3', business: '3', marketing: '3', management: '3',
+  politics: '3', government: '3', law: '3', 'international relations': '3', geopolitics: '3', military: '3', education: '3',
+  'urban studies': '3', 'urban planning': '3', society: '3', culture: '3', religion: '3', 'human rights': '3', policy: '3', activism: '3', labor: '3', 'social media': '3',
+  // 4 — Mathematics & natural science
+  mathematics: '4', statistics: '4', science: '4', physics: '4', chemistry: '4', biology: '4', astronomy: '4', space: '4',
+  geology: '4', geostatistics: '4', geography: '4', geospatial: '4', cartography: '4', 'remote sensing': '4', mining: '4',
+  nature: '4', environment: '4', 'environmental science': '4', ecology: '4', agriculture: '4', climate: '4',
+  // 5 — Technology & engineering
+  technology: '5', computing: '5', 'computer science': '5', programming: '5', software: '5', 'software development': '5', 'software engineering': '5',
+  'web development': '5', 'data science': '5', 'machine learning': '5', 'artificial intelligence': '5', robotics: '5', simulation: '5',
+  electronics: '5', hardware: '5', 'embedded systems': '5', iot: '5', networking: '5', cybersecurity: '5', security: '5', cryptography: '5',
+  devops: '5', databases: '5', 'cloud computing': '5', engineering: '5', 'mechanical engineering': '5', manufacturing: '5',
+  aerospace: '5', automotive: '5', aviation: '5', energy: '5', telecommunications: '5', retrocomputing: '5', diy: '5', maker: '5', '3d printing': '5', 'home automation': '5', infrastructure: '5',
+  // 6 — Arts & design
+  art: '6', arts: '6', design: '6', architecture: '6', photography: '6', music: '6', film: '6', animation: '6', television: '6',
+  graphics: '6', 'computer graphics': '6', typography: '6', fashion: '6', theater: '6', audio: '6', entertainment: '6', comedy: '6', humor: '6',
+  // 7 — Literature & comics
+  literature: '7', fiction: '7', 'science fiction': '7', fantasy: '7', nonfiction: '7', manga: '7', comics: '7', anime: '7',
+  poetry: '7', language: '7', linguistics: '7',
+  // 8 — History
+  history: '8', archaeology: '8',
+  // 9 — Recreation & practical
+  cooking: '9', food: '9', nutrition: '9', crafts: '9', crafting: '9', craft: '9', craftsmanship: '9', woodworking: '9', metalworking: '9',
+  gardening: '9', hobbies: '9', hobby: '9', gaming: '9', sports: '9', travel: '9', tourism: '9', collectibles: '9', pets: '9',
+  outdoor: '9', 'home improvement': '9', furniture: '9', stationery: '9', coffee: '9', lifestyle: '9', productivity: '9', 'self-help': '9',
+};
+// The class digit for a domain TERM (the readable term, not its code). Unmapped → '1'.
+export function classOf(term) {
+  if (!term) return '1';
+  return DOMAIN_CLASS[String(term).toLowerCase().trim()] || '1';
+}
+
 function deriveCode(term) {
   const s = String(term || '').toUpperCase().replace(/[^A-Z]/g, '');
   return s ? s.slice(0, 3).padEnd(3, 'X') : 'GEN';
@@ -74,6 +123,7 @@ export function callNumber(card, { codes = DOMAIN_CODES, series, seq } = {}) {
   const rawSeq = seq ?? st.seq;
   const seqN = (rawSeq === 0 || rawSeq) && Number.isFinite(Number(rawSeq)) ? Number(rawSeq) : null;
   return {
+    cls: classOf(domain),                                 // main-class digit — leads the shelf address
     domain: domain ? codeFor(domain, codes) : 'GEN',
     sub: sub ? codeFor(sub, codes) : null,
     form: FORM_CODE[form] || (form ? String(form)[0].toUpperCase() : null),
@@ -90,7 +140,7 @@ const SEP = '·';
 // code + zero-padded volume (`…·YOK·v.03`) — the volume is the disambiguator, so the
 // year drops off the spine; everything else ends in the 2-digit year as before.
 export function renderCoded(cn) {
-  const head = [cn.domain, cn.sub, cn.form, cn.cutter];
+  const head = [cn.cls, cn.domain, cn.sub, cn.form, cn.cutter];
   const tail = cn.seq != null
     ? [cn.series ? deriveCode(cn.series) : null, `v.${String(cn.seq).padStart(2, '0')}`]
     : [cn.year && cn.year.slice(2)];
@@ -116,5 +166,5 @@ export function sortKey(cn) {
   // themselves. (A bare '' would collide with SEP and sort high.)
   const ser = cn.series ? '1' + deriveCode(cn.series) : '0';
   const seqPad = cn.seq != null ? String(cn.seq).padStart(4, '0') : '0000';
-  return [cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', ser, seqPad, cn.year || '9999'].join(SEP);
+  return [cn.cls || '1', cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', ser, seqPad, cn.year || '9999'].join(SEP);
 }
