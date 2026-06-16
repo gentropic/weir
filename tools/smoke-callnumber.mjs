@@ -13,13 +13,13 @@ assert.equal(geo.domain, 'GST', 'curated domain code (geostatistics → GST)');
 assert.equal(geo.form, 'B', 'form code for a book');
 assert.equal(geo.cutter, 'SIL', 'author cutter from surname');
 assert.equal(geo.year, '2023', 'year extracted');
-assert.equal(geo.cls, '4', 'geostatistics → main class 4 (math & natural science)');
-assert.equal(renderCoded(geo), '4·GST·KRI·B·SIL·23', 'coded rendering (spine), class-led');
+assert.equal(geo.cls, '3', 'geostatistics → main class 3 (math & natural science)');
+assert.equal(renderCoded(geo), '3·GST·KRI·B·SIL·23', 'coded rendering (spine), class-led');
 assert.equal(renderReadable(geo), 'Geostatistics : Kriging · book Silva 2023', 'readable rendering (UI)');
 
 // ── a paper on the same shelf-spot: subject leads, form differs → they neighbor ──
 const paper = callNumber(card({ domain: ['geostatistics'], entity: ['kriging'], form: ['paper'] }, { creator: ['Journel, A G'], date: '2021' }));
-assert.equal(renderCoded(paper), '4·GST·KRI·P·JOU·21', 'paper coded');
+assert.equal(renderCoded(paper), '3·GST·KRI·P·JOU·21', 'paper coded');
 assert.ok(sortKey(geo) < sortKey(paper), 'book sorts before paper at the same subject (B < P) — they shelve together');
 
 // ── derived code for an unmapped domain; subdomain from process when no entity ──
@@ -31,9 +31,9 @@ assert.equal(misc.form, 'V', 'video form');
 // ── graceful when sparse: unclassified still produces a sortable address ──
 const bare = callNumber(card({}, {}));
 assert.equal(bare.domain, 'GEN', 'no domain → GEN');
-assert.equal(bare.cls, '1', 'unmapped/empty domain falls into class 1 (general)');
+assert.equal(bare.cls, '0', 'unmapped/empty domain falls into class 0 (general)');
 assert.equal(renderReadable(bare), 'Unclassified', 'readable handles empty');
-assert.ok(sortKey(bare).startsWith('1' + '·' + 'GEN'), 'sortable even when bare (class-led)');
+assert.ok(sortKey(bare).startsWith('0' + '·' + 'GEN'), 'sortable even when bare (class-led)');
 
 // ── a numbered series (YKK): seq keeps the set together + in VOLUME order ──
 // All volumes share author/subject/form, so before `seq` they'd sort by year and a
@@ -59,7 +59,8 @@ assert.ok(sortKey(ashSolo) < sortKey(v1), 'standalone (no series) sorts before t
 // Non-series rendering is untouched by the new fields.
 assert.equal(renderCoded(ashSolo), '7·MGA·SLI·B·ASH·08', 'standalone coded ends in year (still no class redundancy issues)');
 assert.equal(DOMAIN_CODES.manga, 'MGA', 'curated manga code'); assert.equal(DOMAIN_CODES.comics, 'CMX', 'curated comics code');
-assert.equal(classOf('geology'), '4'); assert.equal(classOf('programming'), '5'); assert.equal(classOf('made-up-domain'), '1', 'unmapped → general');
+assert.equal(classOf('geology'), '3'); assert.equal(classOf('programming'), '5');
+assert.equal(classOf('medicine'), '4', 'medicine → its own class 4'); assert.equal(classOf('made-up-domain'), '0', 'unmapped → general (0)');
 
 // ── sort wanders by subject: a linear browse groups the shelf by topic ──
 const cards = [
@@ -68,7 +69,7 @@ const cards = [
   callNumber(card({ domain: ['geology'], entity: ['basalt'], form: ['paper'] }, { creator: ['Cox'], date: '2022' })),
 ];
 const order = cards.map(sortKey).sort().map((k) => k[0]);   // leading class digit
-assert.deepEqual(order, ['4', '4', '6'], 'the two geology items (class 4) shelve adjacent, music (class 6) apart');
+assert.deepEqual(order, ['3', '3', '6'], 'the two geology items (class 3) shelve adjacent, music (class 6) apart');
 
 assert.equal(DOMAIN_CODES.geology, 'GEO', 'curated map is exported + extensible');
 console.log('callnumber smoke ok:', JSON.stringify({ geo: renderCoded(geo), readable: renderReadable(geo) }));

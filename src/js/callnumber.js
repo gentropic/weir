@@ -36,26 +36,30 @@ const FORM_CODE = {
 // fields instead of scattering them alphabetically by code (geology/geostatistics/
 // mining together; CS/programming/data-science together). This is glass's OWN
 // backbone (the universal "main classes" pattern that Dewey/LC/UDC all use) — NOT
-// Dewey's copyrighted schedules: 9 classes, our groupings, leading the call number
-// like a class digit. Class 1 doubles as the fallback for any unmapped domain.
+// Dewey's copyrighted schedules: 10 classes (0–9), our groupings, leading the call
+// number like a class digit. Class 0 (general) doubles as the fallback for any
+// unmapped domain — so "0 = uncatalogued/general" reads intuitively.
 export const CLASS_NAMES = {
-  1: 'General & reference', 2: 'Philosophy & psychology', 3: 'Social sciences',
-  4: 'Mathematics & natural science', 5: 'Technology & engineering', 6: 'Arts & design',
-  7: 'Literature & comics', 8: 'History', 9: 'Recreation & practical',
+  0: 'General & reference', 1: 'Philosophy & psychology', 2: 'Social sciences',
+  3: 'Mathematics & natural science', 4: 'Medicine & health', 5: 'Technology & engineering',
+  6: 'Arts & design', 7: 'Literature & comics', 8: 'History', 9: 'Recreation & practical',
 };
 const DOMAIN_CLASS = {
-  // 1 — General & reference (also the fallback for anything unmapped)
-  reference: '1', academia: '1', news: '1', journalism: '1', media: '1', publishing: '1', writing: '1', communication: '1', information: '1',
-  // 2 — Philosophy & psychology
-  philosophy: '2', psychology: '2', ethics: '2', logic: '2', 'cognitive science': '2', neuroscience: '2',
-  // 3 — Social sciences
-  'social sciences': '3', sociology: '3', anthropology: '3', economics: '3', finance: '3', business: '3', marketing: '3', management: '3',
-  politics: '3', government: '3', law: '3', 'international relations': '3', geopolitics: '3', military: '3', education: '3',
-  'urban studies': '3', 'urban planning': '3', society: '3', culture: '3', religion: '3', 'human rights': '3', policy: '3', activism: '3', labor: '3', 'social media': '3',
-  // 4 — Mathematics & natural science
-  mathematics: '4', statistics: '4', science: '4', physics: '4', chemistry: '4', biology: '4', astronomy: '4', space: '4',
-  geology: '4', geostatistics: '4', geography: '4', geospatial: '4', cartography: '4', 'remote sensing': '4', mining: '4',
-  nature: '4', environment: '4', 'environmental science': '4', ecology: '4', agriculture: '4', climate: '4',
+  // 0 — General & reference (also the fallback for anything unmapped)
+  reference: '0', academia: '0', news: '0', journalism: '0', media: '0', publishing: '0', writing: '0', communication: '0', information: '0',
+  // 1 — Philosophy & psychology
+  philosophy: '1', psychology: '1', ethics: '1', logic: '1', 'cognitive science': '1', neuroscience: '1',
+  // 2 — Social sciences
+  'social sciences': '2', sociology: '2', anthropology: '2', economics: '2', finance: '2', business: '2', marketing: '2', management: '2',
+  politics: '2', government: '2', law: '2', 'international relations': '2', geopolitics: '2', military: '2', education: '2',
+  'urban studies': '2', 'urban planning': '2', society: '2', culture: '2', religion: '2', 'human rights': '2', policy: '2', activism: '2', labor: '2', 'social media': '2',
+  // 3 — Mathematics & natural science
+  mathematics: '3', statistics: '3', science: '3', physics: '3', chemistry: '3', biology: '3', astronomy: '3', space: '3',
+  geology: '3', geostatistics: '3', geography: '3', geospatial: '3', cartography: '3', 'remote sensing': '3', mining: '3',
+  nature: '3', environment: '3', 'environmental science': '3', ecology: '3', agriculture: '3', climate: '3',
+  // 4 — Medicine & health
+  medicine: '4', health: '4', healthcare: '4', 'public health': '4', 'mental health': '4', nutrition: '4',
+  pharmacology: '4', nursing: '4', dentistry: '4', epidemiology: '4', anatomy: '4', physiology: '4', fitness: '4', wellness: '4',
   // 5 — Technology & engineering
   technology: '5', computing: '5', 'computer science': '5', programming: '5', software: '5', 'software development': '5', 'software engineering': '5',
   'web development': '5', 'data science': '5', 'machine learning': '5', 'artificial intelligence': '5', robotics: '5', simulation: '5',
@@ -71,14 +75,14 @@ const DOMAIN_CLASS = {
   // 8 — History
   history: '8', archaeology: '8',
   // 9 — Recreation & practical
-  cooking: '9', food: '9', nutrition: '9', crafts: '9', crafting: '9', craft: '9', craftsmanship: '9', woodworking: '9', metalworking: '9',
+  cooking: '9', food: '9', crafts: '9', crafting: '9', craft: '9', craftsmanship: '9', woodworking: '9', metalworking: '9',
   gardening: '9', hobbies: '9', hobby: '9', gaming: '9', sports: '9', travel: '9', tourism: '9', collectibles: '9', pets: '9',
   outdoor: '9', 'home improvement': '9', furniture: '9', stationery: '9', coffee: '9', lifestyle: '9', productivity: '9', 'self-help': '9',
 };
-// The class digit for a domain TERM (the readable term, not its code). Unmapped → '1'.
+// The class digit for a domain TERM (the readable term, not its code). Unmapped → '0' (general).
 export function classOf(term) {
-  if (!term) return '1';
-  return DOMAIN_CLASS[String(term).toLowerCase().trim()] || '1';
+  if (!term) return '0';
+  return DOMAIN_CLASS[String(term).toLowerCase().trim()] || '0';
 }
 
 function deriveCode(term) {
@@ -166,5 +170,5 @@ export function sortKey(cn) {
   // themselves. (A bare '' would collide with SEP and sort high.)
   const ser = cn.series ? '1' + deriveCode(cn.series) : '0';
   const seqPad = cn.seq != null ? String(cn.seq).padStart(4, '0') : '0000';
-  return [cn.cls || '1', cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', ser, seqPad, cn.year || '9999'].join(SEP);
+  return [cn.cls || '0', cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', ser, seqPad, cn.year || '9999'].join(SEP);
 }
