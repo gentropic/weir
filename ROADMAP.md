@@ -285,6 +285,21 @@ the trigger/query layer on top.
     `umap-js` vendors as source. Supersedes the loose "graph view" mentions in
     Stage 2/3.
 - Near-term Stage-0 follow-up: a **faceted catalog view** (see the corpus by facet).
+- **Physical-library tooling** (the catalog meets the wood). *Shipped 2026-06-16:*
+  the 146-book home library is cataloged + hand-faceted into the **0–9 / 2-digit
+  main·division call-number scheme** (`callnumber.js`), with physical-shelf status
+  tracked (`structured.shelved`) and a portable, mobile-first **shelf-list export**
+  (`shelflist.js` + `tools/shelf-list.mjs`: call-number order, per-class sections,
+  tap-to-shelve checkboxes, JSON export/import that round-trips into the catalog via
+  `weir_addBook(shelved)`). **Next:** a printable **shelf-section label sheet** —
+  each class (`00`–`93`) + name in shelf order, sized for clear adhesive **label
+  holders** (removable, swappable inserts) so the bookend dividers match the call
+  numbers (a `36·GST·…` spine maps to the "36 · Earth sciences" marker); generated
+  from `CLASS_NAMES`, like the shelf list. Pair with a **bookend growth-spacing
+  plan**: slack proportional to per-class growth (heavy for `72` manga / `36`
+  earth-sci / `51`–`52` CS+data, minimal for `10`/`80`) so an insertion never
+  reshuffles the whole row. Eventual "right" home for the class hierarchy: the SKOS
+  vocab's `broader`-terms (derive class, don't hardcode the map).
 
 ## Multi-device — sync + roles (see [SYNC.md](SYNC.md))
 
