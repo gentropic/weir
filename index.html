@@ -11507,57 +11507,72 @@ const FORM_CODE = {
   track: 'K', podcast: 'D', status: 'S', commit: 'C', issue: 'I', note: 'N',
 };
 
-// Main classes — a deliberate disciplinary SEQUENCE so the shelf groups related
-// fields instead of scattering them alphabetically by code (geology/geostatistics/
-// mining together; CS/programming/data-science together). This is glass's OWN
-// backbone (the universal "main classes" pattern that Dewey/LC/UDC all use) — NOT
-// Dewey's copyrighted schedules: 10 classes (0–9), our groupings, leading the call
-// number like a class digit. Class 0 (general) doubles as the fallback for any
-// unmapped domain — so "0 = uncatalogued/general" reads intuitively.
+// Main classes & divisions — a deliberate disciplinary SEQUENCE so the shelf groups
+// related fields instead of scattering them alphabetically (geology/geostatistics/
+// mining together; CS/programming together). glass's OWN backbone (the universal
+// "main class · division" pattern Dewey/LC/UDC all use) — NOT Dewey's copyrighted
+// schedules. TWO digits: the first is the main class (0–9), the second a division
+// within it; most domains stay at `x0` (the class's general bucket) and only the
+// dense classes (3 science, 5 technology, 7 letters) split. Class 00 (general)
+// doubles as the fallback for any unmapped domain. The class LEADS the call number.
+// (The "right" long-term home for this hierarchy is the SKOS vocab's broader-terms;
+// this map is the pragmatic, derived stand-in until then — see GLASS notes.)
 const CLASS_NAMES = {
-  0: 'General & reference', 1: 'Philosophy & psychology', 2: 'Social sciences',
-  3: 'Mathematics & natural science', 4: 'Medicine & health', 5: 'Technology & engineering',
-  6: 'Arts & design', 7: 'Literature & comics', 8: 'History', 9: 'Recreation & practical',
+  '00': 'General & reference', '10': 'Philosophy & psychology', '20': 'Social sciences',
+  '30': 'Science (general)', '31': 'Mathematics', '32': 'Statistics', '33': 'Physical sciences',
+  '35': 'Biology & nature', '36': 'Earth sciences', '38': 'Astronomy & space',
+  '40': 'Medicine & health',
+  '50': 'Technology (general)', '51': 'Computer science & software', '52': 'Data & AI',
+  '53': 'Electronics & hardware', '54': 'Engineering', '55': 'Networking & security',
+  '60': 'Arts & design',
+  '70': 'Literature', '71': 'Language', '72': 'Comics & manga',
+  '80': 'History', '90': 'Recreation & practical',
 };
 const DOMAIN_CLASS = {
-  // 0 — General & reference (also the fallback for anything unmapped)
-  reference: '0', academia: '0', news: '0', journalism: '0', media: '0', publishing: '0', writing: '0', communication: '0', information: '0',
-  // 1 — Philosophy & psychology
-  philosophy: '1', psychology: '1', ethics: '1', logic: '1', 'cognitive science': '1', neuroscience: '1',
-  // 2 — Social sciences
-  'social sciences': '2', sociology: '2', anthropology: '2', economics: '2', finance: '2', business: '2', marketing: '2', management: '2',
-  politics: '2', government: '2', law: '2', 'international relations': '2', geopolitics: '2', military: '2', education: '2',
-  'urban studies': '2', 'urban planning': '2', society: '2', culture: '2', religion: '2', 'human rights': '2', policy: '2', activism: '2', labor: '2', 'social media': '2',
-  // 3 — Mathematics & natural science
-  mathematics: '3', statistics: '3', science: '3', physics: '3', chemistry: '3', biology: '3', astronomy: '3', space: '3',
-  geology: '3', geostatistics: '3', geography: '3', geospatial: '3', cartography: '3', 'remote sensing': '3', mining: '3',
-  nature: '3', environment: '3', 'environmental science': '3', ecology: '3', agriculture: '3', climate: '3',
-  // 4 — Medicine & health
-  medicine: '4', health: '4', healthcare: '4', 'public health': '4', 'mental health': '4', nutrition: '4',
-  pharmacology: '4', nursing: '4', dentistry: '4', epidemiology: '4', anatomy: '4', physiology: '4', fitness: '4', wellness: '4',
-  // 5 — Technology & engineering
-  technology: '5', computing: '5', 'computer science': '5', programming: '5', software: '5', 'software development': '5', 'software engineering': '5',
-  'web development': '5', 'data science': '5', 'machine learning': '5', 'artificial intelligence': '5', robotics: '5', simulation: '5',
-  electronics: '5', hardware: '5', 'embedded systems': '5', iot: '5', networking: '5', cybersecurity: '5', security: '5', cryptography: '5',
-  devops: '5', databases: '5', 'cloud computing': '5', engineering: '5', 'mechanical engineering': '5', manufacturing: '5',
-  aerospace: '5', automotive: '5', aviation: '5', energy: '5', telecommunications: '5', retrocomputing: '5', diy: '5', maker: '5', '3d printing': '5', 'home automation': '5', infrastructure: '5',
-  // 6 — Arts & design
-  art: '6', arts: '6', design: '6', architecture: '6', photography: '6', music: '6', film: '6', animation: '6', television: '6',
-  graphics: '6', 'computer graphics': '6', typography: '6', fashion: '6', theater: '6', audio: '6', entertainment: '6', comedy: '6', humor: '6',
-  // 7 — Literature & comics
-  literature: '7', fiction: '7', 'science fiction': '7', fantasy: '7', nonfiction: '7', manga: '7', comics: '7', anime: '7',
-  poetry: '7', language: '7', linguistics: '7',
-  // 8 — History
-  history: '8', archaeology: '8',
-  // 9 — Recreation & practical
-  cooking: '9', food: '9', crafts: '9', crafting: '9', craft: '9', craftsmanship: '9', woodworking: '9', metalworking: '9',
-  gardening: '9', hobbies: '9', hobby: '9', gaming: '9', sports: '9', travel: '9', tourism: '9', collectibles: '9', pets: '9',
-  outdoor: '9', 'home improvement': '9', furniture: '9', stationery: '9', coffee: '9', lifestyle: '9', productivity: '9', 'self-help': '9',
+  // 00 — General & reference (also the fallback for anything unmapped)
+  reference: '00', academia: '00', news: '00', journalism: '00', media: '00', publishing: '00', writing: '00', communication: '00', information: '00',
+  // 10 — Philosophy & psychology
+  philosophy: '10', psychology: '10', ethics: '10', logic: '10', 'cognitive science': '10', neuroscience: '10',
+  // 20 — Social sciences
+  'social sciences': '20', sociology: '20', anthropology: '20', economics: '20', finance: '20', business: '20', marketing: '20', management: '20',
+  politics: '20', government: '20', law: '20', 'international relations': '20', geopolitics: '20', military: '20', education: '20',
+  'urban studies': '20', 'urban planning': '20', society: '20', culture: '20', religion: '20', 'human rights': '20', policy: '20', activism: '20', labor: '20', 'social media': '20',
+  // 3x — Mathematics & natural science (split)
+  science: '30',
+  mathematics: '31',
+  statistics: '32',
+  physics: '33', chemistry: '33',
+  biology: '35', nature: '35', environment: '35', 'environmental science': '35', ecology: '35', agriculture: '35', climate: '35',
+  geology: '36', geostatistics: '36', geography: '36', geospatial: '36', cartography: '36', 'remote sensing': '36', mining: '36',
+  astronomy: '38', space: '38',
+  // 40 — Medicine & health
+  medicine: '40', health: '40', healthcare: '40', 'public health': '40', 'mental health': '40', nutrition: '40',
+  pharmacology: '40', nursing: '40', dentistry: '40', epidemiology: '40', anatomy: '40', physiology: '40', fitness: '40', wellness: '40',
+  // 5x — Technology & engineering (split)
+  technology: '50', retrocomputing: '50', diy: '50', maker: '50', '3d printing': '50', 'home automation': '50', infrastructure: '50', simulation: '50', energy: '50',
+  computing: '51', 'computer science': '51', programming: '51', software: '51', 'software development': '51', 'software engineering': '51', 'web development': '51', devops: '51', databases: '51', 'cloud computing': '51',
+  'data science': '52', 'machine learning': '52', 'artificial intelligence': '52',
+  electronics: '53', hardware: '53', 'embedded systems': '53', iot: '53',
+  engineering: '54', 'mechanical engineering': '54', manufacturing: '54', robotics: '54', aerospace: '54', automotive: '54', aviation: '54',
+  networking: '55', cybersecurity: '55', security: '55', cryptography: '55', telecommunications: '55',
+  // 60 — Arts & design
+  art: '60', arts: '60', design: '60', architecture: '60', photography: '60', music: '60', film: '60', animation: '60', television: '60',
+  graphics: '60', 'computer graphics': '60', typography: '60', fashion: '60', theater: '60', audio: '60', entertainment: '60', comedy: '60', humor: '60',
+  // 7x — Letters (split: literature / language / comics)
+  literature: '70', fiction: '70', 'science fiction': '70', fantasy: '70', nonfiction: '70', poetry: '70',
+  language: '71', linguistics: '71',
+  manga: '72', comics: '72', anime: '72',
+  // 80 — History
+  history: '80', archaeology: '80',
+  // 90 — Recreation & practical
+  cooking: '90', food: '90', crafts: '90', crafting: '90', craft: '90', craftsmanship: '90', woodworking: '90', metalworking: '90',
+  gardening: '90', hobbies: '90', hobby: '90', gaming: '90', sports: '90', travel: '90', tourism: '90', collectibles: '90', pets: '90',
+  outdoor: '90', 'home improvement': '90', furniture: '90', stationery: '90', coffee: '90', lifestyle: '90', productivity: '90', 'self-help': '90',
 };
-// The class digit for a domain TERM (the readable term, not its code). Unmapped → '0' (general).
+// The 2-digit class for a domain TERM (the readable term, not its code). Unmapped → '00' (general).
 function classOf(term) {
-  if (!term) return '0';
-  return DOMAIN_CLASS[String(term).toLowerCase().trim()] || '0';
+  if (!term) return '00';
+  return DOMAIN_CLASS[String(term).toLowerCase().trim()] || '00';
 }
 
 function deriveCode(term) {
@@ -11645,7 +11660,7 @@ function sortKey(cn) {
   // themselves. (A bare '' would collide with SEP and sort high.)
   const ser = cn.series ? '1' + deriveCode(cn.series) : '0';
   const seqPad = cn.seq != null ? String(cn.seq).padStart(4, '0') : '0000';
-  return [cn.cls || '0', cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', ser, seqPad, cn.year || '9999'].join(SEP);
+  return [cn.cls || '00', cn.domain || 'ZZZ', cn.sub || 'ZZZ', cn.form || 'Z', cn.cutter || 'ZZZ', ser, seqPad, cn.year || '9999'].join(SEP);
 }
 
 // ── src/js/biblio.js ──
@@ -22839,7 +22854,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'e1bad6c';          // short content hash of the bundle (build id)
+const COMMIT = 'b62df11';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

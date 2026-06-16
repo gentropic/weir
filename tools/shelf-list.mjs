@@ -94,8 +94,8 @@ h1 { font-size:1.15rem; margin:0 0 2px; letter-spacing:.02em; }
 h2 { font-size:.74rem; text-transform:uppercase; letter-spacing:.14em; color:var(--acc);
   margin:22px 0 7px; padding-bottom:3px; border-bottom:1px dashed var(--line); }
 h2.todo { color:var(--dim); }
-.ci { display:inline-block; min-width:1.5em; margin-right:9px; padding:0 4px; color:var(--bg); background:var(--acc);
-  border-radius:5px; text-align:center; font-weight:700; }
+.ci { display:inline-block; min-width:2.2em; margin-right:9px; padding:0 5px; color:var(--bg); background:var(--acc);
+  border-radius:5px; text-align:center; font-weight:700; font-variant-numeric:tabular-nums; }
 .dom { font-size:.62rem; color:var(--dim); text-transform:uppercase; letter-spacing:.07em; }
 .bk { display:flex; gap:11px; align-items:baseline; padding:7px 2px; border-bottom:1px solid #1f2226; }
 .cn { font-family:"SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size:.72rem; color:var(--cn);
