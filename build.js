@@ -18,6 +18,8 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
+const { execSync } = require('child_process');
 
 const ROOT = __dirname;
 const SRC = path.join(ROOT, 'src');
@@ -206,6 +208,18 @@ checkDuplicateDecls(js);
     console.error(`Error: literal "${m[0]}" in the bundle would close weir's inline <script> early — escape it as "<\\/script>" in the module that emits HTML.\n  …${JSON.stringify(js.slice(Math.max(0, at - 50), at + 15))}…`);
     process.exit(1);
   }
+}
+
+// Syntax-gate the whole emitted bundle with `node --check`. A stray parse error (e.g.
+// an apostrophe ending a single-quoted string in a tool description) → blank app, and
+// smoke only covers the modules it imports — NOT app.js. This catches them all before
+// index.html is written. (Cost a broken deploy when a description had a raw apostrophe.)
+{
+  const tmp = path.join(os.tmpdir(), `weir-build-check-${process.pid}.mjs`);
+  fs.writeFileSync(tmp, js);
+  try { execSync(`node --check "${tmp}"`, { stdio: 'pipe' }); }
+  catch (e) { console.error(`Error: emitted bundle has a syntax error —\n${(e.stderr || e.message || '').toString()}`); process.exit(1); }
+  finally { try { fs.unlinkSync(tmp); } catch { /* ignore */ } }
 }
 
 const css = buildCss();
