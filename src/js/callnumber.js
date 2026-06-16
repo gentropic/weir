@@ -70,6 +70,7 @@ const DOMAIN_CLASS = {
   physics: '33', chemistry: '33',
   biology: '35', nature: '35', environment: '35', 'environmental science': '35', ecology: '35', agriculture: '35', climate: '35',
   geology: '36', geostatistics: '36', geography: '36', geospatial: '36', cartography: '36', 'remote sensing': '36', mining: '36',
+  mineralogy: '36', minerals: '36', petrology: '36', gemology: '36', paleontology: '36', geomorphology: '36',
   astronomy: '38', space: '38',
   // 40 — Medicine & health
   medicine: '40', health: '40', healthcare: '40', 'public health': '40', 'mental health': '40', nutrition: '40',
