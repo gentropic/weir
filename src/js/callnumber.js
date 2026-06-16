@@ -20,6 +20,7 @@ export const DOMAIN_CODES = {
   hardware: 'HRD', electronics: 'ELE', 'machine learning': 'MLN', 'artificial intelligence': 'AIN',
   science: 'SCI', physics: 'PHY', chemistry: 'CHM', biology: 'BIO', astronomy: 'AST',
   engineering: 'ENG', gaming: 'GAM', music: 'MUS', film: 'FLM', art: 'ART', design: 'DSN',
+  manga: 'MGA', comics: 'CMX',   // curated so they don't derive to the word-like MAN / COM
   photography: 'PHO', cooking: 'COO', food: 'FOO', politics: 'POL', history: 'HIS',
   philosophy: 'PHI', psychology: 'PSY', finance: 'FIN', business: 'BUS', economics: 'ECO',
   health: 'HEA', medicine: 'MED', language: 'LAN', literature: 'LIT', education: 'EDU',

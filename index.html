@@ -11495,6 +11495,7 @@ const DOMAIN_CODES = {
   hardware: 'HRD', electronics: 'ELE', 'machine learning': 'MLN', 'artificial intelligence': 'AIN',
   science: 'SCI', physics: 'PHY', chemistry: 'CHM', biology: 'BIO', astronomy: 'AST',
   engineering: 'ENG', gaming: 'GAM', music: 'MUS', film: 'FLM', art: 'ART', design: 'DSN',
+  manga: 'MGA', comics: 'CMX',   // curated so they don't derive to the word-like MAN / COM
   photography: 'PHO', cooking: 'COO', food: 'FOO', politics: 'POL', history: 'HIS',
   philosophy: 'PHI', psychology: 'PSY', finance: 'FIN', business: 'BUS', economics: 'ECO',
   health: 'HEA', medicine: 'MED', language: 'LAN', literature: 'LIT', education: 'EDU',
@@ -22784,7 +22785,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'cc6f9d8';          // short content hash of the bundle (build id)
+const COMMIT = '0c9f58c';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
