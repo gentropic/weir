@@ -21,6 +21,7 @@ export function buildShelfHtml(books, cardFor, opts = {}) {
     const domainTerm = (cn && cn.terms && cn.terms.domain) ? cn.terms.domain : null;
     return {
       id: b.id,
+      shelved: !!(b.structured && b.structured.shelved),   // physical-shelf status, from the catalog (the source of truth)
       title: b.title || '(untitled)',
       author: b.author || (card && (card.dublin_core.creator || [])[0]) || '',
       series: s.series || null,
@@ -43,7 +44,7 @@ export function buildShelfHtml(books, cardFor, opts = {}) {
   // "shelved" (handy while walking the shelf); state persists in localStorage by the
   // book's stable item id.
   const row = (r, coded, extra = '') =>
-    `<label class="bk" data-id="${esc(r.id)}"><input type="checkbox" class="shelved"><code class="cn${coded ? '' : ' cn-none'}">${esc(coded || '—')}</code><div class="meta"><span class="ti">${esc(r.title)}</span>${extra}${r.author ? `<span class="au">${esc(r.author)}</span>` : ''}</div></label>`;
+    `<label class="bk${r.shelved ? ' done' : ''}" data-id="${esc(r.id)}"><input type="checkbox" class="shelved"${r.shelved ? ' checked' : ''}><code class="cn${coded ? '' : ' cn-none'}">${esc(coded || '—')}</code><div class="meta"><span class="ti">${esc(r.title)}</span>${extra}${r.author ? `<span class="au">${esc(r.author)}</span>` : ''}</div></label>`;
   let body = '', lastCls = null;
   for (const r of cataloged) {
     if (r.cls !== lastCls) { body += `<h2><span class="ci">${esc(r.cls)}</span>${esc(r.className)}</h2>`; lastCls = r.cls; }
@@ -79,6 +80,9 @@ h2.todo { color:var(--dim); }
 .bk.done { opacity:.42; }
 .bk.done .ti { text-decoration:line-through; }
 #prog { color:var(--acc); }
+.bar { display:flex; gap:8px; margin-top:9px; }
+.bar button, .bar .btn { font:inherit; font-size:.78rem; padding:6px 11px; border:1px solid var(--line); border-radius:8px;
+  background:#1d2024; color:var(--fg); cursor:pointer; }
 .cn { font-family:"SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size:.72rem; color:var(--cn);
   white-space:nowrap; flex:0 0 auto; min-width:9.5em; }
 .cn-none { color:var(--dim); }
@@ -94,27 +98,31 @@ h2.todo { color:var(--dim); }
   <h1>weir — shelf list</h1>
   <div class="sub">${cataloged.length} cataloged · ${uncataloged.length} uncataloged · ${rows.length} books · <span id="prog">0 shelved</span> · snapshot ${esc(stamp)}</div>
   <input id="q" type="search" placeholder="filter title / author / call number…" autocomplete="off">
+  <div class="bar"><button id="exp" type="button">⤓ export shelved (JSON)</button><label class="btn" for="imp">⤒ import<input id="imp" type="file" accept="application/json,.json" hidden></label></div>
 </header>
 <main id="list">
 ${body || '<p class="empty">No books found.</p>'}
 </main>
 <script>
 const q = document.getElementById('q'), bks = [...document.querySelectorAll('.bk')], hds = [...document.querySelectorAll('h2')];
-// "shelved" checkboxes — persisted in localStorage by each book's stable item id, so
-// ticks survive reopening the file (per browser origin; serve it for phone persistence).
+// "shelved" checkboxes. BASELINE = what the catalog already marks shelved (the rows are
+// server-rendered `checked` from each book's meta — the source of truth). Working layer =
+// localStorage (first load seeds from the catalog; after that, local ticks win). Export/
+// Import move the set as JSON — to sync ticks back into weir, or carry them between devices.
 const KEY = 'weir-shelf-shelved', prog = document.getElementById('prog');
-let done; try { done = new Set(JSON.parse(localStorage.getItem(KEY) || '[]')); } catch { done = new Set(); }
+const seeded = new Set(bks.filter((b) => b.querySelector('.shelved').checked).map((b) => b.dataset.id));
+let done; try { const ls = localStorage.getItem(KEY); done = ls ? new Set(JSON.parse(ls)) : new Set(seeded); } catch { done = new Set(seeded); }
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify([...done])); } catch {} };
 const upd = () => { if (prog) prog.textContent = done.size + ' shelved'; };
+const apply = () => { for (const b of bks) { const on = done.has(b.dataset.id); b.querySelector('.shelved').checked = on; b.classList.toggle('done', on); } upd(); };
 for (const b of bks) {
   const id = b.dataset.id, cb = b.querySelector('.shelved');
-  if (done.has(id)) { cb.checked = true; b.classList.add('done'); }
-  cb.addEventListener('change', () => {
-    cb.checked ? (done.add(id), b.classList.add('done')) : (done.delete(id), b.classList.remove('done'));
-    try { localStorage.setItem(KEY, JSON.stringify([...done])); } catch {}
-    upd();
-  });
+  cb.addEventListener('change', () => { cb.checked ? (done.add(id), b.classList.add('done')) : (done.delete(id), b.classList.remove('done')); save(); upd(); });
 }
-upd();
+apply();
+const dl = (name, text) => { const u = URL.createObjectURL(new Blob([text], { type: 'application/json' })); const a = document.createElement('a'); a.href = u; a.download = name; a.click(); URL.revokeObjectURL(u); };
+document.getElementById('exp').addEventListener('click', () => dl('weir-shelved.json', JSON.stringify({ shelved: [...done] })));
+document.getElementById('imp').addEventListener('change', (e) => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { try { const j = JSON.parse(r.result); done = new Set(Array.isArray(j) ? j : (j.shelved || [])); save(); apply(); } catch {} }; r.readAsText(f); });
 q.addEventListener('input', () => {
   const n = q.value.trim().toLowerCase();
   for (const b of bks) b.style.display = (!n || b.textContent.toLowerCase().includes(n)) ? '' : 'none';

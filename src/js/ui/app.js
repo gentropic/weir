@@ -2784,6 +2784,7 @@ export class App {
       if (b.isbn) newStruct.isbn = b.isbn;
       if (series) newStruct.series = series;
       if (seq != null) newStruct.seq = seq;
+      if (b.shelved != null) newStruct.shelved = !!b.shelved;   // physical-shelf status (round-trips with the shelf-list export)
       const prior = this.store.items.get(id);
       const merged = { ...((prior && prior.structured) || {}), ...newStruct };
       const structured = Object.keys(merged).length ? merged : undefined;

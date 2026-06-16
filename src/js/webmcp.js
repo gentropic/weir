@@ -813,6 +813,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       date: b.date || undefined,
       tags: Array.isArray(b.tags) ? [...new Set(b.tags.map((t) => String(t).trim()).filter(Boolean))] : undefined,
       ddc: b.ddc || undefined, lcc: b.lcc || undefined,
+      shelved: (b.shelved != null) ? !!b.shelved : undefined,
     })).filter((b) => b.title);
     if (!norm.length) throw new Error('every book needs a title');
     // The import keys by lt_id (when targeting an existing holding) else by isbn||title;
@@ -1033,6 +1034,7 @@ const TOOLS = [
               tags: { type: 'array', items: { type: 'string' }, description: 'Your tags (stamped as human; only applied when creating)' },
               ddc: { type: 'string', description: 'Dewey number (display metadata)' },
               lcc: { type: 'string', description: 'Library of Congress class (display metadata)' },
+              shelved: { type: 'boolean', description: 'Physical-shelf status — round-trips with the shelf-list export’s "shelved" JSON; preloads the sheet checkboxes' },
             }, required: ['title'],
           },
         },
