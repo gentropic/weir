@@ -1,16 +1,20 @@
 // Physical-library LABEL artifacts, generated from the live store (read-only).
 // Emits two gitignored files into tools/:
-//   shelf-labels.txt      — printable list for the Brother P-touch (ALL-CAPS pt-BR, all classes)
+//   shelf-labels.txt      — printable list for the Brother P-touch (ALL-CAPS pt-BR)
 //   label-placement.html  — phone guide: each label + the SHELVED books beneath it, in shelf
 //                           order, so you know exactly where to slot each section divider.
-// Run: node tools/shelf-labels.mjs [storeDir]   (default store = C:\Users\endar\Documents\weir)
+// Run: node tools/shelf-labels.mjs [storeDir] [minBooks]
+//   minBooks = only label sections with at least this many SHELVED books (default 1 = all);
+//   smaller sections are flagged "sem etiqueta" and just sit between their labeled neighbors.
 // pt-BR class names live in PT below — the single place to tweak wording/casing.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callNumber, renderCoded, sortKey, CLASS_NAMES } from '../src/js/callnumber.js';
 
-const STORE = process.argv[2] || 'C:/Users/endar/Documents/weir';
+const args = process.argv.slice(2);
+const STORE = args.find((a) => /[\\/]/.test(a)) || 'C:/Users/endar/Documents/weir';
+const MIN = Number(args.find((a) => /^\d+$/.test(a))) || 1;   // min shelved books for a section to get a label
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 // Readable case; output uppercases it (accents preserved). Edit here to reword a label.
@@ -47,23 +51,31 @@ const rows = books.map((b) => {
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
 
-// ---- shelf-labels.txt — all classes, ALL CAPS, reserves flagged ----
-const occ = new Set(rows.filter((r) => r.cls).map((r) => r.cls));
-const keys = Object.keys(CLASS_NAMES).sort();
-const reserves = keys.filter((k) => !occ.has(k));
-const txt =
-  'weir — ETIQUETAS DAS SEÇÕES DA ESTANTE (Brother P-touch; uma por suporte, em ordem)\n' +
-  'Reservas sem livros ainda (imprima só se for deixar espaço): ' + reserves.join(', ') + '.\n' +
-  'Se a P-touch não tiver o · (ponto médio), troque por - ou :.\n\n\n' +
-  keys.map((k) => k + ' · ' + NAME(k)).join('\n') + '\n';
-fs.writeFileSync(path.join(HERE, 'shelf-labels.txt'), txt);
-
-// ---- label-placement.html — phone guide, SHELVED books under each label ----
+// ---- the physical shelf: shelved books grouped by class ----
 const shelved = rows.filter((r) => r.shelved && r.cls).sort((a, b) => (a.sk < b.sk ? -1 : a.sk > b.sk ? 1 : a.title.localeCompare(b.title)));
 const perCls = {}; for (const r of shelved) (perCls[r.cls] = perCls[r.cls] || []).push(r);
+const count = (k) => (perCls[k] || []).length;
+const keys = Object.keys(CLASS_NAMES).sort();
+const worth = keys.filter((k) => count(k) >= MIN);                  // label these
+const small = keys.filter((k) => count(k) > 0 && count(k) < MIN);   // on the shelf but too few for a label
+const empty = keys.filter((k) => !rows.some((r) => r.cls === k));   // no books at all
+
+// ---- shelf-labels.txt — the labels to actually print, ALL CAPS, shelf order ----
+const txt =
+  'weir — ETIQUETAS DAS SEÇÕES (Brother P-touch; imprima a lista abaixo, em ordem)\n' +
+  (MIN > 1 ? 'Só seções com ' + MIN + '+ livros na estante recebem etiqueta.\n' : '') +
+  (small.length ? 'Pequenas, sem etiqueta (ficam entre as vizinhas): ' + small.join(', ') + '.\n' : '') +
+  (empty.length ? 'Reservas vazias (sem livros): ' + empty.join(', ') + '.\n' : '') +
+  'Se a P-touch não tiver o · (ponto médio), troque por - ou :.\n\n\n' +
+  worth.map((k) => k + ' · ' + NAME(k)).join('\n') + '\n';
+fs.writeFileSync(path.join(HERE, 'shelf-labels.txt'), txt);
+
+// ---- label-placement.html — phone guide ----
 let body = '';
 for (const cls of Object.keys(perCls).sort()) {
-  body += '<h2><span class="ci">' + esc(cls) + '</span>' + esc(NAME(cls)) + '<span class="n">' + perCls[cls].length + '</span></h2>';
+  const sm = count(cls) < MIN;
+  body += '<h2' + (sm ? ' class="sm"' : '') + '><span class="ci">' + esc(cls) + '</span>' + esc(NAME(cls)) +
+    (sm ? '<span class="tag">sem etiqueta</span>' : '') + '<span class="n">' + count(cls) + '</span></h2>';
   for (const r of perCls[cls])
     body += '<div class="bk"><code class="cn">' + esc(r.coded) + '</code><div class="m"><span class="ti">' + esc(r.title) + '</span>' + (r.author ? '<span class="au">' + esc(r.author) + '</span>' : '') + '</div></div>';
 }
@@ -79,16 +91,17 @@ const html = '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">\n' 
 'h2{display:flex;align-items:center;gap:9px;font-size:.92rem;letter-spacing:.04em;margin:24px 0 6px;padding:7px 9px;background:#1d2024;border-left:4px solid var(--acc);border-radius:6px}\n' +
 'h2 .ci{background:var(--acc);color:var(--bg);font-weight:700;border-radius:5px;padding:0 6px;font-variant-numeric:tabular-nums}\n' +
 'h2 .n{margin-left:auto;color:var(--dim);font-size:.74rem;font-weight:400}\n' +
+'h2.sm{opacity:.5;border-left-color:var(--dim)}h2 .tag{font-size:.62rem;font-weight:400;color:var(--dim);border:1px solid var(--line);border-radius:10px;padding:1px 7px}\n' +
 '.bk{display:flex;gap:10px;align-items:baseline;padding:6px 4px;border-bottom:1px solid #1f2226}\n' +
 '.cn{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.68rem;color:var(--cn);white-space:nowrap;flex:0 0 auto;min-width:11em}\n' +
 '.m{display:flex;flex-wrap:wrap;gap:2px 9px;align-items:baseline}.ti{font-weight:600}.au{color:var(--dim);font-size:.84rem}\n' +
 '.empty{color:var(--dim);padding:20px 0}@media(min-width:640px){body{max-width:760px;margin:0 auto}}\n' +
 '</style></head><body>\n' +
 '<header><h1>weir — onde colocar as etiquetas</h1>\n' +
-'<div class="sub">' + Object.keys(perCls).length + ' seções · ' + shelved.length + ' livros na estante · ' + esc(stamp) + '</div>\n' +
-'<div class="hint">Cada etiqueta vai logo ANTES do primeiro livro listado abaixo dela ↓</div>\n' +
+'<div class="sub">' + worth.length + ' etiquetas · ' + Object.keys(perCls).length + ' seções · ' + shelved.length + ' livros · ' + esc(stamp) + '</div>\n' +
+'<div class="hint">Cada etiqueta vai logo ANTES do primeiro livro abaixo dela. Seções "sem etiqueta" ficam entre as vizinhas ↓</div>\n' +
 '<input id="q" type="search" placeholder="filtrar título / autor / código…" autocomplete="off"></header>\n' +
-'<main>\n' + (body || '<p class="empty">Nenhum livro marcado como guardado ainda.</p>') + '\n</main>\n' +
+'<main>\n' + (body || '<p class="empty">Nenhum livro guardado ainda.</p>') + '\n</main>\n' +
 '<script>\n' +
 'var q=document.getElementById("q"),bks=[].slice.call(document.querySelectorAll(".bk")),hds=[].slice.call(document.querySelectorAll("h2"));\n' +
 'q.addEventListener("input",function(){var n=q.value.trim().toLowerCase();\n' +
@@ -97,5 +110,5 @@ const html = '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">\n' 
 '</script>\n</body></html>\n';
 fs.writeFileSync(path.join(HERE, 'label-placement.html'), html);
 
-console.log('wrote tools/shelf-labels.txt (' + keys.length + ' labels) + tools/label-placement.html (' +
-  Object.keys(perCls).length + ' sections, ' + shelved.length + ' shelved books)');
+console.log('min ' + MIN + ': ' + worth.length + ' labels [' + worth.join(', ') + ']  ·  ' +
+  small.length + ' small skipped [' + small.join(', ') + ']  ·  ' + empty.length + ' empty');
