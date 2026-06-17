@@ -300,6 +300,14 @@ the trigger/query layer on top.
   earth-sci / `51`–`52` CS+data, minimal for `10`/`80`) so an insertion never
   reshuffles the whole row. Eventual "right" home for the class hierarchy: the SKOS
   vocab's `broader`-terms (derive class, don't hardcode the map).
+- **Records / music holdings** (a new media type beyond books). A unified
+  personal-media catalog fits the "self-cataloging library" ethos — but vinyl
+  doesn't shelve by Dewey: it's browsed **artist/genre-first**. So records want their
+  own holdings type (`form: record`, a "Records" view like Books), and a
+  **music-flavored address** (e.g. genre · artist · title · year) rather than the
+  book call-number scheme — `callnumber.js` would grow a music variant. Don't build
+  for n=1; design the shelving model when the crate is real. Seed: the *Cyberpunk:
+  Edgerunners* OST LP. (Same applies to any other physical-media types later.)
 
 ## Multi-device — sync + roles (see [SYNC.md](SYNC.md))
 
