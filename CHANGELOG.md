@@ -6,6 +6,47 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Glass: a full call-number classification + the physical home library — 2026-06-20
+
+- The glass **call number** grew from a loose facet projection into a complete
+  **shelf address**: a curated **0–9 / 2-digit main·division class**
+  (`CLASS_NAMES` / `classOf` in `callnumber.js`) now *leads*
+  `class · domain · sub · form · cutter · [series·vol | year]` and the sort key, so the
+  shelf wanders by discipline instead of scattering alphabetically by code. It's
+  glass-native — the universal main-class *pattern*, **not** Dewey's (OCLC's) schedules.
+  Curated codes where the derivation read badly (`manga→MGA`, `comics→CMX`,
+  mineralogy/petrology/paleontology/geomorphology → `36` earth sciences). The eventual
+  "right" home for the hierarchy is the SKOS vocab's `broader`-terms; the map is the
+  pragmatic stand-in (noted in-code).
+- **Series stay together.** `series` + `seq` on a book's `structured` keep a set
+  contiguous and in volume order — **decimal-safe**, so a manga `1.5` sorts between `1`
+  and `2` — instead of scattering by per-volume year.
+- **`weir_addBook`** MCP tool — add **or update** book holdings (pass `id` to update in
+  place). `structured` is **merged**, so a LibraryThing re-import no longer wipes a
+  stamped series; `title` is optional on an id-update; carries `series`/`seq`/`shelved`.
+- **Physical-shelf status** (`structured.shelved`) with a round-trip: the shelf-list
+  export's "shelved" JSON ↔ `weir_addBook(shelved)`, so ticks survive across devices
+  and regens (catalog = source of truth, not just localStorage).
+- **Physical-library tooling** (`tools/`): `shelf-list.mjs` + shared
+  `src/js/shelflist.js` (mobile shelf list — call-number order, per-class sections,
+  tap-to-shelve checkboxes, JSON export/import) and an in-app **Export shelf list**
+  (command palette + catalog facets toolbar). `shelf-labels.mjs` emits a printable
+  pt-BR **ALL-CAPS Brother-label** list + a `label-placement.html` phone guide (with a
+  `minBooks` threshold so tiny sections skip a divider). `shelf-label-holder.scad` is a
+  parametric clip-on 3D-printed label holder. Generated `.txt`/`.html` outputs are gitignored.
+- Arthur's home library — **147 books, hand-faceted** into the scheme (the LLM cataloger
+  seeds, a human ratifies via `weir_reviewItem`), 136 marked shelved.
+
+### Build: guard the two blank-screen classes — 2026-06-20
+
+- `build.js` now **`node --check`s the whole emitted bundle** — catching a syntax error
+  in *any* module (incl. `app.js`, which `npm run smoke` doesn't import) — and **rejects
+  a literal `</script>`** in the inlined JS (which closes weir's single inline `<script>`
+  early and orphans the rest → "Unexpected end of input", blank app). Both classes shipped
+  a blank app this session before the guards: a raw `</script>` in the shelf-list HTML
+  template, and an apostrophe ending a single-quoted tool-description string. Modules that
+  emit HTML must escape the close tag as `<\/script>`.
+
 ### Health: "Retry flagged" — recover failing feeds after an outage — 2026-06-02
 
 - The feed-health panel gets a **"↻ Retry flagged"** button that re-polls every

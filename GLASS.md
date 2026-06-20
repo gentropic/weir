@@ -585,6 +585,18 @@ one for fonts). **DDC and GeoRef are paywalled — route around them** (glass al
 treats DDC as display-only, never the organizing system; the CC0/PD sources cover
 the need).
 
+**The organizing system glass actually ships** is its own **call number** — a derived
+shelf address built live from a card's facets (`src/js/callnumber.js`), *not* stored,
+so there's nothing to migrate. It leads with a curated **0–9 / 2-digit main·division
+class** (`CLASS_NAMES`/`classOf`): the universal main-class *pattern* (à la Dewey/LC/UDC)
+but with glass-native groupings and codes — IP-clean. Format
+`class · domain · sub · form · cutter · [series·vol | year]`; series stay together via
+`series`+`seq` on the item's `structured` (decimal-safe). The "right" long-term home for
+the class hierarchy is the SKOS vocab's `broader`-terms (derive class by walking up); the
+hardcoded `DOMAIN_CLASS` map is the pragmatic stand-in. This realizes the **Stage-4
+holdings shelf** for Arthur's physical home library (147 books, hand-faceted), with the
+shelf-list export + printable-label + 3D-holder tooling in `tools/` (ROADMAP → Glass).
+
 **The pattern that dissolves size: build-time extraction keyed to the corpus.** You
 never resolve *the world* — you resolve *what weir holds* (~15k `entity` terms, ~640
 `spatial` terms). Look each up once against an open API, keep label + cross-IDs + the
