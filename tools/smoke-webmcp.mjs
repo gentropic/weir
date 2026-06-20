@@ -91,10 +91,13 @@ assert.equal(store.getItem('a1').saved, false, 'reversible');
 await assert.rejects(tools.setState({ id: 'a1' }), /at least one/, 'needs a field');
 await assert.rejects(tools.setState({ id: 'ghost', read: true }), /No item/);
 
-// ── tag (merged): single item by id (llm provenance) ──
+// ── tag (merged): single item by id (agent provenance, SPEC-librarian §2) ──
 const tg = await tools.tag({ id: 'a1', add: ['ml', 'geo'] });
 assert.ok(tg.tags.includes('ml') && tg.tags.includes('geo'), 'tag(id) added tags');
-assert.equal(store.getItem('a1').tag_src.ml, 'llm', 'WebMCP tags stamped source:llm');
+assert.equal(store.getItem('a1').tag_src.ml, 'agent', 'WebMCP tags stamped source:agent (was the mislabeled llm)');
+// identity: the calling channel's client.identity (folder=identity) is carried into the stamp
+await tools.tag({ id: 'a1', add: ['idtest'] }, { identity: 'claude:test' });
+assert.equal(store.getItem('a1').tag_by.idtest, 'claude:test', 'agent identity carried into tag_by');
 await tools.tag({ id: 'a1', remove: ['geo'] });
 assert.ok(!store.getItem('a1').tags.includes('geo') && store.getItem('a1').tags.includes('ml'), 'tag(id) removed only the named tag');
 await assert.rejects(tools.tag({ id: 'a1' }), /add and\/or remove/, 'needs add or remove');
@@ -104,7 +107,7 @@ await assert.rejects(tools.tag({ id: 'ghost', add: ['x'] }), /No item/);
 const bt = await tools.tag({ type: 'article', add: ['swept'] });
 assert.ok(bt.matched >= 1 && bt.changed >= 1, 'tag(query) matched + changed the article');
 assert.ok(store.getItem('a1').tags.includes('swept'), 'bulk tag landed on the matching item');
-assert.equal(store.getItem('a1').tag_src.swept, 'llm', 'bulk WebMCP tag stamped source:llm');
+assert.equal(store.getItem('a1').tag_src.swept, 'agent', 'bulk WebMCP tag stamped source:agent');
 assert.equal((await tools.tag({ q: 'no-such-text', add: ['x'] })).matched, 0, 'empty match → 0, no throw');
 await assert.rejects(tools.tag({ type: 'article' }), /add and\/or remove/, 'tag(query) needs add or remove');
 
@@ -347,7 +350,7 @@ assert.equal(lm.count, 2); assert.deepEqual(lm.models, ['m1', 'm2'], 'models lis
   await st.stacksTag({ path: 'specs/weir/idea.md', add: ['Reviewed'], remove: ['weir'] });
   const tagged = s.getItem(w.id);
   assert.ok(tagged.tags.includes('reviewed') && !tagged.tags.includes('weir'), 'tags add/remove applied');
-  assert.equal(tagged.tag_src.reviewed, 'llm', 'MCP stacks tag stamped llm');
+  assert.equal(tagged.tag_src.reviewed, 'agent', 'MCP stacks tag stamped source:agent');
   const fileRaw = await s.vfs.readFile('/stacks/specs/weir/idea.md', 'utf8');
   assert.ok(fileRaw.includes('reviewed') && !/\bweir\b/.test(fileRaw.split('---')[1] || ''), 'frontmatter mirrors the tag change');
 

@@ -302,6 +302,8 @@ export function makeFeed(raw) {
     category: raw.category || undefined,
     order: raw.order,                      // manual sort position within its folder (undefined = auto)
     affinity: raw.affinity || 0,           // watch-affinity score (set from Takeout digest)
+    source: raw.source || undefined,       // authorship of the feed-add: 'agent' when Claude proposed it (else undefined = human/UI). SPEC-librarian §2
+    added_by: raw.added_by || undefined,   // the agent identity that added it (folder=identity), e.g. 'claude:opus-4.8'
     feed_health: raw.feed_health || {
       last_successful_poll: undefined,
       consecutive_failures: 0,

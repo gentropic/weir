@@ -11389,6 +11389,8 @@ function makeFeed(raw) {
     category: raw.category || undefined,
     order: raw.order,                      // manual sort position within its folder (undefined = auto)
     affinity: raw.affinity || 0,           // watch-affinity score (set from Takeout digest)
+    source: raw.source || undefined,       // authorship of the feed-add: 'agent' when Claude proposed it (else undefined = human/UI). SPEC-librarian §2
+    added_by: raw.added_by || undefined,   // the agent identity that added it (folder=identity), e.g. 'claude:opus-4.8'
     feed_health: raw.feed_health || {
       last_successful_poll: undefined,
       consecutive_failures: 0,
@@ -13045,12 +13047,13 @@ class Store {
   // are searchable (deriveSearchText folds them in), queryable (query({tag})), and
   // feed the glass `entity` facet on the next catalog. Registers the tag name in
   // /tags.json so it's offered for autocomplete. Idempotent; returns the item.
-  addTag(id, tag, source = 'human') {
+  addTag(id, tag, source = 'human', by) {
     const r = this.items.get(String(id)); if (!r) return null;
     const t = String(tag).trim(); if (!t) return r;
     if (!r.tags.includes(t)) {
       r.tags = [...r.tags, t];
       r.tag_src = { ...(r.tag_src || {}), [t]: source };
+      if (by) r.tag_by = { ...(r.tag_by || {}), [t]: by };   // the agent identity (folder=identity), SPEC-librarian §2
       r.search_text = deriveSearchText(r);
       this.setTag(t, {});   // register the name (fire-and-forget persist)
       this._markFeedDirty(r.feed_id);
@@ -13064,6 +13067,7 @@ class Store {
     if (r.tags.includes(t)) {
       r.tags = r.tags.filter((x) => x !== t);
       if (r.tag_src) { const ts = { ...r.tag_src }; delete ts[t]; r.tag_src = Object.keys(ts).length ? ts : undefined; }
+      if (r.tag_by) { const tb = { ...r.tag_by }; delete tb[t]; r.tag_by = Object.keys(tb).length ? tb : undefined; }
       r.search_text = deriveSearchText(r);
       this._markFeedDirty(r.feed_id);
       this.emit('item', { id: r.id, patch: { tags: r.tags } });
@@ -13075,14 +13079,14 @@ class Store {
   // Registers the tag names + writes /tags.json ONCE (not per item — addTag would
   // thrash it N×M times), marks each touched feed dirty, single emit. Returns the
   // count of items actually changed. Pairs with a single flush() by the caller.
-  addTagBulk(ids, tags, source = 'human') {
+  addTagBulk(ids, tags, source = 'human', by) {
     const clean = [...new Set(tags.map((t) => String(t).trim()).filter(Boolean))];
     if (!clean.length) return 0;
     let n = 0; const feeds = new Set();
     for (const id of ids) {
       const r = this.items.get(String(id)); if (!r) continue;
       let changed = false;
-      for (const t of clean) { if (r.tags.includes(t)) continue; r.tags = [...r.tags, t]; r.tag_src = { ...(r.tag_src || {}), [t]: source }; changed = true; }
+      for (const t of clean) { if (r.tags.includes(t)) continue; r.tags = [...r.tags, t]; r.tag_src = { ...(r.tag_src || {}), [t]: source }; if (by) r.tag_by = { ...(r.tag_by || {}), [t]: by }; changed = true; }
       if (changed) { r.search_text = deriveSearchText(r); feeds.add(r.feed_id); n++; }
     }
     for (const t of clean) this.tags[t] = { name: t, ...this.tags[t] };   // register names (in-memory)
@@ -13546,7 +13550,7 @@ class Store {
     from.glass = from.glass || {};
     const related = from.glass.related || (from.glass.related = []);
     let edge = related.find((e) => e.target === String(toGlassId) && e.type === type);
-    if (!edge) { edge = { target: String(toGlassId), type, source: opts.source || 'human', at: now() }; related.push(edge); }
+    if (!edge) { edge = { target: String(toGlassId), type, source: opts.source || 'human', by: opts.by || undefined, at: now() }; related.push(edge); }
     this._markCardDirty(String(fromGlassId));
     this.emit('catalog', { id: String(fromGlassId), related: true });
     return edge;
@@ -13569,13 +13573,35 @@ class Store {
     const gid = String(glassId);
     const card = this.cards.get(gid);
     const resolve = (g) => { const c = this.cards.get(g); return { glass_id: g, title: (c && c.dublin_core && c.dublin_core.title) || g, document_ref: c && c.glass && c.glass.document_ref }; };
-    const outgoing = (((card && card.glass) || {}).related || []).map((e) => ({ ...resolve(e.target), type: e.type, source: e.source }));
+    const outgoing = (((card && card.glass) || {}).related || []).map((e) => ({ ...resolve(e.target), type: e.type, source: e.source, by: e.by }));
     const backlinks = [];
     for (const [g, c] of this.cards) {
       if (g === gid) continue;
-      for (const e of ((c.glass || {}).related) || []) if (e.target === gid) backlinks.push({ ...resolve(g), type: e.type, source: e.source });
+      for (const e of ((c.glass || {}).related) || []) if (e.target === gid) backlinks.push({ ...resolve(g), type: e.type, source: e.source, by: e.by });
     }
     return { outgoing, backlinks };
+  }
+
+  // One-shot provenance normalization (SPEC-librarian §2). The external agent's writes
+  // were historically stamped two different ways — tags 'llm', edges 'claude' — both
+  // meaning the same hand. Rewrite both to the unified 'agent' tier. Idempotent; returns
+  // counts. A capability, not a hand-fix (run via weir_provenanceMigrate). The caller
+  // flushes. (Note `source` on stacks notes is left for a later pass — cosmetic.)
+  migrateProvenance() {
+    let tags = 0, edges = 0;
+    for (const r of this.items.values()) {
+      if (!r.tag_src) continue;
+      let touched = false;
+      for (const t of Object.keys(r.tag_src)) if (r.tag_src[t] === 'llm') { r.tag_src[t] = 'agent'; tags++; touched = true; }
+      if (touched) this._markFeedDirty(r.feed_id);
+    }
+    for (const [gid, c] of this.cards) {
+      const rel = c.glass && c.glass.related; if (!rel || !rel.length) continue;
+      let touched = false;
+      for (const e of rel) if (e.source === 'claude') { e.source = 'agent'; edges++; touched = true; }
+      if (touched) this._markCardDirty(gid);
+    }
+    return { tags, edges };
   }
 
   // Controlled-vocabulary normalization (the thesaurus primitive): rewrite a term
@@ -20406,7 +20432,7 @@ class App {
   // rides in the url (→ the biblio enricher fills gaps from Open Library), and
   // DDC/LCC/ISBN ride in `structured` as display metadata. Your LibraryThing tags
   // come in stamped as yours.
-  async importBooks(books, format = 'librarything') {
+  async importBooks(books, format = 'librarything', prov) {
     const sub = document.getElementById('view-sub');
     if (!books || !books.length) { if (sub) sub.textContent = `no books found in that ${format} file`; return { inserted: 0, updated: 0 }; }
     await this._ensureBooksSource();
@@ -20436,6 +20462,9 @@ class App {
         title: this._decodeHtml(b.title), author: this._decodeHtml(b.author) || undefined,
         published_at: b.date || undefined, excerpt: this._decodeHtml(b.excerpt) || '',   // '' (not undefined) so a re-import CLEARS a stale first-import excerpt
         tags, tag_src: tags.reduce((o, t) => { o[t] = 'human'; return o; }, {}), structured,
+        // Provenance only on a NEW holding the agent adds — never relabel a human's book
+        // the agent merely edits (SPEC-librarian §2). `added_by` = the agent identity.
+        ...(prov && !prior ? { added_by: prov.by, added_src: prov.source } : {}),
       };
     });
     const res = await this.store.upsertItems(raws);
@@ -21900,6 +21929,11 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return opts;
   }
 
+  // The agent provenance stamp for a write tool: the unified 'agent' tier + the calling
+  // channel's identity (folder = identity, carried by the shim as client.identity).
+  // SPEC-librarian §2. A null client (ws/http, or a local invoke) → a bare 'agent'.
+  function agentProv(client) { return { source: 'agent', by: (client && client.identity) || 'agent' }; }
+
   async function queryItems(input = {}) {
     const { cursor } = input;
     const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
@@ -22027,14 +22061,15 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // pass `id` to tag ONE item, or query filters to bulk-tag every match. Tags are
   // stamped source:'llm' (UI shows them apart from 'human' tags); searchable +
   // queryable immediately; feed the glass `entity` facet on the next catalog.
-  async function tag(input = {}) {
+  async function tag(input = {}, client) {
     const add = [].concat(input.add || []).filter(Boolean);
     const remove = [].concat(input.remove || []).filter(Boolean);
     if (!add.length && !remove.length) throw new Error('Provide tags to add and/or remove.');
+    const p = agentProv(client);   // source 'agent' + identity (was the mislabeled 'llm')
     if (input.id != null) {   // single item
       const it = store.getItem(String(input.id));
       if (!it) throw new Error(`No item with id "${input.id}".`);
-      for (const t of add) store.addTag(it.id, t, 'llm');
+      for (const t of add) store.addTag(it.id, t, p.source, p.by);
       for (const t of remove) store.removeTag(it.id, t);
       await store.flush();
       if (app && app.renderStream) app.renderStream();
@@ -22043,7 +22078,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     // bulk over a query (same scope args as queryItems)
     const ids = store.query(buildQuery(input)).map((r) => r.id);
     if (!ids.length) return { matched: 0, changed: 0, add, remove };
-    const changed = add.length ? store.addTagBulk(ids, add, 'llm') : 0;
+    const changed = add.length ? store.addTagBulk(ids, add, p.source, p.by) : 0;
     for (const id of ids) for (const t of remove) store.removeTag(id, t);
     await store.flush();
     if (app && app.renderStream) app.renderStream();
@@ -22233,14 +22268,15 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
 
   // Ratify (or remove) a typed edge between two items — the decides-vs-proposes gate
   // (GLASS §2.1): a suggestion is only an edge once declared here. type ∈ RELATION_TYPES.
-  async function relate(input = {}) {
+  async function relate(input = {}, client) {
     const from = toGlassId(input.from), to = toGlassId(input.to);
     if (input.remove) {
       const removed = store.unrelateCards(from, to, input.type ? { type: String(input.type) } : {});
       await store.flush();
       return { removed, from: String(input.from), to: String(input.to) };
     }
-    const edge = store.relateCards(from, to, { type: input.type || 'related', source: 'claude' });
+    const p = agentProv(client);
+    const edge = store.relateCards(from, to, { type: input.type || 'related', source: p.source, by: p.by });
     await store.flush();
     return { related: true, from: String(input.from), to: String(input.to), type: edge.type };
   }
@@ -22361,7 +22397,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   }
 
   // Subscribe to a feed (adapter auto-detected; an initial poll fires in the app).
-  async function addFeed(input = {}) {
+  async function addFeed(input = {}, client) {
     if (!app) throw new Error('adding feeds is only available in the running app');
     const url = String(input.url || '').trim();
     if (!url) throw new Error('provide `url`');
@@ -22370,7 +22406,8 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     const resolved = (matched && matched.resolveUrl && matched.resolveUrl(url)) || url;
     let host = url; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep raw */ }
     const name = input.name || (matched && matched.titleFor && matched.titleFor(url)) || host;
-    const feed = await store.putFeed({ url: resolved, name, adapter, category: input.category || undefined });
+    const p = agentProv(client);   // mark who added it (the gap: feeds carried no provenance)
+    const feed = await store.putFeed({ url: resolved, name, adapter, category: input.category || undefined, source: p.source, added_by: p.by });
     if (app.poller) app.poller.pollFeed(feed).then(() => app.renderAll && app.renderAll()).catch(() => {});
     if (app.renderRail) app.renderRail();
     return { id: feed.id, name: feed.name, adapter: feed.adapter, url: feed.url, category: feed.category || undefined };
@@ -22540,7 +22577,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return o;
   }
 
-  async function stacksWrite(input = {}) {
+  async function stacksWrite(input = {}, client) {
     const stacks = requireStacks();
     if (input.markdown == null) throw new Error('provide `markdown` (the note body).');
     const tags = [].concat(input.tags || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
@@ -22552,7 +22589,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     } else {
       let folder = input.folder, name = input.name;
       if (path) { const i = path.lastIndexOf('/'); if (folder == null) folder = i >= 0 ? path.slice(0, i) : 'inbox'; if (name == null) name = i >= 0 ? path.slice(i + 1) : path; }
-      rec = await stacks.writeNote({ folder: folder || 'inbox', name, title: input.title, markdown: String(input.markdown), tags, source: 'claude' });
+      rec = await stacks.writeNote({ folder: folder || 'inbox', name, title: input.title, markdown: String(input.markdown), tags, source: agentProv(client).source });
     }
     await store.flush();
     if (app.renderStacks) app.renderStacks();
@@ -22573,14 +22610,15 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, movedFrom: from, ...projStack(rec) };
   }
 
-  async function stacksTag(input = {}) {
+  async function stacksTag(input = {}, client) {
     const stacks = requireStacks();
     const item = findStackByPath(input.path);
     if (!item) throw new Error(`No stacks entry at "${input.path}".`);
     const add = [].concat(input.add || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
     const remove = [].concat(input.remove || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
     if (!add.length && !remove.length) throw new Error('provide tags to add and/or remove.');
-    for (const t of add) store.addTag(item.id, t, 'llm');
+    const p = agentProv(client);
+    for (const t of add) store.addTag(item.id, t, p.source, p.by);
     for (const t of remove) store.removeTag(item.id, t);
     await stacks.syncTagsToFile(item);   // mirror to the note frontmatter / file sidecar
     await store.flush();
@@ -22606,7 +22644,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // the LibraryThing import path, so it's idempotent: re-adding a book UPDATES it
   // (matched by isbn or title) and never resets read/saved/tags. Batch via `books`,
   // or pass one book's fields inline. Returns { inserted, updated, books }.
-  async function addBooks(input = {}) {
+  async function addBooks(input = {}, client) {
     if (!app || !app.importBooks) throw new Error('addBooks is only available in the running app');
     const list = Array.isArray(input.books) ? input.books : ((input.title || input.id) ? [input] : null);
     if (!list || !list.length) throw new Error('pass books:[{ title, author?, isbn?, series?, seq?, date?, tags?, ddc?, lcc? }] (or a single book inline)');
@@ -22634,11 +22672,21 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       if (seen.has(k)) throw new Error(`two books share the dedup key "${k}" — give each a distinct title (e.g. include the volume), an isbn, or a distinct id`);
       seen.set(k, true);
     }
-    const res = await app.importBooks(norm, 'manual');
+    const res = await app.importBooks(norm, 'manual', agentProv(client));   // stamp who added the holding
     return { inserted: res.inserted, updated: res.updated, books: norm.length };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  // One-shot provenance normalization (SPEC-librarian §2): rewrite the agent's
+  // historically-split stamps — tags 'llm', edges 'claude' — to the unified 'agent'
+  // tier across the whole corpus. Idempotent; returns counts. A capability, not a
+  // hand-fix (CLAUDE.md). Run once after the taxonomy lands; safe to re-run.
+  async function provenanceMigrate() {
+    const counts = store.migrateProvenance();
+    await store.flush();
+    return { migrated: counts };
+  }
+
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -22823,6 +22871,12 @@ const TOOLS = [
     description: 'Bring EVERY archived item back to active and clear its expiry (so retention won\'t re-shelve it) — the one-shot "I keep everything" restore that reverses an over-eager auto-archive sweep. Reversible; nothing is deleted. Returns { unarchived }.',
     inputSchema: { type: 'object', properties: {} },
     annotations: { title: 'Unarchive everything' },
+  },
+  {
+    name: 'weir_provenanceMigrate', fn: 'provenanceMigrate',
+    description: 'One-shot cleanup: normalize the agent\'s historical authorship stamps to the unified `source:agent` tier — tags previously marked \'llm\' and relation edges marked \'claude\' (both meant Claude) become \'agent\'. Idempotent and safe to re-run; nothing is deleted. Run once after the provenance taxonomy landed. Returns { migrated: { tags, edges } }.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { title: 'Migrate provenance to agent tier' },
   },
   {
     name: 'weir_addBook', fn: 'addBooks',
@@ -23169,7 +23223,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '3b0a2d5';          // short content hash of the bundle (build id)
+const COMMIT = '9152f50';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

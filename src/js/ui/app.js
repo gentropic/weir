@@ -2766,7 +2766,7 @@ export class App {
   // rides in the url (→ the biblio enricher fills gaps from Open Library), and
   // DDC/LCC/ISBN ride in `structured` as display metadata. Your LibraryThing tags
   // come in stamped as yours.
-  async importBooks(books, format = 'librarything') {
+  async importBooks(books, format = 'librarything', prov) {
     const sub = document.getElementById('view-sub');
     if (!books || !books.length) { if (sub) sub.textContent = `no books found in that ${format} file`; return { inserted: 0, updated: 0 }; }
     await this._ensureBooksSource();
@@ -2796,6 +2796,9 @@ export class App {
         title: this._decodeHtml(b.title), author: this._decodeHtml(b.author) || undefined,
         published_at: b.date || undefined, excerpt: this._decodeHtml(b.excerpt) || '',   // '' (not undefined) so a re-import CLEARS a stale first-import excerpt
         tags, tag_src: tags.reduce((o, t) => { o[t] = 'human'; return o; }, {}), structured,
+        // Provenance only on a NEW holding the agent adds — never relabel a human's book
+        // the agent merely edits (SPEC-librarian §2). `added_by` = the agent identity.
+        ...(prov && !prior ? { added_by: prov.by, added_src: prov.source } : {}),
       };
     });
     const res = await this.store.upsertItems(raws);

@@ -91,6 +91,11 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return opts;
   }
 
+  // The agent provenance stamp for a write tool: the unified 'agent' tier + the calling
+  // channel's identity (folder = identity, carried by the shim as client.identity).
+  // SPEC-librarian §2. A null client (ws/http, or a local invoke) → a bare 'agent'.
+  function agentProv(client) { return { source: 'agent', by: (client && client.identity) || 'agent' }; }
+
   async function queryItems(input = {}) {
     const { cursor } = input;
     const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
@@ -218,14 +223,15 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // pass `id` to tag ONE item, or query filters to bulk-tag every match. Tags are
   // stamped source:'llm' (UI shows them apart from 'human' tags); searchable +
   // queryable immediately; feed the glass `entity` facet on the next catalog.
-  async function tag(input = {}) {
+  async function tag(input = {}, client) {
     const add = [].concat(input.add || []).filter(Boolean);
     const remove = [].concat(input.remove || []).filter(Boolean);
     if (!add.length && !remove.length) throw new Error('Provide tags to add and/or remove.');
+    const p = agentProv(client);   // source 'agent' + identity (was the mislabeled 'llm')
     if (input.id != null) {   // single item
       const it = store.getItem(String(input.id));
       if (!it) throw new Error(`No item with id "${input.id}".`);
-      for (const t of add) store.addTag(it.id, t, 'llm');
+      for (const t of add) store.addTag(it.id, t, p.source, p.by);
       for (const t of remove) store.removeTag(it.id, t);
       await store.flush();
       if (app && app.renderStream) app.renderStream();
@@ -234,7 +240,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     // bulk over a query (same scope args as queryItems)
     const ids = store.query(buildQuery(input)).map((r) => r.id);
     if (!ids.length) return { matched: 0, changed: 0, add, remove };
-    const changed = add.length ? store.addTagBulk(ids, add, 'llm') : 0;
+    const changed = add.length ? store.addTagBulk(ids, add, p.source, p.by) : 0;
     for (const id of ids) for (const t of remove) store.removeTag(id, t);
     await store.flush();
     if (app && app.renderStream) app.renderStream();
@@ -424,14 +430,15 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
 
   // Ratify (or remove) a typed edge between two items — the decides-vs-proposes gate
   // (GLASS §2.1): a suggestion is only an edge once declared here. type ∈ RELATION_TYPES.
-  async function relate(input = {}) {
+  async function relate(input = {}, client) {
     const from = toGlassId(input.from), to = toGlassId(input.to);
     if (input.remove) {
       const removed = store.unrelateCards(from, to, input.type ? { type: String(input.type) } : {});
       await store.flush();
       return { removed, from: String(input.from), to: String(input.to) };
     }
-    const edge = store.relateCards(from, to, { type: input.type || 'related', source: 'claude' });
+    const p = agentProv(client);
+    const edge = store.relateCards(from, to, { type: input.type || 'related', source: p.source, by: p.by });
     await store.flush();
     return { related: true, from: String(input.from), to: String(input.to), type: edge.type };
   }
@@ -552,7 +559,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   }
 
   // Subscribe to a feed (adapter auto-detected; an initial poll fires in the app).
-  async function addFeed(input = {}) {
+  async function addFeed(input = {}, client) {
     if (!app) throw new Error('adding feeds is only available in the running app');
     const url = String(input.url || '').trim();
     if (!url) throw new Error('provide `url`');
@@ -561,7 +568,8 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     const resolved = (matched && matched.resolveUrl && matched.resolveUrl(url)) || url;
     let host = url; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep raw */ }
     const name = input.name || (matched && matched.titleFor && matched.titleFor(url)) || host;
-    const feed = await store.putFeed({ url: resolved, name, adapter, category: input.category || undefined });
+    const p = agentProv(client);   // mark who added it (the gap: feeds carried no provenance)
+    const feed = await store.putFeed({ url: resolved, name, adapter, category: input.category || undefined, source: p.source, added_by: p.by });
     if (app.poller) app.poller.pollFeed(feed).then(() => app.renderAll && app.renderAll()).catch(() => {});
     if (app.renderRail) app.renderRail();
     return { id: feed.id, name: feed.name, adapter: feed.adapter, url: feed.url, category: feed.category || undefined };
@@ -731,7 +739,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return o;
   }
 
-  async function stacksWrite(input = {}) {
+  async function stacksWrite(input = {}, client) {
     const stacks = requireStacks();
     if (input.markdown == null) throw new Error('provide `markdown` (the note body).');
     const tags = [].concat(input.tags || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
@@ -743,7 +751,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     } else {
       let folder = input.folder, name = input.name;
       if (path) { const i = path.lastIndexOf('/'); if (folder == null) folder = i >= 0 ? path.slice(0, i) : 'inbox'; if (name == null) name = i >= 0 ? path.slice(i + 1) : path; }
-      rec = await stacks.writeNote({ folder: folder || 'inbox', name, title: input.title, markdown: String(input.markdown), tags, source: 'claude' });
+      rec = await stacks.writeNote({ folder: folder || 'inbox', name, title: input.title, markdown: String(input.markdown), tags, source: agentProv(client).source });
     }
     await store.flush();
     if (app.renderStacks) app.renderStacks();
@@ -764,14 +772,15 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { ok: true, movedFrom: from, ...projStack(rec) };
   }
 
-  async function stacksTag(input = {}) {
+  async function stacksTag(input = {}, client) {
     const stacks = requireStacks();
     const item = findStackByPath(input.path);
     if (!item) throw new Error(`No stacks entry at "${input.path}".`);
     const add = [].concat(input.add || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
     const remove = [].concat(input.remove || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
     if (!add.length && !remove.length) throw new Error('provide tags to add and/or remove.');
-    for (const t of add) store.addTag(item.id, t, 'llm');
+    const p = agentProv(client);
+    for (const t of add) store.addTag(item.id, t, p.source, p.by);
     for (const t of remove) store.removeTag(item.id, t);
     await stacks.syncTagsToFile(item);   // mirror to the note frontmatter / file sidecar
     await store.flush();
@@ -797,7 +806,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // the LibraryThing import path, so it's idempotent: re-adding a book UPDATES it
   // (matched by isbn or title) and never resets read/saved/tags. Batch via `books`,
   // or pass one book's fields inline. Returns { inserted, updated, books }.
-  async function addBooks(input = {}) {
+  async function addBooks(input = {}, client) {
     if (!app || !app.importBooks) throw new Error('addBooks is only available in the running app');
     const list = Array.isArray(input.books) ? input.books : ((input.title || input.id) ? [input] : null);
     if (!list || !list.length) throw new Error('pass books:[{ title, author?, isbn?, series?, seq?, date?, tags?, ddc?, lcc? }] (or a single book inline)');
@@ -825,11 +834,21 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       if (seen.has(k)) throw new Error(`two books share the dedup key "${k}" — give each a distinct title (e.g. include the volume), an isbn, or a distinct id`);
       seen.set(k, true);
     }
-    const res = await app.importBooks(norm, 'manual');
+    const res = await app.importBooks(norm, 'manual', agentProv(client));   // stamp who added the holding
     return { inserted: res.inserted, updated: res.updated, books: norm.length };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  // One-shot provenance normalization (SPEC-librarian §2): rewrite the agent's
+  // historically-split stamps — tags 'llm', edges 'claude' — to the unified 'agent'
+  // tier across the whole corpus. Idempotent; returns counts. A capability, not a
+  // hand-fix (CLAUDE.md). Run once after the taxonomy lands; safe to re-run.
+  async function provenanceMigrate() {
+    const counts = store.migrateProvenance();
+    await store.flush();
+    return { migrated: counts };
+  }
+
+  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1014,6 +1033,12 @@ const TOOLS = [
     description: 'Bring EVERY archived item back to active and clear its expiry (so retention won\'t re-shelve it) — the one-shot "I keep everything" restore that reverses an over-eager auto-archive sweep. Reversible; nothing is deleted. Returns { unarchived }.',
     inputSchema: { type: 'object', properties: {} },
     annotations: { title: 'Unarchive everything' },
+  },
+  {
+    name: 'weir_provenanceMigrate', fn: 'provenanceMigrate',
+    description: 'One-shot cleanup: normalize the agent\'s historical authorship stamps to the unified `source:agent` tier — tags previously marked \'llm\' and relation edges marked \'claude\' (both meant Claude) become \'agent\'. Idempotent and safe to re-run; nothing is deleted. Run once after the provenance taxonomy landed. Returns { migrated: { tags, edges } }.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { title: 'Migrate provenance to agent tier' },
   },
   {
     name: 'weir_addBook', fn: 'addBooks',

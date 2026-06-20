@@ -728,12 +728,13 @@ export class Store {
   // are searchable (deriveSearchText folds them in), queryable (query({tag})), and
   // feed the glass `entity` facet on the next catalog. Registers the tag name in
   // /tags.json so it's offered for autocomplete. Idempotent; returns the item.
-  addTag(id, tag, source = 'human') {
+  addTag(id, tag, source = 'human', by) {
     const r = this.items.get(String(id)); if (!r) return null;
     const t = String(tag).trim(); if (!t) return r;
     if (!r.tags.includes(t)) {
       r.tags = [...r.tags, t];
       r.tag_src = { ...(r.tag_src || {}), [t]: source };
+      if (by) r.tag_by = { ...(r.tag_by || {}), [t]: by };   // the agent identity (folder=identity), SPEC-librarian §2
       r.search_text = deriveSearchText(r);
       this.setTag(t, {});   // register the name (fire-and-forget persist)
       this._markFeedDirty(r.feed_id);
@@ -747,6 +748,7 @@ export class Store {
     if (r.tags.includes(t)) {
       r.tags = r.tags.filter((x) => x !== t);
       if (r.tag_src) { const ts = { ...r.tag_src }; delete ts[t]; r.tag_src = Object.keys(ts).length ? ts : undefined; }
+      if (r.tag_by) { const tb = { ...r.tag_by }; delete tb[t]; r.tag_by = Object.keys(tb).length ? tb : undefined; }
       r.search_text = deriveSearchText(r);
       this._markFeedDirty(r.feed_id);
       this.emit('item', { id: r.id, patch: { tags: r.tags } });
@@ -758,14 +760,14 @@ export class Store {
   // Registers the tag names + writes /tags.json ONCE (not per item — addTag would
   // thrash it N×M times), marks each touched feed dirty, single emit. Returns the
   // count of items actually changed. Pairs with a single flush() by the caller.
-  addTagBulk(ids, tags, source = 'human') {
+  addTagBulk(ids, tags, source = 'human', by) {
     const clean = [...new Set(tags.map((t) => String(t).trim()).filter(Boolean))];
     if (!clean.length) return 0;
     let n = 0; const feeds = new Set();
     for (const id of ids) {
       const r = this.items.get(String(id)); if (!r) continue;
       let changed = false;
-      for (const t of clean) { if (r.tags.includes(t)) continue; r.tags = [...r.tags, t]; r.tag_src = { ...(r.tag_src || {}), [t]: source }; changed = true; }
+      for (const t of clean) { if (r.tags.includes(t)) continue; r.tags = [...r.tags, t]; r.tag_src = { ...(r.tag_src || {}), [t]: source }; if (by) r.tag_by = { ...(r.tag_by || {}), [t]: by }; changed = true; }
       if (changed) { r.search_text = deriveSearchText(r); feeds.add(r.feed_id); n++; }
     }
     for (const t of clean) this.tags[t] = { name: t, ...this.tags[t] };   // register names (in-memory)
@@ -1229,7 +1231,7 @@ export class Store {
     from.glass = from.glass || {};
     const related = from.glass.related || (from.glass.related = []);
     let edge = related.find((e) => e.target === String(toGlassId) && e.type === type);
-    if (!edge) { edge = { target: String(toGlassId), type, source: opts.source || 'human', at: now() }; related.push(edge); }
+    if (!edge) { edge = { target: String(toGlassId), type, source: opts.source || 'human', by: opts.by || undefined, at: now() }; related.push(edge); }
     this._markCardDirty(String(fromGlassId));
     this.emit('catalog', { id: String(fromGlassId), related: true });
     return edge;
@@ -1252,13 +1254,35 @@ export class Store {
     const gid = String(glassId);
     const card = this.cards.get(gid);
     const resolve = (g) => { const c = this.cards.get(g); return { glass_id: g, title: (c && c.dublin_core && c.dublin_core.title) || g, document_ref: c && c.glass && c.glass.document_ref }; };
-    const outgoing = (((card && card.glass) || {}).related || []).map((e) => ({ ...resolve(e.target), type: e.type, source: e.source }));
+    const outgoing = (((card && card.glass) || {}).related || []).map((e) => ({ ...resolve(e.target), type: e.type, source: e.source, by: e.by }));
     const backlinks = [];
     for (const [g, c] of this.cards) {
       if (g === gid) continue;
-      for (const e of ((c.glass || {}).related) || []) if (e.target === gid) backlinks.push({ ...resolve(g), type: e.type, source: e.source });
+      for (const e of ((c.glass || {}).related) || []) if (e.target === gid) backlinks.push({ ...resolve(g), type: e.type, source: e.source, by: e.by });
     }
     return { outgoing, backlinks };
+  }
+
+  // One-shot provenance normalization (SPEC-librarian §2). The external agent's writes
+  // were historically stamped two different ways — tags 'llm', edges 'claude' — both
+  // meaning the same hand. Rewrite both to the unified 'agent' tier. Idempotent; returns
+  // counts. A capability, not a hand-fix (run via weir_provenanceMigrate). The caller
+  // flushes. (Note `source` on stacks notes is left for a later pass — cosmetic.)
+  migrateProvenance() {
+    let tags = 0, edges = 0;
+    for (const r of this.items.values()) {
+      if (!r.tag_src) continue;
+      let touched = false;
+      for (const t of Object.keys(r.tag_src)) if (r.tag_src[t] === 'llm') { r.tag_src[t] = 'agent'; tags++; touched = true; }
+      if (touched) this._markFeedDirty(r.feed_id);
+    }
+    for (const [gid, c] of this.cards) {
+      const rel = c.glass && c.glass.related; if (!rel || !rel.length) continue;
+      let touched = false;
+      for (const e of rel) if (e.source === 'claude') { e.source = 'agent'; edges++; touched = true; }
+      if (touched) this._markCardDirty(gid);
+    }
+    return { tags, edges };
   }
 
   // Controlled-vocabulary normalization (the thesaurus primitive): rewrite a term
