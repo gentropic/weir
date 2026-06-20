@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "webmcp-weir": {
+    "numen-weir-dev": {
       "command": "node",
-      "args": ["../webmcp/webmcp-bridge.js", "--app", "weir", "--port", "7801"]
+      "args": ["../numen/numen-bridge.js", "--app", "weir", "--transport", "fs", "--folder", "~/numen/weir-dev"]
     }
   }
 }

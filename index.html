@@ -1317,8 +1317,11 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
         <label class="set-row">connection<input type="text" id="set-webmcp-conn" class="field" autocomplete="off" spellcheck="false" placeholder="port:token (e.g. 7801:…)"></label>
         <div class="set-row"><span>or folder: <b id="set-webmcp-fs-folder">—</b></span><button class="btn-link" id="set-webmcp-fs-pick" type="button">pick…</button><button class="btn-link" id="set-webmcp-fs-toggle" type="button">connect over folder</button></div>
         <label class="set-row">folder token<input type="text" id="set-webmcp-fs-token" class="field" autocomplete="off" spellcheck="false" placeholder="machine token (no port — fs transport)"></label>
+        <div class="set-row"><span>dev folder: <b id="set-webmcp-fs2-folder">—</b></span><button class="btn-link" id="set-webmcp-fs2-pick" type="button">pick…</button><button class="btn-link" id="set-webmcp-fs2-toggle" type="button">connect over folder</button></div>
+        <label class="set-row">dev folder token<input type="text" id="set-webmcp-fs2-token" class="field" autocomplete="off" spellcheck="false" placeholder="2nd fs channel — for the weir dev agent"></label>
+        <div class="set-row"><span>channels: <b id="set-webmcp-channels">—</b></span></div>
         <label class="set-row check"><input type="checkbox" id="set-mcp-feed-removal"> let Claude prune feeds (the weir_removeFeed tool — deletes a dead feed + its items; off = Claude can’t)</label>
-        <div class="hint">Lets Claude Code curate weir via <b>@gcu/webmcp</b> (query/tag items, manage feeds, write to the stacks). <b>Over localhost:</b> run <code>node webmcp-bridge.js --app weir --port 7801 --info</code>, paste the <code>port:token</code>, connect (uses the @gcu/bridge extension, like the cataloger). <b>Over a folder</b> (no port, no extension): run <code>… --transport fs --folder &lt;dir&gt; --info</code>, pick that folder here, paste the token, connect — sync the folder (e.g. Syncthing) to drive weir from another machine. weir remembers either (origin-local, never in backups).</div>
+        <div class="hint">Lets Claude Code curate weir via <b>@gcu/numen</b> (query/tag items, manage feeds, write to the stacks). <b>Over localhost:</b> run <code>node numen-bridge.js --app weir --port 7801 --info</code>, paste the <code>port:token</code>, connect (uses the @gcu/bridge extension, like the cataloger). <b>Over a folder</b> (no port, no extension): run <code>… --transport fs --folder &lt;dir&gt; --info</code>, pick that folder here, paste the token, connect — sync the folder (e.g. Syncthing) to drive weir from another machine. <b>Two channels at once:</b> the main folder is the librarian (weir-desk); the <b>dev folder</b> is a second agent (the weir repo) on its own folder — folder&nbsp;=&nbsp;identity, so both connect together (SPEC-numen-multichannel). weir remembers each (origin-local, never in backups).</div>
       </section>
       <section class="set-group">
         <h4>Cloud sync (Dropbox)</h4>
@@ -5287,7 +5290,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
 
 // ── vendor/webmcp-shim.js ──
 
-// @gcu/numen shim — WebMCP polyfill + WebSocket/HTTP bridge client.
+// @gcu/numen shim — WebMCP polyfill + WebSocket/HTTP/fs bridge client.
 // Generic: knows nothing about any specific app. Drop it into any page; it
 // installs navigator.modelContext (registerTool/unregisterTool) and a small
 // window.gcuWebMCP control surface, then relays tool calls to a @gcu/numen
@@ -5308,21 +5311,32 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
 // HTTP long-poll transport through it, sidestepping the page-origin gate.
 // Injecting a fetch forces the HTTP transport (WS is skipped). On localhost/
 // file:// dev, leave it unset and WS/direct-HTTP are used.
+//
+// MULTICHANNEL fs (SPEC-numen-multichannel.md): the fs transport supports MORE
+// THAN ONE bridge at once — one FsChannel per folder, all sharing this page's tool
+// registry. Each bridge gets its own folder (folder = identity); replies route back
+// to the calling channel, and the calling channel's `identity` is carried into tool
+// execution (the SPEC-librarian §2 provenance hook). `gcuMCP.addFolder({id, handle,
+// token, identity})` adds a channel; `gcuMCP.folder = h; connect(token)` is the
+// single-channel shim (id 'default'). WS/HTTP stay single (localhost, one bridge).
 
 (function () {
   var PROTOCOL = 1;
   var FS_POLL_MS = 350;             // fs-transport poll cadence (reads are cheap; see TRANSPORTS §3.4)
 
   var _tools = new Map();
-  var _transport = null;            // { type: 'ws'|'http'|'fs', ... }
-  var _state = 'disconnected';      // disconnected | connecting | connected | error
+  var _transport = null;            // { type: 'ws'|'http', ... } — the localhost (single) transport
+  var _state = 'disconnected';      // disconnected | connecting | connected | error (aggregate)
   var _clientId = null;
   var _portAndToken = null;
   var _reconnectTimer = null;
   var _name = null;
   var _onStateChange = null;
   var _fetch = null;                // injected fetch for the HTTP transport (e.g. gcuFetch)
-  var _folder = null;               // injected FileSystemDirectoryHandle ⇒ forces the fs transport
+  var _folder = null;               // injected FileSystemDirectoryHandle ⇒ the legacy single fs channel
+  var _fsChannels = new Map();      // id → { id, handle, token, identity, channel, clientId, state, timer, polling } (multichannel fs)
+  var _identity = null;             // default identity stamped on the legacy single fs channel
+  var _onChannelState = null;       // optional per-channel state callback (id, state, identity, clientId)
 
   // HTTP-transport fetch: the injected one if set, else the global. Injecting one
   // also forces the HTTP transport (see _connect) — that's the public-origin path.
@@ -5347,6 +5361,13 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     return tools;
   }
 
+  // Push the current tool list to every live transport (the ws/http one + each fs channel).
+  function _broadcastToolsChanged() {
+    var payload = { type: 'tools_changed', tools: _serializeTools() };
+    if (_transport && _state === 'connected') _send(payload);
+    _fsChannels.forEach(function (e) { if (e.channel && e.state === 'connected') e.channel.send(payload); });
+  }
+
   function _derivedName() {
     var title = (typeof document !== 'undefined' && document.title) || 'surface';
     // Strip a leading "AppName — " / "AppName - " prefix, then slugify.
@@ -5356,7 +5377,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
 
   function _effectiveName() { return _name || _derivedName(); }
 
-  // ── transport-agnostic send ──
+  // ── transport-agnostic send (the single ws/http transport) ──
 
   function _send(obj) {
     if (!_transport) return;
@@ -5364,8 +5385,6 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
       if (_transport.ws && _transport.ws.readyState === WebSocket.OPEN) _transport.ws.send(JSON.stringify(obj));
     } else if (_transport.type === 'http') {
       _httpSend(obj);
-    } else if (_transport.type === 'fs') {
-      if (_transport.channel) _transport.channel.send(obj);
     }
   }
 
@@ -5374,7 +5393,6 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     var t = _transport;
     if (t.type === 'ws' && t.ws) { try { t.ws.close(); } catch (e) { /* ignore */ } }
     if (t.type === 'http') t.polling = false;
-    if (t.type === 'fs') { t.polling = false; if (t.timer) clearInterval(t.timer); if (t.channel) t.channel.stop(); }
     _transport = null;
   }
 
@@ -5393,7 +5411,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
         _send({ type: 'tools_changed', tools: _serializeTools() });
         resolve();
       };
-      ws.onmessage = function (event) { var msg; try { msg = JSON.parse(event.data); } catch (e) { return; } _handleMessage(msg); };
+      ws.onmessage = function (event) { var msg; try { msg = JSON.parse(event.data); } catch (e) { return; } _handleMessage(msg, _send, _legacyCtx()); };
       ws.onclose = function () {
         if (!_transport || _transport.type !== 'ws' || _transport.ws !== ws) return;
         _clientId = null; _transport = null; _setState('disconnected');
@@ -5436,7 +5454,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
       .then(function (r) { return r.json(); })
       .then(function (messages) {
         if (!Array.isArray(messages)) return;
-        for (var i = 0; i < messages.length; i++) _handleMessage(messages[i]);
+        for (var i = 0; i < messages.length; i++) _handleMessage(messages[i], _send, _legacyCtx());
         _pollLoop();
       })
       .catch(function () {
@@ -5445,9 +5463,19 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
       });
   }
 
+  // The state/identity context for the single ws/http transport (legacy, one connection).
+  function _legacyCtx() {
+    return {
+      identity: _identity,
+      onWelcome: function (id) { _clientId = id; _setState('connected'); },
+      onError: function () { _setState('error'); },
+    };
+  }
+
   // ── fs transport (TRANSPORTS.md §3): a page-role FsChannel over an injected
   // FileSystemDirectoryHandle. Reuses fs-channel.js (loaded on the page as the global
-  // GcuFsChannel, e.g. concatenated into the app build). No port, no extension. ──
+  // GcuFsChannel, e.g. concatenated into the app build). No port, no extension.
+  // Multichannel: N channels coexist in _fsChannels, one per folder. ──
 
   function _fsChannelCtor() {
     var g = (typeof GcuFsChannel !== 'undefined') ? GcuFsChannel
@@ -5515,42 +5543,97 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     };
   }
 
-  async function _connectFs(token) {
+  function _emitChannel(entry) {
+    if (_onChannelState) { try { _onChannelState(entry.id, entry.state, entry.identity, entry.clientId); } catch (e) { /* host callback */ } }
+  }
+
+  // Aggregate the fs channels' states into the global _state — but only when no
+  // ws/http transport owns it (the two paths are mutually exclusive in practice).
+  function _recomputeFsState() {
+    if (_transport) return;
+    var any = false, connecting = false;
+    _fsChannels.forEach(function (e) { if (e.state === 'connected') any = true; else if (e.state === 'connecting') connecting = true; });
+    _setState(any ? 'connected' : connecting ? 'connecting' : 'disconnected');
+  }
+
+  // Per-channel state/identity context — onWelcome/onError scoped to one fs channel.
+  function _fsCtx(entry) {
+    return {
+      identity: entry.identity,
+      onWelcome: function (id) { entry.clientId = id; entry.state = 'connected'; _emitChannel(entry); _recomputeFsState(); },
+      onError: function () { entry.state = 'error'; _emitChannel(entry); _recomputeFsState(); },
+    };
+  }
+
+  // Add (or replace, idempotent on id) one fs channel over a folder handle. Each
+  // channel runs its own poll loop and shares the page's _tools registry; replies +
+  // identity route per channel via _fsCtx. opts: { id, handle, token, identity }.
+  async function _addFolder(opts) {
     var FsChannel = _fsChannelCtor();
     if (!FsChannel) throw new Error('fs transport needs fs-channel.js (global GcuFsChannel) on the page');
     if (!(crypto && crypto.subtle)) throw new Error('fs transport needs crypto.subtle (a secure context)');
-    _setState('connecting');
+    var id = (opts && opts.id) || 'default';
+    var token = String((opts && opts.token) || '').replace(/^fs:/, '').trim();
+    if (!opts || !opts.handle) throw new Error('addFolder needs a directory handle');
+    if (!token) throw new Error('addFolder needs the machine token');
+    _removeFolder(id);   // idempotent: re-adding an id replaces it
+    var entry = { id: id, handle: opts.handle, token: token, identity: opts.identity || null, channel: null, clientId: null, state: 'connecting', timer: null, polling: true };
+    _fsChannels.set(id, entry);
+    _emitChannel(entry); _recomputeFsState();
     var hmac = await _fsHmac(token, _effectiveName());
     var channel = new FsChannel({
-      role: 'page', dir: _fsaDir(_folder), hmac: hmac,
+      role: 'page', dir: _fsaDir(opts.handle), hmac: hmac,
       now: function () { return Date.now(); },
       randomId: function () { return _randHex(8); },
-      onMessage: function (msg) { _handleMessage(msg); },
-      onState: function (s) { if (s === 'closed') _setState('disconnected'); },   // 'connected' is set on `welcome`
-      onWarn: function (m) { if (typeof console !== 'undefined') console.warn('[numen] fs:', m); },   // always-on (forged/stale frames)
+      onMessage: function (msg) { _handleMessage(msg, function (o) { channel.send(o); }, _fsCtx(entry)); },
+      onState: function (s) { if (s === 'closed') { entry.state = 'disconnected'; _emitChannel(entry); _recomputeFsState(); } },
+      onWarn: function (m) { if (typeof console !== 'undefined') console.warn('[numen] fs[' + id + ']:', m); },
     });
-    var t = { type: 'fs', channel: channel, token: token, polling: true, timer: null };
-    _transport = t;
+    entry.channel = channel;
     channel.send({ type: 'hello', protocol: PROTOCOL, title: (typeof document !== 'undefined' && document.title) || 'Untitled', name: _effectiveName(), path: (typeof location !== 'undefined' && location.href) || '' });
     channel.send({ type: 'tools_changed', tools: _serializeTools() });
     await channel.start();
     var busy = false;
-    t.timer = setInterval(function () {
-      if (busy || !t.polling) return;
+    entry.timer = setInterval(function () {
+      if (busy || !entry.polling) return;
       busy = true;
       Promise.resolve().then(function () { return channel.tick(); })
-        .catch(function (e) { if (typeof console !== 'undefined') console.error('[numen] fs tick', e); })
+        .catch(function (e) { if (typeof console !== 'undefined') console.error('[numen] fs[' + id + '] tick', e); })
         .then(function () { busy = false; });
     }, FS_POLL_MS);
+    return entry;
   }
 
-  // ── shared message handler ──
+  function _removeFolder(id) {
+    var e = _fsChannels.get(id);
+    if (!e) return;
+    e.polling = false;
+    if (e.timer) { clearInterval(e.timer); e.timer = null; }
+    if (e.channel) { try { e.channel.stop(); } catch (x) { /* ignore */ } }
+    _fsChannels.delete(id);
+    e.state = 'disconnected'; _emitChannel(e);
+    _recomputeFsState();
+  }
 
-  function _handleMessage(msg) {
-    if (msg.type === 'welcome') { _clientId = msg.id; _setState('connected'); }
-    else if (msg.type === 'tool_invoke') { _handleInvoke(msg); }
-    else if (msg.type === 'ping') { _send({ type: 'pong' }); }
-    else if (msg.type === 'error') { console.error('[numen]', msg.message); _setState('error'); }
+  // ── shared message handler (reply + ctx supplied per transport/channel) ──
+
+  function _handleMessage(msg, reply, ctx) {
+    if (msg.type === 'welcome') { ctx.onWelcome(msg.id); }
+    else if (msg.type === 'tool_invoke') { _handleInvoke(msg, reply, ctx.identity); }
+    else if (msg.type === 'ping') { reply({ type: 'pong' }); }
+    else if (msg.type === 'error') { if (typeof console !== 'undefined') console.error('[numen]', msg.message); ctx.onError(); }
+  }
+
+  function _handleInvoke(msg, reply, identity) {
+    var tool = _tools.get(msg.name);
+    if (!tool) { reply({ type: 'tool_result', callId: msg.callId, error: 'Tool not found: ' + msg.name }); return; }
+    // `identity` is the calling channel's (folder = identity) — carried into execution
+    // so a tool can attribute the write (SPEC-librarian §2). null on ws/http.
+    var client = { requestUserInteraction: function (cb) { return cb(); }, identity: identity || null };
+    Promise.resolve()
+      .then(function () { return tool.execute(msg.input || {}, client); })
+      .then(function (result) { reply({ type: 'tool_result', callId: msg.callId, result: result }); })
+      .catch(function (e) { reply({ type: 'tool_result', callId: msg.callId, error: (e && e.message) || String(e) }); });
   }
 
   // ── connect (fs when a folder is injected; else try WS, fall back to HTTP) ──
@@ -5558,13 +5641,14 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
   function _connect(portAndToken) {
     // fs transport: a folder handle is injected and the connect datum is just the
     // machine token (no port). The page derives the shared key from token + its name.
+    // This is the single-channel shim over the multichannel core (channel id 'default').
     if (_folder) {
       var fsToken = String(portAndToken || '').replace(/^fs:/, '').trim();
       if (!fsToken) throw new Error('fs transport needs the machine token (gcuWebMCP.connect("<token>"))');
       _portAndToken = portAndToken;
       _teardownTransport();
       clearTimeout(_reconnectTimer);
-      _connectFs(fsToken).catch(function (e) {
+      _addFolder({ id: 'default', handle: _folder, token: fsToken, identity: _identity }).catch(function (e) {
         console.error('[numen] fs connection failed:', e.message || e);
         _setState('error');
         if (_portAndToken) _reconnectTimer = setTimeout(function () { _connect(_portAndToken); }, 5000);
@@ -5598,18 +5682,9 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     _portAndToken = null;
     clearTimeout(_reconnectTimer);
     _teardownTransport();
+    Array.from(_fsChannels.keys()).forEach(_removeFolder);
     _clientId = null;
     _setState('disconnected');
-  }
-
-  function _handleInvoke(msg) {
-    var tool = _tools.get(msg.name);
-    if (!tool) { _send({ type: 'tool_result', callId: msg.callId, error: 'Tool not found: ' + msg.name }); return; }
-    var client = { requestUserInteraction: function (cb) { return cb(); } };
-    Promise.resolve()
-      .then(function () { return tool.execute(msg.input || {}, client); })
-      .then(function (result) { _send({ type: 'tool_result', callId: msg.callId, result: result }); })
-      .catch(function (e) { _send({ type: 'tool_result', callId: msg.callId, error: (e && e.message) || String(e) }); });
   }
 
   // ── polyfill navigator.modelContext ──
@@ -5619,11 +5694,17 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
       registerTool: function (tool) {
         if (!tool || !tool.name) throw new Error('Tool must have a name');
         _tools.set(tool.name, tool);
-        if (_state === 'connected') _send({ type: 'tools_changed', tools: _serializeTools() });
+        _broadcastToolsChanged();
       },
       unregisterTool: function (name) {
         _tools.delete(name);
-        if (_state === 'connected') _send({ type: 'tools_changed', tools: _serializeTools() });
+        _broadcastToolsChanged();
+      },
+      // Re-push the current tool list without a register/unregister — for apps
+      // whose tool availability changes without the set changing (e.g. Auditable
+      // re-gating tools on notebook lock/unlock).
+      notifyToolsChanged: function () {
+        _broadcastToolsChanged();
       },
     };
   }
@@ -5633,23 +5714,35 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
   var api = {
     connect: _connect,
     disconnect: _disconnect,
-    notify: function (method, params) { _send({ type: 'notification', method: method, params: params }); },
+    // fs multichannel: add/remove a channel by id (folder = identity). Returns a
+    // promise (addFolder). connect()+folder is the single-channel ('default') sugar.
+    addFolder: function (opts) { return _addFolder(opts || {}); },
+    removeFolder: _removeFolder,
+    get channels() { var a = []; _fsChannels.forEach(function (e) { a.push({ id: e.id, identity: e.identity, state: e.state, clientId: e.clientId }); }); return a; },
+    set onChannelState(fn) { _onChannelState = fn || null; },
+    notify: function (method, params) {
+      var obj = { type: 'notification', method: method, params: params };
+      if (_transport) _send(obj);
+      _fsChannels.forEach(function (e) { if (e.channel) e.channel.send(obj); });
+    },
     get state() { return _state; },
     get clientId() { return _clientId; },
     get name() { return _effectiveName(); },
     set name(v) { _name = v || null; },
     get derivedName() { return _derivedName(); },
+    get identity() { return _identity; },
+    set identity(v) { _identity = v || null; },   // default identity for the legacy single fs channel
     get tools() { var n = []; _tools.forEach(function (t) { n.push(t.name); }); return n; },   // registered tool names (introspection)
     invoke: function (name, input) {   // run a registered tool locally (testing / "try it" UIs)
       var t = _tools.get(name);
       if (!t) return Promise.reject(new Error('no such tool: ' + name));
-      return Promise.resolve(t.execute(input || {}, { requestUserInteraction: function (cb) { return cb(); } }));
+      return Promise.resolve(t.execute(input || {}, { requestUserInteraction: function (cb) { return cb(); }, identity: null }));
     },
     set onStateChange(fn) { _onStateChange = fn; },
     get fetch() { return _fetch; },
     set fetch(fn) { _fetch = fn || null; },   // inject gcuFetch for public-origin → localhost
     get folder() { return _folder; },
-    set folder(h) { _folder = h || null; },   // inject a FileSystemDirectoryHandle ⇒ fs transport
+    set folder(h) { _folder = h || null; },   // inject a FileSystemDirectoryHandle ⇒ fs transport (single channel)
   };
   if (typeof window !== 'undefined') {
     window.gcuMCP = api;
@@ -17760,8 +17853,10 @@ class App {
       await this.syncReset?.();
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'sync state reset — next sync re-uploads everything';
     });
-    document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder());
-    document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder());
+    document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder('default'));
+    document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder('default'));
+    document.getElementById('set-webmcp-fs2-pick')?.addEventListener('click', () => this.pickWebmcpFolder('dev'));
+    document.getElementById('set-webmcp-fs2-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder('dev'));
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -21004,8 +21099,20 @@ class App {
     const connected = (s === 'connected' || s === 'connecting');
     const btn = document.getElementById('set-webmcp-toggle');
     if (btn) btn.textContent = connected ? 'disconnect' : 'connect';
-    const fsBtn = document.getElementById('set-webmcp-fs-toggle');
-    if (fsBtn) fsBtn.textContent = connected ? 'disconnect' : 'connect over folder';
+    // fs-channel toggle buttons are owned per-channel by renderWebmcpChannels.
+  }
+
+  // Per-fs-channel status (multichannel: 'default' = librarian, 'dev' = the weir dev
+  // agent). Each channel = one folder = one agent (folder = identity). Updates the
+  // per-channel connect/disconnect buttons + a compact channel summary in Settings.
+  renderWebmcpChannels() {
+    const chans = (this.webmcp && this.webmcp.channels) ? this.webmcp.channels() : [];
+    const on = (id) => { const c = chans.find((x) => x.id === id); return c && (c.state === 'connected' || c.state === 'connecting'); };
+    const btn = (id, elId) => { const b = document.getElementById(elId); if (b) b.textContent = on(id) ? 'disconnect' : 'connect over folder'; };
+    btn('default', 'set-webmcp-fs-toggle');
+    btn('dev', 'set-webmcp-fs2-toggle');
+    const cl = document.getElementById('set-webmcp-channels');
+    if (cl) cl.textContent = chans.length ? chans.map((c) => `${c.identity || c.id}:${c.state}`).join('  ·  ') : '—';
   }
 
   toggleWebmcp() {
@@ -21019,26 +21126,34 @@ class App {
 
   // fs transport: pick the shared exchange folder (its own handle, distinct from the
   // store and the Courier), then connect with a bare machine token.
-  async pickWebmcpFolder() {
+  async pickWebmcpFolder(id = 'default') {
     const msg = document.getElementById('settings-msg');
-    try { this._webmcpFsHandle = await pickDirectory('webmcp-fs'); }
+    const key = this.webmcp ? this.webmcp.fsHandleKey(id) : 'webmcp-fs';
+    let h;
+    try { h = await pickDirectory(key); }
     catch (e) { if (e && e.name === 'AbortError') return; if (msg) msg.textContent = e.message; return; }
-    const lab = document.getElementById('set-webmcp-fs-folder');
-    if (lab) lab.textContent = handleName(this._webmcpFsHandle);
+    this._webmcpFsHandles = this._webmcpFsHandles || {};
+    this._webmcpFsHandles[id] = h;
+    const lab = document.getElementById(id === 'default' ? 'set-webmcp-fs-folder' : 'set-webmcp-fs2-folder');
+    if (lab) lab.textContent = handleName(h);
   }
 
-  async toggleWebmcpFolder() {
+  async toggleWebmcpFolder(id = 'default') {
     if (!this.webmcp || !this.webmcp.available) { this.renderWebmcpStatus('unavailable'); return; }
     const lab = document.getElementById('set-webmcp-state');
-    const st = this.webmcp.state();
-    if (st === 'connected' || st === 'connecting') { this.webmcp.disconnect(); this.renderWebmcpStatus(); return; }
-    let handle = this._webmcpFsHandle;
-    if (!handle) { try { handle = await loadHandle('webmcp-fs'); } catch { /* none yet */ } }   // reuse a previously-picked folder
-    const tok = (document.getElementById('set-webmcp-fs-token') || {}).value || '';
+    const key = this.webmcp.fsHandleKey(id);
+    // already-connected channel? → disconnect just THIS channel (the others stay up).
+    const ch = (this.webmcp.channels() || []).find((c) => c.id === id);
+    if (ch && (ch.state === 'connected' || ch.state === 'connecting')) { this.webmcp.disconnectFolder(id); this.renderWebmcpChannels(); return; }
+    this._webmcpFsHandles = this._webmcpFsHandles || {};
+    let handle = this._webmcpFsHandles[id];
+    if (!handle) { try { handle = await loadHandle(key); } catch { /* none yet */ } }   // reuse a previously-picked folder
+    const tokEl = document.getElementById(id === 'default' ? 'set-webmcp-fs-token' : 'set-webmcp-fs2-token');
+    const tok = (tokEl || {}).value || '';
     try {
-      if (handle) await saveHandle(handle, 'webmcp-fs');   // persist so boot can reconnect silently
-      this.webmcp.connectFolder(handle, tok);              // throws a friendly error if no folder/token
-      this.renderWebmcpStatus();
+      if (handle) await saveHandle(handle, key);            // persist so boot can reconnect silently
+      this.webmcp.connectFolder(handle, tok, { id });       // throws a friendly error if no folder/token
+      this.renderWebmcpChannels();
     } catch (e) { if (lab) lab.textContent = e.message; }
   }
 
@@ -21087,9 +21202,13 @@ class App {
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
-    { const ft = document.getElementById('set-webmcp-fs-token'); if (ft && this.webmcp) ft.value = (this.webmcp.storedFs && this.webmcp.storedFs()) || ''; }
-    { const fl = document.getElementById('set-webmcp-fs-folder'); if (fl) loadHandle('webmcp-fs').then((h) => { fl.textContent = h ? handleName(h) : '—'; if (h && !this._webmcpFsHandle) this._webmcpFsHandle = h; }).catch(() => {}); }
+    this._webmcpFsHandles = this._webmcpFsHandles || {};
+    for (const [cid, tokId, folId] of [['default', 'set-webmcp-fs-token', 'set-webmcp-fs-folder'], ['dev', 'set-webmcp-fs2-token', 'set-webmcp-fs2-folder']]) {
+      { const ft = document.getElementById(tokId); if (ft && this.webmcp) ft.value = (this.webmcp.storedFs && this.webmcp.storedFs(cid)) || ''; }
+      { const fl = document.getElementById(folId); if (fl && this.webmcp) loadHandle(this.webmcp.fsHandleKey(cid)).then((h) => { fl.textContent = h ? handleName(h) : '—'; if (h && !this._webmcpFsHandles[cid]) this._webmcpFsHandles[cid] = h; }).catch(() => {}); }
+    }
     this.renderWebmcpStatus();
+    this.renderWebmcpChannels();
     chk('set-retention', s.retention_enabled);
     chk('set-tg-enabled', s.telegram_enabled);
     val('set-tg-allowed', s.telegram_allowed_id || '');
@@ -22949,23 +23068,33 @@ function initWebmcp({ store, app, fetch }) {
     ensureCards: async () => { if (app && app.loadCardFacets && (!app._cardFacets || app._cardFacets.size === 0)) await app.loadCardFacets(); },
   });
   for (const t of TOOLS) {
-    mc.registerTool({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations, execute: (input) => tools[t.fn](input || {}) });
+    mc.registerTool({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations, execute: (input, client) => tools[t.fn](input || {}, client) });
   }
 
   if (wm) {
     wm.name = 'weir';
     wm.fetch = fetch;                       // route the HTTP transport through gcuFetch (public-origin/PNA)
     if (app && app.renderWebmcpStatus) wm.onStateChange = (s) => app.renderWebmcpStatus(s);
+    if (app && app.renderWebmcpChannels) wm.onChannelState = () => app.renderWebmcpChannels();
   }
 
   const read = () => { try { return localStorage.getItem(LS_KEY) || ''; } catch { return ''; } };
-  const readFs = () => { try { return localStorage.getItem(LS_FS) || ''; } catch { return ''; } };
+  // fs-transport token storage, keyed by channel id. 'default' keeps LS_FS (back-compat);
+  // extra channels (e.g. 'dev') get LS_FS + ':<id>'. Handle persistence mirrors it via
+  // fsHandleKey. Multiple channels = multiple agents at once (SPEC-numen-multichannel.md).
+  const fsKey = (id) => (id && id !== 'default') ? (LS_FS + ':' + id) : LS_FS;
+  const readFs = (id) => { try { return localStorage.getItem(fsKey(id || 'default')) || ''; } catch { return ''; } };
+  const defaultIdentity = (id) => (!id || id === 'default') ? 'claude:librarian' : ('claude:' + id);
+  const KNOWN_FS = ['default', 'dev'];   // the supported channel ids (cap small, per spec §5)
   const api = {
     available: !!wm,
     state: () => (wm ? wm.state : 'unavailable'),
     mode: () => (readFs() ? 'fs' : (read() ? 'socket' : 'none')),
     stored: read,
-    storedFs: readFs,
+    storedFs: readFs,                       // storedFs(id) → that channel's token ('default' if omitted)
+    fsHandleKey: (id) => (id && id !== 'default') ? ('webmcp-fs:' + id) : 'webmcp-fs',
+    channels: () => (wm ? wm.channels : []),
+    set onChannelState(fn) { if (wm) wm.onChannelState = fn; },
     // localhost transport — a port:token string (ws/http via the bridge extension).
     connect(connStr) {
       const v = String(connStr || '').trim();
@@ -22974,17 +23103,28 @@ function initWebmcp({ store, app, fetch }) {
       if (wm) { wm.folder = null; wm.connect(v); }
     },
     // fs transport — a folder handle + a bare machine token (no port, no extension).
-    // The CALLER persists the handle (saveHandle('webmcp-fs')); this stores the token
-    // and drives the shim's fs path. See TRANSPORTS.md §6.1.
-    connectFolder(handle, token) {
+    // opts.id names the channel ('default' = librarian; add e.g. 'dev'); opts.identity
+    // is the agent label carried into tool dispatch (folder = identity, SPEC-librarian
+    // §2). The CALLER persists the handle (saveHandle(fsHandleKey(id))). TRANSPORTS §6.1.
+    connectFolder(handle, token, opts) {
+      opts = opts || {};
+      const id = opts.id || 'default';
       const t = String(token || '').trim();
       if (!handle) throw new Error('pick a folder first');
       if (!t) throw new Error('a machine token is required (the bridge prints it: --transport fs --info)');
       if (!wm) throw new Error('the webmcp shim is not loaded');
-      try { localStorage.setItem(LS_FS, t); localStorage.removeItem(LS_KEY); } catch { /* private mode */ }
-      wm.folder = handle; wm.connect(t);
+      try { localStorage.setItem(fsKey(id), t); localStorage.removeItem(LS_KEY); } catch { /* private mode */ }
+      wm.addFolder({ id, handle, token: t, identity: opts.identity || defaultIdentity(id) });
     },
-    disconnect() { try { localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_FS); } catch { /* ignore */ } if (wm) { wm.folder = null; wm.disconnect(); } },
+    disconnectFolder(id) {
+      id = id || 'default';
+      try { localStorage.removeItem(fsKey(id)); } catch { /* ignore */ }
+      if (wm) wm.removeFolder(id);
+    },
+    disconnect() {
+      try { localStorage.removeItem(LS_KEY); for (const id of KNOWN_FS) localStorage.removeItem(fsKey(id)); } catch { /* ignore */ }
+      if (wm) { wm.folder = null; wm.disconnect(); }
+    },
   };
 
   // Auto-reconnect a SOCKET connection on load. The fs path reconnects from boot.js
@@ -23029,7 +23169,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '877fa69';          // short content hash of the bundle (build id)
+const COMMIT = 'c8a5fad';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -23159,14 +23299,19 @@ async function boot() {
   const webmcp = initWebmcp({ store, app, fetch: gcuFetch });
   app.webmcp = webmcp;
   app.renderWebmcpStatus(webmcp ? webmcp.state() : 'unavailable');
-  // WebMCP over a folder (fs transport): reconnect silently if a folder handle was
-  // persisted and permission is still granted (no prompt — else reconnect via Settings,
-  // which has the user gesture). Mirrors the Courier's boot reconnect.
-  if (webmcp && webmcp.storedFs && webmcp.storedFs()) {
-    try {
-      const h = await loadHandle('webmcp-fs');
-      if (h && (await handlePermission(h)) === 'granted') webmcp.connectFolder(h, webmcp.storedFs());
-    } catch { /* reconnect via Settings */ }
+  // WebMCP over folder(s) (fs transport): reconnect EACH persisted channel silently if
+  // its folder handle is still permission-granted (no prompt — else reconnect via
+  // Settings, which has the user gesture). Multichannel: 'default' (librarian) + optional
+  // 'dev' run at once (SPEC-numen-multichannel.md). Mirrors the Courier's boot reconnect.
+  if (webmcp && webmcp.connectFolder) {
+    for (const id of ['default', 'dev']) {
+      const tok = webmcp.storedFs && webmcp.storedFs(id);
+      if (!tok) continue;
+      try {
+        const h = await loadHandle(webmcp.fsHandleKey(id));
+        if (h && (await handlePermission(h)) === 'granted') webmcp.connectFolder(h, tok, { id });
+      } catch { /* reconnect via Settings */ }
+    }
   }
 
   const retainer = new Retainer(store);   // archives expired items (never deletes); off until enabled

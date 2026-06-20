@@ -1259,23 +1259,33 @@ export function initWebmcp({ store, app, fetch }) {
     ensureCards: async () => { if (app && app.loadCardFacets && (!app._cardFacets || app._cardFacets.size === 0)) await app.loadCardFacets(); },
   });
   for (const t of TOOLS) {
-    mc.registerTool({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations, execute: (input) => tools[t.fn](input || {}) });
+    mc.registerTool({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations, execute: (input, client) => tools[t.fn](input || {}, client) });
   }
 
   if (wm) {
     wm.name = 'weir';
     wm.fetch = fetch;                       // route the HTTP transport through gcuFetch (public-origin/PNA)
     if (app && app.renderWebmcpStatus) wm.onStateChange = (s) => app.renderWebmcpStatus(s);
+    if (app && app.renderWebmcpChannels) wm.onChannelState = () => app.renderWebmcpChannels();
   }
 
   const read = () => { try { return localStorage.getItem(LS_KEY) || ''; } catch { return ''; } };
-  const readFs = () => { try { return localStorage.getItem(LS_FS) || ''; } catch { return ''; } };
+  // fs-transport token storage, keyed by channel id. 'default' keeps LS_FS (back-compat);
+  // extra channels (e.g. 'dev') get LS_FS + ':<id>'. Handle persistence mirrors it via
+  // fsHandleKey. Multiple channels = multiple agents at once (SPEC-numen-multichannel.md).
+  const fsKey = (id) => (id && id !== 'default') ? (LS_FS + ':' + id) : LS_FS;
+  const readFs = (id) => { try { return localStorage.getItem(fsKey(id || 'default')) || ''; } catch { return ''; } };
+  const defaultIdentity = (id) => (!id || id === 'default') ? 'claude:librarian' : ('claude:' + id);
+  const KNOWN_FS = ['default', 'dev'];   // the supported channel ids (cap small, per spec §5)
   const api = {
     available: !!wm,
     state: () => (wm ? wm.state : 'unavailable'),
     mode: () => (readFs() ? 'fs' : (read() ? 'socket' : 'none')),
     stored: read,
-    storedFs: readFs,
+    storedFs: readFs,                       // storedFs(id) → that channel's token ('default' if omitted)
+    fsHandleKey: (id) => (id && id !== 'default') ? ('webmcp-fs:' + id) : 'webmcp-fs',
+    channels: () => (wm ? wm.channels : []),
+    set onChannelState(fn) { if (wm) wm.onChannelState = fn; },
     // localhost transport — a port:token string (ws/http via the bridge extension).
     connect(connStr) {
       const v = String(connStr || '').trim();
@@ -1284,17 +1294,28 @@ export function initWebmcp({ store, app, fetch }) {
       if (wm) { wm.folder = null; wm.connect(v); }
     },
     // fs transport — a folder handle + a bare machine token (no port, no extension).
-    // The CALLER persists the handle (saveHandle('webmcp-fs')); this stores the token
-    // and drives the shim's fs path. See TRANSPORTS.md §6.1.
-    connectFolder(handle, token) {
+    // opts.id names the channel ('default' = librarian; add e.g. 'dev'); opts.identity
+    // is the agent label carried into tool dispatch (folder = identity, SPEC-librarian
+    // §2). The CALLER persists the handle (saveHandle(fsHandleKey(id))). TRANSPORTS §6.1.
+    connectFolder(handle, token, opts) {
+      opts = opts || {};
+      const id = opts.id || 'default';
       const t = String(token || '').trim();
       if (!handle) throw new Error('pick a folder first');
       if (!t) throw new Error('a machine token is required (the bridge prints it: --transport fs --info)');
       if (!wm) throw new Error('the webmcp shim is not loaded');
-      try { localStorage.setItem(LS_FS, t); localStorage.removeItem(LS_KEY); } catch { /* private mode */ }
-      wm.folder = handle; wm.connect(t);
+      try { localStorage.setItem(fsKey(id), t); localStorage.removeItem(LS_KEY); } catch { /* private mode */ }
+      wm.addFolder({ id, handle, token: t, identity: opts.identity || defaultIdentity(id) });
     },
-    disconnect() { try { localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_FS); } catch { /* ignore */ } if (wm) { wm.folder = null; wm.disconnect(); } },
+    disconnectFolder(id) {
+      id = id || 'default';
+      try { localStorage.removeItem(fsKey(id)); } catch { /* ignore */ }
+      if (wm) wm.removeFolder(id);
+    },
+    disconnect() {
+      try { localStorage.removeItem(LS_KEY); for (const id of KNOWN_FS) localStorage.removeItem(fsKey(id)); } catch { /* ignore */ }
+      if (wm) { wm.folder = null; wm.disconnect(); }
+    },
   };
 
   // Auto-reconnect a SOCKET connection on load. The fs path reconnects from boot.js

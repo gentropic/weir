@@ -161,14 +161,19 @@ async function boot() {
   const webmcp = initWebmcp({ store, app, fetch: gcuFetch });
   app.webmcp = webmcp;
   app.renderWebmcpStatus(webmcp ? webmcp.state() : 'unavailable');
-  // WebMCP over a folder (fs transport): reconnect silently if a folder handle was
-  // persisted and permission is still granted (no prompt — else reconnect via Settings,
-  // which has the user gesture). Mirrors the Courier's boot reconnect.
-  if (webmcp && webmcp.storedFs && webmcp.storedFs()) {
-    try {
-      const h = await loadHandle('webmcp-fs');
-      if (h && (await handlePermission(h)) === 'granted') webmcp.connectFolder(h, webmcp.storedFs());
-    } catch { /* reconnect via Settings */ }
+  // WebMCP over folder(s) (fs transport): reconnect EACH persisted channel silently if
+  // its folder handle is still permission-granted (no prompt — else reconnect via
+  // Settings, which has the user gesture). Multichannel: 'default' (librarian) + optional
+  // 'dev' run at once (SPEC-numen-multichannel.md). Mirrors the Courier's boot reconnect.
+  if (webmcp && webmcp.connectFolder) {
+    for (const id of ['default', 'dev']) {
+      const tok = webmcp.storedFs && webmcp.storedFs(id);
+      if (!tok) continue;
+      try {
+        const h = await loadHandle(webmcp.fsHandleKey(id));
+        if (h && (await handlePermission(h)) === 'granted') webmcp.connectFolder(h, tok, { id });
+      } catch { /* reconnect via Settings */ }
+    }
   }
 
   const retainer = new Retainer(store);   // archives expired items (never deletes); off until enabled

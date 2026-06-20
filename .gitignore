@@ -42,6 +42,11 @@ build/
 # Personal data — curated feed sets, exports, notes. Never committed.
 personal/
 
+# In-flight spec drafts — staged here while being argued/implemented, then their
+# durable decisions graduate into the tracked docs (SPEC.md/GLASS.md) and the draft
+# is deleted. Working context, not a published artifact (like CLAUDE.md).
+spec_inbox/
+
 # generated label list (run off on the Brother; regenerate from CLASS_NAMES)
 tools/shelf-labels.txt
 tools/label-placement.html

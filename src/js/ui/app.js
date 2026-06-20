@@ -213,8 +213,10 @@ export class App {
       await this.syncReset?.();
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'sync state reset — next sync re-uploads everything';
     });
-    document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder());
-    document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder());
+    document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder('default'));
+    document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder('default'));
+    document.getElementById('set-webmcp-fs2-pick')?.addEventListener('click', () => this.pickWebmcpFolder('dev'));
+    document.getElementById('set-webmcp-fs2-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder('dev'));
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -3457,8 +3459,20 @@ export class App {
     const connected = (s === 'connected' || s === 'connecting');
     const btn = document.getElementById('set-webmcp-toggle');
     if (btn) btn.textContent = connected ? 'disconnect' : 'connect';
-    const fsBtn = document.getElementById('set-webmcp-fs-toggle');
-    if (fsBtn) fsBtn.textContent = connected ? 'disconnect' : 'connect over folder';
+    // fs-channel toggle buttons are owned per-channel by renderWebmcpChannels.
+  }
+
+  // Per-fs-channel status (multichannel: 'default' = librarian, 'dev' = the weir dev
+  // agent). Each channel = one folder = one agent (folder = identity). Updates the
+  // per-channel connect/disconnect buttons + a compact channel summary in Settings.
+  renderWebmcpChannels() {
+    const chans = (this.webmcp && this.webmcp.channels) ? this.webmcp.channels() : [];
+    const on = (id) => { const c = chans.find((x) => x.id === id); return c && (c.state === 'connected' || c.state === 'connecting'); };
+    const btn = (id, elId) => { const b = document.getElementById(elId); if (b) b.textContent = on(id) ? 'disconnect' : 'connect over folder'; };
+    btn('default', 'set-webmcp-fs-toggle');
+    btn('dev', 'set-webmcp-fs2-toggle');
+    const cl = document.getElementById('set-webmcp-channels');
+    if (cl) cl.textContent = chans.length ? chans.map((c) => `${c.identity || c.id}:${c.state}`).join('  ·  ') : '—';
   }
 
   toggleWebmcp() {
@@ -3472,26 +3486,34 @@ export class App {
 
   // fs transport: pick the shared exchange folder (its own handle, distinct from the
   // store and the Courier), then connect with a bare machine token.
-  async pickWebmcpFolder() {
+  async pickWebmcpFolder(id = 'default') {
     const msg = document.getElementById('settings-msg');
-    try { this._webmcpFsHandle = await pickDirectory('webmcp-fs'); }
+    const key = this.webmcp ? this.webmcp.fsHandleKey(id) : 'webmcp-fs';
+    let h;
+    try { h = await pickDirectory(key); }
     catch (e) { if (e && e.name === 'AbortError') return; if (msg) msg.textContent = e.message; return; }
-    const lab = document.getElementById('set-webmcp-fs-folder');
-    if (lab) lab.textContent = handleName(this._webmcpFsHandle);
+    this._webmcpFsHandles = this._webmcpFsHandles || {};
+    this._webmcpFsHandles[id] = h;
+    const lab = document.getElementById(id === 'default' ? 'set-webmcp-fs-folder' : 'set-webmcp-fs2-folder');
+    if (lab) lab.textContent = handleName(h);
   }
 
-  async toggleWebmcpFolder() {
+  async toggleWebmcpFolder(id = 'default') {
     if (!this.webmcp || !this.webmcp.available) { this.renderWebmcpStatus('unavailable'); return; }
     const lab = document.getElementById('set-webmcp-state');
-    const st = this.webmcp.state();
-    if (st === 'connected' || st === 'connecting') { this.webmcp.disconnect(); this.renderWebmcpStatus(); return; }
-    let handle = this._webmcpFsHandle;
-    if (!handle) { try { handle = await loadHandle('webmcp-fs'); } catch { /* none yet */ } }   // reuse a previously-picked folder
-    const tok = (document.getElementById('set-webmcp-fs-token') || {}).value || '';
+    const key = this.webmcp.fsHandleKey(id);
+    // already-connected channel? → disconnect just THIS channel (the others stay up).
+    const ch = (this.webmcp.channels() || []).find((c) => c.id === id);
+    if (ch && (ch.state === 'connected' || ch.state === 'connecting')) { this.webmcp.disconnectFolder(id); this.renderWebmcpChannels(); return; }
+    this._webmcpFsHandles = this._webmcpFsHandles || {};
+    let handle = this._webmcpFsHandles[id];
+    if (!handle) { try { handle = await loadHandle(key); } catch { /* none yet */ } }   // reuse a previously-picked folder
+    const tokEl = document.getElementById(id === 'default' ? 'set-webmcp-fs-token' : 'set-webmcp-fs2-token');
+    const tok = (tokEl || {}).value || '';
     try {
-      if (handle) await saveHandle(handle, 'webmcp-fs');   // persist so boot can reconnect silently
-      this.webmcp.connectFolder(handle, tok);              // throws a friendly error if no folder/token
-      this.renderWebmcpStatus();
+      if (handle) await saveHandle(handle, key);            // persist so boot can reconnect silently
+      this.webmcp.connectFolder(handle, tok, { id });       // throws a friendly error if no folder/token
+      this.renderWebmcpChannels();
     } catch (e) { if (lab) lab.textContent = e.message; }
   }
 
@@ -3540,9 +3562,13 @@ export class App {
     { const k = document.getElementById('set-cat-key'); if (k) { k.value = ''; hasKey(s.catalog_provider || 'ollama').then((h) => { k.placeholder = h ? 'set ✓ (leave blank to keep)' : '(none)'; }); } }
     this.renderCatUsage();
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
-    { const ft = document.getElementById('set-webmcp-fs-token'); if (ft && this.webmcp) ft.value = (this.webmcp.storedFs && this.webmcp.storedFs()) || ''; }
-    { const fl = document.getElementById('set-webmcp-fs-folder'); if (fl) loadHandle('webmcp-fs').then((h) => { fl.textContent = h ? handleName(h) : '—'; if (h && !this._webmcpFsHandle) this._webmcpFsHandle = h; }).catch(() => {}); }
+    this._webmcpFsHandles = this._webmcpFsHandles || {};
+    for (const [cid, tokId, folId] of [['default', 'set-webmcp-fs-token', 'set-webmcp-fs-folder'], ['dev', 'set-webmcp-fs2-token', 'set-webmcp-fs2-folder']]) {
+      { const ft = document.getElementById(tokId); if (ft && this.webmcp) ft.value = (this.webmcp.storedFs && this.webmcp.storedFs(cid)) || ''; }
+      { const fl = document.getElementById(folId); if (fl && this.webmcp) loadHandle(this.webmcp.fsHandleKey(cid)).then((h) => { fl.textContent = h ? handleName(h) : '—'; if (h && !this._webmcpFsHandles[cid]) this._webmcpFsHandles[cid] = h; }).catch(() => {}); }
+    }
     this.renderWebmcpStatus();
+    this.renderWebmcpChannels();
     chk('set-retention', s.retention_enabled);
     chk('set-tg-enabled', s.telegram_enabled);
     val('set-tg-allowed', s.telegram_allowed_id || '');
