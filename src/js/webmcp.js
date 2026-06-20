@@ -1283,7 +1283,7 @@ export function initWebmcp({ store, app, fetch }) {
     mode: () => (readFs() ? 'fs' : (read() ? 'socket' : 'none')),
     stored: read,
     storedFs: readFs,                       // storedFs(id) → that channel's token ('default' if omitted)
-    fsHandleKey: (id) => (id && id !== 'default') ? ('webmcp-fs:' + id) : 'webmcp-fs',
+    fsHandleKey: (id) => (id && id !== 'default') ? ('webmcp-fs-' + id) : 'webmcp-fs',   // no ':' — showDirectoryPicker id rejects it
     channels: () => (wm ? wm.channels : []),
     set onChannelState(fn) { if (wm) wm.onChannelState = fn; },
     // localhost transport — a port:token string (ws/http via the bridge extension).
