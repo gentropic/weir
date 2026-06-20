@@ -45,3 +45,4 @@ personal/
 # generated label list (run off on the Brother; regenerate from CLASS_NAMES)
 tools/shelf-labels.txt
 tools/label-placement.html
+tools/*.stl
