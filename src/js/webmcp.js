@@ -266,6 +266,45 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { count: items.length, total, items, vocabularyNotes: vocabularyNotes.length ? vocabularyNotes : undefined };
   }
 
+  // Verify a citation against a source (SPEC-reference-desk §3.2b) — strict-grounding's
+  // self-check. Given an item `id` + a candidate `quote`, confirm the text actually
+  // appears in that source and return a stable locator + surrounding context, or report
+  // no-match so the agent can refuse to assert it. Whitespace is normalized before
+  // matching (HTML/wrap noise ignored); falls back to case-insensitive. Read-only.
+  async function quote(input = {}) {
+    const id = input && input.id != null ? String(input.id) : null;
+    const it = id && store.getItem(id);
+    if (!it) throw new Error(`No item with id "${id}". Use weir_search/weir_queryItems to find ids.`);
+    const cand = String(input.quote || '').trim();
+    if (!cand) throw new Error('provide `quote` — the candidate text to verify against the source.');
+    const ctx = Math.min(Math.max(0, Number(input.context) || 240), 1000);
+
+    // Fullest available source text: full body when present, else title + excerpt.
+    let body = '';
+    if (it.has_content) { try { const html = await store.getContent(id); if (html) body = stripToText(html); } catch { /* unreadable */ } }
+    const text = [it.title || '', body || it.excerpt || ''].filter(Boolean).join('\n\n');
+    const norm = (s) => s.replace(/\s+/g, ' ').trim();   // collapse whitespace for robust matching
+    const hay = norm(text);
+    const needle = norm(cand);
+    const base = { id: it.id, glass_id: it.glass_id || undefined };
+    if (!needle) throw new Error('the quote is empty after normalization');
+
+    let at = hay.indexOf(needle); let match = 'exact';
+    if (at < 0) { at = hay.toLowerCase().indexOf(needle.toLowerCase()); match = 'case-insensitive'; }
+    if (at < 0) {
+      return { ...base, found: false, sourceChars: hay.length, note: 'no match — this quote is NOT in the source; do not assert it as grounded. Try a shorter/exact span, or re-check the id (weir_getItem returns the body).' };
+    }
+    const end = at + needle.length;
+    return {
+      ...base, found: true, match,
+      locator: `${it.glass_id || it.id}#${at}-${end}`,   // stable char span in the normalized source
+      quote: hay.slice(at, end),                          // the source's verbatim text (canonical casing/spacing)
+      before: hay.slice(Math.max(0, at - ctx), at),
+      after: hay.slice(end, end + ctx),
+      sourceChars: hay.length,
+    };
+  }
+
   // ── mutations (the user opted into wide access for their own local data) ──
 
   // Set item flags — on ONE item (`id`) or every item matching a query (the bulk
@@ -924,7 +963,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, search, listFacets, queryCatalog, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, queryCatalog, quote, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1303,6 +1342,18 @@ const TOOLS = [
       }, required: ['facets'],
     },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'Faceted catalog query' },
+  },
+  {
+    name: 'weir_quote', fn: 'quote',
+    description: 'Verify a citation against a source — strict-grounding\'s self-check. Given an item `id` and a candidate `quote`, confirm the text actually appears in that source and get a stable locator + surrounding context (so you can cite it precisely, or REFUSE if it is not there). Whitespace is normalized before matching (HTML/wrapping ignored), with a case-insensitive fallback. Returns { found:true, locator:"<glass_id|id>#start-end", quote (the source\'s verbatim span), before, after, match } when present, or { found:false, note } when the quote is NOT in the source — in which case do not assert it as grounded. Read-only. Pair with weir_getItem (the body + citation chain) and weir_search/weir_queryCatalog (to find the id).',
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'The item id to verify against (from weir_search / weir_queryItems / weir_queryCatalog)' },
+        quote: { type: 'string', description: 'The candidate quote/claim text to locate in the source' },
+        context: { type: 'integer', description: 'Chars of surrounding context to return on each side (default 240, max 1000)' },
+      }, required: ['id', 'quote'],
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'Verify a quote' },
   },
   {
     name: 'weir_stacksList', fn: 'stacksList',
