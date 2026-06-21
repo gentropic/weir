@@ -291,7 +291,10 @@ const reviewApp = {
 };
 const rvTools = buildWeirTools({ store, app: reviewApp, ensureCards: async () => {} });
 const queue = await rvTools.reviewQueue({});
-assert.equal(queue.total, 1); assert.equal(queue.items[0].id, 'a1'); assert.equal(queue.items[0].confidence, 0.2, 'queue carries confidence');
+assert.equal(queue.counts.total, 1); assert.equal(queue.counts.catalog, 1, 'catalog kind counted');
+assert.equal(queue.items[0].id, 'a1'); assert.equal(queue.items[0].kind, 'catalog', 'tagged by kind');
+assert.equal(queue.items[0].confidence, 0.2, 'queue carries confidence');
+assert.equal(queue.items[0].ratifyWith, 'weir_reviewItem', 'catalog item points at weir_reviewItem');
 // correct facets + approve
 const fixed = await rvTools.reviewItem({ id: 'a1', facets: { scale: [] } });
 assert.deepEqual(fixed.facets.scale, [], 'facet correction applied');
@@ -301,7 +304,7 @@ assert.equal(card2.glass.needs_review, false, 'needs_review cleared');
 assert.equal(card2.glass.reviewer, 'human', 'stamped human review');
 assert.equal(reviewApp._cardReview.get('a1').needs_review, false, 'app cache updated');
 const queue2 = await rvTools.reviewQueue({});
-assert.equal(queue2.total, 0, 'queue empty after review');
+assert.equal(queue2.counts.total, 0, 'queue empty after review');
 await assert.rejects(rvTools.reviewItem({ id: 'v1' }), /isn’t cataloged|not cataloged|isn't cataloged/, 'uncataloged item rejected');
 
 // ── setCatalog: writes config (not the key), clamps; listModels needs app ──

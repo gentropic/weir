@@ -1285,6 +1285,40 @@ export class Store {
     return { tags, edges };
   }
 
+  // ── the review queue's non-catalog half: agent structural proposals (SPEC-librarian §3) ──
+  // Agent-authored, not-yet-ratified proposals awaiting human ratification: feeds the
+  // agent added (source 'agent') + relation edges it proposed. Read-only (the catalog
+  // half — low-confidence cards — lives in the app's _cardReview cache).
+  pendingProposals() {
+    const feeds = [];
+    for (const f of this.feeds.values()) if (f.source === 'agent' && !f.ratified_at) feeds.push({ id: f.id, name: f.name, category: f.category, by: f.added_by, url: f.url });
+    const relations = [];
+    for (const [gid, c] of this.cards) for (const e of ((c.glass || {}).related) || []) {
+      if (e.source !== 'agent' || e.ratified_at) continue;
+      const to = this.cards.get(e.target);
+      relations.push({ from: gid, to: e.target, type: e.type, by: e.by, fromTitle: (c.dublin_core && c.dublin_core.title) || gid, toTitle: (to && to.dublin_core && to.dublin_core.title) || e.target });
+    }
+    return { feeds, relations };
+  }
+
+  // Bless an agent-proposed feed: it stays, marked ratified, so it leaves the queue
+  // (decides-vs-proposes §2.1). Reuses updateFeed's persist. Returns the feed | null.
+  async ratifyFeed(id) {
+    if (!this.feeds.get(id)) return null;
+    return this.updateFeed(id, { ratified_at: now(), ratified_by: 'human' });
+  }
+
+  // Bless an agent-proposed relation edge (from→to, optionally a specific type). Stamps
+  // ratified_at on the matching edge(s) so they drop out of pendingProposals. Returns bool.
+  ratifyEdge(fromGlassId, toGlassId, type) {
+    const from = this.cards.get(String(fromGlassId));
+    if (!from || !from.glass || !Array.isArray(from.glass.related)) return false;
+    let n = 0;
+    for (const e of from.glass.related) if (e.target === String(toGlassId) && (!type || e.type === type)) { e.ratified_at = now(); e.ratified_by = 'human'; n++; }
+    if (n) { this._markCardDirty(String(fromGlassId)); this.emit('catalog', { id: String(fromGlassId), reviewed: true }); }
+    return n > 0;
+  }
+
   // Controlled-vocabulary normalization (the thesaurus primitive): rewrite a term
   // across EVERY catalog card within one facet — `from` → `to`, de-duplicated,
   // order preserved. This is the term-level analog of markCardReviewed's per-card

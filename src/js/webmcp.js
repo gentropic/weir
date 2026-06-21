@@ -418,23 +418,67 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   }
 
   // List cataloger cards flagged low-confidence (needs_review) for human confirm.
+  // The UNIFIED review queue (SPEC-librarian §3): everything awaiting human attention,
+  // tagged by `kind`. `catalog` = cataloger low-confidence cards (app-only); `feed` /
+  // `relation` = agent structural proposals the agent added (decides-vs-proposes §2.1).
+  // Each carries `ratifyWith` (the tool to act on it). Optional `kind` filter + limit.
   async function reviewQueue(input = {}) {
-    if (!app) throw new Error('review is only available in the running app');
-    if (ensureCards) { try { await ensureCards(); } catch { /* fall through */ } }
+    if (app && ensureCards) { try { await ensureCards(); } catch { /* fall through */ } }
     const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
-    const cr = app._cardReview || new Map();
-    const items = []; let total = 0;
+    const kind = input.kind ? String(input.kind) : null;
+    const items = []; const counts = { catalog: 0, feed: 0, relation: 0 };
+
+    // catalog half — cards the cataloger flagged low-confidence (app's review cache)
+    const cr = (app && app._cardReview) || new Map();
     for (const [id, r] of cr) {
       if (!r || !r.needs_review) continue;
-      total++;
-      if (items.length >= limit) continue;
+      counts.catalog++;
+      if ((kind && kind !== 'catalog') || items.length >= limit) continue;
       const it = store.getItem(id); if (!it) continue;
-      const o = projItem(store, it, false);
-      o.confidence = r.confidence;
+      const o = projItem(store, it, false); o.kind = 'catalog'; o.confidence = r.confidence; o.ratifyWith = 'weir_reviewItem';
       const f = app._cardFacets && app._cardFacets.get(id); if (f) o.facets = f;
       items.push(o);
     }
-    return { total, count: items.length, items };
+    // proposal half — agent-added feeds + relation edges, not yet ratified (store-level)
+    const prop = store.pendingProposals();
+    for (const f of prop.feeds) {
+      counts.feed++;
+      if ((kind && kind !== 'feed') || items.length >= limit) continue;
+      items.push({ kind: 'feed', id: f.id, title: f.name, url: f.url, category: f.category, by: f.by, ratifyWith: 'weir_ratify' });
+    }
+    for (const e of prop.relations) {
+      counts.relation++;
+      if ((kind && kind !== 'relation') || items.length >= limit) continue;
+      items.push({ kind: 'relation', from: e.from, to: e.to, type: e.type, by: e.by, title: `${e.fromTitle} —${e.type}→ ${e.toTitle}`, ratifyWith: 'weir_ratify' });
+    }
+    counts.total = counts.catalog + counts.feed + counts.relation;
+    return { counts, count: items.length, items };
+  }
+
+  // Ratify or dismiss an agent STRUCTURAL proposal (decides-vs-proposes §2.1): a feed
+  // the agent added, or a relation edge it proposed. ratify = bless it (stays, marked
+  // ratified → leaves the queue); dismiss = undo it (remove the feed / unrelate the
+  // edge). Catalog cards are confirmed via weir_reviewItem instead. The human's gate.
+  async function ratify(input = {}) {
+    const kind = String(input.kind || '').trim();
+    const action = String(input.action || 'ratify').trim();
+    if (!['ratify', 'dismiss'].includes(action)) throw new Error('action must be "ratify" or "dismiss"');
+    if (kind === 'feed') {
+      const id = String(input.feedId || input.id || '').trim();
+      if (!id || !store.getFeed(id)) throw new Error(`no feed "${id}" — see weir_reviewQueue({ kind: "feed" }) / weir_listSources`);
+      if (action === 'ratify') { const f = await store.ratifyFeed(id); await store.flush(); return { kind, action, id, ratified_at: f && f.ratified_at }; }
+      await store.removeFeed(id); await store.flush(); if (app && app.renderRail) app.renderRail();   // dismiss = undo the un-ratified add
+      return { kind, action: 'dismiss', id, removed: true };
+    }
+    if (kind === 'relation') {
+      if (input.from == null || input.to == null) throw new Error('a relation proposal needs `from` and `to` (item ids or glass_ids) — see weir_reviewQueue({ kind: "relation" })');
+      const from = toGlassId(input.from), to = toGlassId(input.to);
+      const type = input.type ? String(input.type) : undefined;
+      if (action === 'ratify') { const ok = store.ratifyEdge(from, to, type); await store.flush(); return { kind, action, from: String(input.from), to: String(input.to), ratified: ok }; }
+      const removed = store.unrelateCards(from, to, type ? { type } : {}); await store.flush();
+      return { kind, action: 'dismiss', from: String(input.from), to: String(input.to), removed };
+    }
+    throw new Error('kind must be "feed" or "relation" (catalog cards: confirm via weir_reviewItem)');
   }
 
   // Confirm a card (clear needs_review) and optionally correct its facets.
@@ -963,7 +1007,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, search, listFacets, queryCatalog, quote, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, queryCatalog, quote, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1227,9 +1271,24 @@ const TOOLS = [
   },
   {
     name: 'weir_reviewQueue', fn: 'reviewQueue',
-    description: 'List cataloger cards flagged needs_review (the LLM returned low-confidence / unparseable output) for human confirm/correct. Returns { total, count, items } where each item carries its current facets + confidence. Pair with weir_reviewItem to approve or fix.',
-    inputSchema: { type: 'object', properties: { limit: { type: 'integer', description: 'Max items (default 30, cap 100)' } } },
+    description: 'The UNIFIED review queue — everything awaiting human attention, tagged by `kind`: "catalog" = cataloger cards flagged low-confidence/unparseable (carry facets + confidence); "feed" = a feed the agent ADDED (source:agent) not yet ratified; "relation" = a relation edge the agent proposed, not yet ratified. Each item carries `ratifyWith` — the tool to act on it: catalog → weir_reviewItem (confirm/correct), feed/relation → weir_ratify (bless or dismiss). Returns { counts:{catalog,feed,relation,total}, count, items }. Optional `kind` filters to one. This is the decides-vs-proposes gate: the agent proposes, you ratify here.',
+    inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['catalog', 'feed', 'relation'], description: 'Filter to one kind (default: all)' }, limit: { type: 'integer', description: 'Max items (default 30, cap 100)' } } },
     annotations: { readOnlyHint: true, title: 'Review queue' },
+  },
+  {
+    name: 'weir_ratify', fn: 'ratify',
+    description: 'Ratify or dismiss an agent STRUCTURAL proposal from the review queue (decides-vs-proposes §2.1) — a feed the agent added, or a relation edge it proposed. `action:"ratify"` blesses it (it stays, marked ratified, and leaves the queue); `action:"dismiss"` undoes it (removes the proposed feed + its just-polled items, or unrelates the edge). For kind "feed" pass `feedId`; for kind "relation" pass `from` + `to` (+ optional `type`). Catalog cards are confirmed via weir_reviewItem instead, not here. Returns the action taken.',
+    inputSchema: {
+      type: 'object', properties: {
+        kind: { type: 'string', enum: ['feed', 'relation'], description: 'What kind of proposal' },
+        action: { type: 'string', enum: ['ratify', 'dismiss'], description: 'ratify = keep + bless; dismiss = undo (default ratify)' },
+        feedId: { type: 'string', description: 'kind "feed": the proposed feed id (from weir_reviewQueue)' },
+        from: { type: 'string', description: 'kind "relation": the source item id or glass_id' },
+        to: { type: 'string', description: 'kind "relation": the target item id or glass_id' },
+        type: { type: 'string', description: 'kind "relation": optionally scope to one edge type' },
+      }, required: ['kind'],
+    },
+    annotations: { title: 'Ratify / dismiss a proposal' },
   },
   {
     name: 'weir_reviewItem', fn: 'reviewItem',
