@@ -257,7 +257,8 @@ export function makeItem(raw, feed) {
     saved: false,
     archived: false,
     tags: Array.isArray(raw.tags) ? [...raw.tags] : [],
-    tag_src: raw.tag_src ? { ...raw.tag_src } : undefined,   // tag → who applied it ('human'|'llm'|'rule')
+    tag_src: raw.tag_src ? { ...raw.tag_src } : undefined,   // tag → who applied it ('human'|'agent'|'rule')
+    tag_by: raw.tag_by ? { ...raw.tag_by } : undefined,     // tag → the agent identity that applied it (SPEC-librarian §2)
     media: raw.media || undefined,
     structured: raw.structured || undefined,
     has_content: !!(raw.content && String(raw.content).length),

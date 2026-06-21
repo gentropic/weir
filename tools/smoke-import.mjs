@@ -147,4 +147,15 @@ const reimported = store.getItem(`saved:h${hash32('http://www.e-basteln.de/paper
 assert.equal(reimported.saved, true, 'saved flag NOT reset on re-import');
 assert.equal(reimported.read, true, 'read flag NOT reset on re-import');
 
+// ── weir_addLink provenance: an agent-saved NEW link carries added_by + tag_by (makeItem
+// must preserve both — mirrors app.importLinks(prov) → upsertItems) ──
+await store.upsertItems([{
+  id: `saved:h${hash32('https://example.com/agent-saved')}`, feed_id: 'saved', url: 'https://example.com/agent-saved',
+  title: 'Agent-saved link', type: 'article', tags: ['geostats'],
+  tag_src: { geostats: 'agent' }, tag_by: { geostats: 'claude:librarian' }, added_by: 'claude:librarian', added_src: 'agent',
+}]);
+const al = store.getItem(`saved:h${hash32('https://example.com/agent-saved')}`);
+assert.equal(al.added_by, 'claude:librarian', 'saved-link added_by persists through makeItem');
+assert.equal(al.tag_src.geostats, 'agent', 'tag_src persists'); assert.equal(al.tag_by.geostats, 'claude:librarian', 'tag_by persists (the new makeItem field)');
+
 console.log('import smoke ok:', JSON.stringify({ links: links.length, inserted: r1.inserted, reimport_updated: r2.updated }));

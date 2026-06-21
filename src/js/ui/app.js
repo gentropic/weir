@@ -2729,7 +2729,7 @@ export class App {
   // throttled by the shortener). The item id is hashed from the ORIGINAL url, so
   // resolution updates the url IN PLACE without changing identity → re-import is
   // idempotent. Imported links catalog like any item.
-  async importLinks(links, format = 'import') {
+  async importLinks(links, format = 'import', prov) {
     const sub = document.getElementById('view-sub');
     if (!links || !links.length) { if (sub) sub.textContent = `no links found in that ${format} file`; return { inserted: 0, updated: 0 }; }
     await this._ensureSavedSource();
@@ -2738,12 +2738,18 @@ export class App {
       const id = `saved:h${hash32(String(l.url).toLowerCase())}`;
       const ex = this.store.getItem(id);
       const url = (ex && ex.url && !isWrappedUrl(ex.url)) ? ex.url : l.url;   // keep a previously-resolved url
+      const tags = Array.isArray(l.tags) ? [...new Set(l.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean))] : [];
       return {
         id, feed_id: 'saved', url,
         title: l.title || (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })(),
         type: /(?:youtube\.com|youtu\.be)\//i.test(url) ? 'video' : 'article',
         published_at: l.date || undefined,
-        tags: [],
+        tags,
+        // provenance (SPEC-librarian §2): a NEW link the agent saves is stamped — its tags
+        // too; never relabel a human's existing saved link the agent merely re-imports.
+        tag_src: tags.reduce((o, t) => { o[t] = prov ? prov.source : 'human'; return o; }, {}),
+        ...(prov && tags.length ? { tag_by: tags.reduce((o, t) => { o[t] = prov.by; return o; }, {}) } : {}),
+        ...(prov && !ex ? { added_by: prov.by, added_src: prov.source } : {}),
       };
     });
     const res = await this.store.upsertItems(raws);

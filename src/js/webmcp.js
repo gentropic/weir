@@ -1075,6 +1075,24 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { inserted: res.inserted, updated: res.updated, books: norm.length };
   }
 
+  // Save a link into weir's "Saved Links" (the same source the Telegram bot feeds) — so
+  // you can save a URL directly, not only via Telegram. The link resolver follows
+  // wrapped/short URLs + fetches title/excerpt/thumbnail gently in the background; it
+  // catalogs like any item. Stamped source:agent + identity on a NEW save. Idempotent
+  // (keyed by URL hash) — re-saving updates in place, never resets read/saved/tags.
+  async function addLink(input = {}, client) {
+    if (!app || !app.importLinks) throw new Error('addLink is only available in the running app');
+    const list = Array.isArray(input.links) ? input.links : (input.url ? [input] : null);
+    if (!list || !list.length) throw new Error('pass `url` (one link) or links:[{ url, title?, tags?, date? }]');
+    const norm = list.map((l) => {
+      const url = String(l.url || '').trim();
+      if (!url) throw new Error('each link needs a `url`');
+      return { url, title: l.title ? String(l.title) : undefined, date: l.date || undefined, tags: Array.isArray(l.tags) ? l.tags : undefined };
+    });
+    const res = await app.importLinks(norm, 'mcp', agentProv(client));
+    return { inserted: res.inserted, updated: res.updated, links: norm.length };
+  }
+
   // One-shot provenance normalization (SPEC-librarian §2): rewrite the agent's
   // historically-split stamps — tags 'llm', edges 'claude' — to the unified 'agent'
   // tier across the whole corpus. Idempotent; returns counts. A capability, not a
@@ -1085,7 +1103,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1323,6 +1341,20 @@ const TOOLS = [
       },
     },
     annotations: { title: 'Add/update book(s) in holdings' },
+  },
+  {
+    name: 'weir_addLink', fn: 'addLink',
+    description: 'Save a link into weir\'s "Saved Links" — the same source the Telegram bot feeds, so you can save a URL directly (not only via Telegram). Pass `url` (one link) or `links:[{ url, title?, tags?, date? }]`. The background resolver follows wrapped/shortened URLs and fetches title/excerpt/thumbnail over time; it then catalogs like any item. Idempotent (keyed by URL hash) — re-saving updates in place and never resets read/saved/tags. A NEW save is stamped source:agent + your identity (its tags too); a re-import of an existing link is not relabeled. Returns { inserted, updated, links }.',
+    inputSchema: {
+      type: 'object', properties: {
+        url: { type: 'string', description: 'A single link URL to save' },
+        title: { type: 'string', description: 'Optional title (else derived from the host; the resolver may improve it)' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Optional tags to apply (stamped as yours-via-agent)' },
+        date: { type: 'string', description: 'Optional publish date (ISO or year)' },
+        links: { type: 'array', description: 'Batch: [{ url, title?, tags?, date? }] (preferred over a single url for many)', items: { type: 'object', properties: { url: { type: 'string' }, title: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, date: { type: 'string' } }, required: ['url'] } },
+      },
+    },
+    annotations: { title: 'Save a link' },
   },
   {
     name: 'weir_catalogItem', fn: 'catalogItem',
