@@ -27,6 +27,12 @@ assert.ok(q.items[0].published.startsWith('2026-05-01'), 'published as ISO');
 const vids = await tools.queryItems({ type: 'video' });
 assert.equal(vids.count, 1); assert.equal(vids.items[0].id, 'v1', 'type filter');
 
+// ── getItems (batch) — found items + missing ids reported ──
+const batch = await tools.getItems({ ids: ['a1', 'v1', 'ghost'] });
+assert.equal(batch.count, 2, 'batch returns the found items'); assert.deepEqual(batch.missing, ['ghost'], 'unknown id reported in missing');
+assert.ok(batch.items.find((i) => i.id === 'a1') && batch.items.find((i) => i.id === 'v1'), 'both real items present');
+await assert.rejects(tools.getItems({}), /ids/, 'getItems needs ids');
+
 const capped = await tools.queryItems({ limit: 999 });
 assert.equal(capped.count, 2, 'limit cap does not error');
 

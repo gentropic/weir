@@ -62,6 +62,14 @@ assert.ok(r.vocabularyNotes.some((n) => /unknown facet/.test(n.note)), 'unknown 
 r = await tools.queryCatalog({ facets: { domain: ['geostatistics'] }, q: 'kriging' });
 assert.ok(r.items.length === 1 && r.items[0].id === 'i1', 'q ANDs a search constraint (kriging → i1 only, i2 dropped)');
 
+// ── archive visibility: archived items are included by default, excluded on demand ──
+store.items.get('i1').archived = true;   // archive the kriging paper
+r = await tools.queryCatalog({ facets: { entity: ['kriging'] } });
+assert.ok(r.items.some((x) => x.id === 'i1'), 'archived item still found by default (reference desk sees the archive)');
+r = await tools.queryCatalog({ facets: { entity: ['kriging'] }, includeArchived: false });
+assert.ok(!r.items.some((x) => x.id === 'i1'), 'includeArchived:false excludes the archived item');
+store.items.get('i1').archived = false;   // restore
+
 // ── validation: facets is required ──
 await assert.rejects(tools.queryCatalog({}), /facets/, 'missing facets throws a helpful error');
 

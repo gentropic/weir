@@ -40,7 +40,10 @@ assert.ok(typeof r[0].snippet === 'string' && r[0].snippet.length, 'snippet gene
 const scoped = si.search('kriging', { limit: 10, filter: (id) => id === 'a' });
 assert.equal(scoped.length, 1, 'filter scopes results'); assert.equal(scoped[0].id, 'a');
 
-// ── archived items excluded from the index ──
-assert.ok(!si.search('archived', { limit: 10 }).find((h) => h.id === 'd'), 'archived doc not indexed');
+// ── archived items ARE indexed now (the reference desk sees the archive, never-delete);
+// the inbox UI hides them via a view-scoped filter, NOT by excluding from the index ──
+assert.ok(si.search('archived', { limit: 10 }).find((h) => h.id === 'd'), 'archived doc IS indexed (reference desk sees the archive)');
+const active = new Set([...store.items.values()].filter((i) => !i.archived).map((i) => i.id));
+assert.ok(!si.search('archived', { limit: 10, filter: (id) => active.has(id) }).find((h) => h.id === 'd'), 'a non-archived filter (the UI/includeArchived:false path) hides it');
 
 console.log('search smoke ok:', JSON.stringify({ kriging: r.length, top: r[0].id }));

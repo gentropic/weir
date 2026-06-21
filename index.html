@@ -14966,7 +14966,10 @@ class SearchIndex {
 
   build() {
     const docs = [];
-    for (const it of this.store.items.values()) if (!it.archived) docs.push(this._doc(it));
+    // Index EVERYTHING incl. archived — the reference desk (weir_search) must see the
+    // standing archive (never-delete; SPEC-reference-desk §2.1). The inbox UI stays
+    // archived-free by filtering on its view-scoped `allowed` id set, not the index.
+    for (const it of this.store.items.values()) docs.push(this._doc(it));
     this.index = Librarian.index({
       docs,
       fields: { title: { boost: 4 }, body: { boost: 1 } },
@@ -22163,6 +22166,23 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return o;
   }
 
+  // Batch getItem — reference work fans out (one search → pull many cards); this saves
+  // a round-trip storm (SPEC-reference-desk §3.3). Pass `ids`; unknown ids come back in
+  // `missing`. With `content:true` each body is capped at 8k, so cap the batch tighter.
+  async function getItems(input = {}) {
+    const ids = [].concat(input.ids || []).map((x) => String(x)).filter(Boolean);
+    if (!ids.length) throw new Error('pass `ids`: an array of item ids (from weir_search / weir_queryItems / weir_queryCatalog).');
+    const cap = Math.min(ids.length, input.content ? 25 : 60);
+    const items = []; const missing = [];
+    for (const id of ids.slice(0, cap)) {
+      try { items.push(await getItem({ id, content: input.content })); } catch { missing.push(id); }
+    }
+    const out = { count: items.length, items };
+    if (missing.length) out.missing = missing;
+    if (ids.length > cap) out.omitted = ids.length - cap;
+    return out;
+  }
+
   async function listFacets(input = {}) {
     if (ensureCards) { try { await ensureCards(); } catch { /* fall back to Stage-0 */ } }
     const only = input.facet ? String(input.facet) : null;     // drill into one facet
@@ -22230,9 +22250,10 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     // Intersect across facets over the live facet source (cataloged → card facets, else
     // deterministic Stage-0). Track which requested terms actually land a hit.
     const matched = {};   // facet → Set<term> that hit ≥1 item
+    const noArchive = input.includeArchived === false;   // reference-desk default: include the archive
     const hits = [];
     for (const it of store.items.values()) {
-      if (it.archived) continue;
+      if (noArchive && it.archived) continue;
       const f = facetsFor(it);
       const why = {}; let ok = true;
       for (const [facet, set] of Object.entries(want)) {
@@ -22747,13 +22768,20 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     const limit = Math.min(Math.max(1, Number(input.limit) || 20), 100);
     const idx = app && app.searchIndex;
     const scoped = input.feed || input.type || input.view || input.category !== undefined || input.unread !== undefined || input.saved !== undefined;
+    // Reference-desk default: SEE THE ARCHIVE (never-delete; SPEC §2.1). The index now
+    // holds archived items too; exclude them only when includeArchived === false.
+    const noArchive = input.includeArchived === false;
     if (idx && idx.ready) {
-      let filter;
-      if (scoped) { const allowed = new Set(store.query(buildQuery(input)).map((r) => r.id)); filter = (id) => allowed.has(id); }
+      const preds = [];
+      if (scoped) { const allowed = new Set(store.query(buildQuery(input)).map((r) => r.id)); preds.push((id) => allowed.has(id)); }
+      if (noArchive) preds.push((id) => { const it = store.getItem(id); return it && !it.archived; });
+      const filter = preds.length ? (id) => preds.every((p) => p(id)) : undefined;
       const hits = idx.search(q, { limit, filter }) || [];
-      return { ranked: true, count: hits.length, items: hits.map((h) => { const it = store.getItem(h.id); return it ? { ...projItem(store, it, false), score: h.score } : null; }).filter(Boolean) };
+      return { ranked: true, count: hits.length, items: hits.map((h) => { const it = store.getItem(h.id); return it ? { ...projItem(store, it, false), score: h.score, archived: it.archived || undefined } : null; }).filter(Boolean) };
     }
-    const rows = store.query({ ...buildQuery(input), text: q }).slice(0, limit);
+    let rows = store.query({ ...buildQuery(input), text: q });
+    if (!noArchive && !scoped) { const seen = new Set(rows.map((r) => r.id)); for (const it of store.items.values()) if (it.archived && !seen.has(it.id) && (it.search_text || '').includes(q.toLowerCase())) rows.push(it); }   // fallback: fold archived in
+    rows = rows.slice(0, limit);
     return { ranked: false, count: rows.length, items: rows.map((r) => projItem(store, r, false)) };
   }
 
@@ -23048,7 +23076,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, search, listFacets, queryCatalog, quote, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -23175,8 +23203,19 @@ const TOOLS = [
     annotations: { readOnlyHint: true, title: 'Get a weir item' },
   },
   {
+    name: 'weir_getItems', fn: 'getItems',
+    description: 'BATCH weir_getItem — fetch many items at once (reference work fans out: one search → pull a dozen cards). Pass `ids` (from weir_search / weir_queryItems / weir_queryCatalog). Returns { count, items:[…same shape as weir_getItem], missing?:[ids not found], omitted? }. With content:true each body is capped at 8k so the batch is capped tighter (~25 vs ~60). Saves a round-trip storm vs. calling weir_getItem N times.',
+    inputSchema: {
+      type: 'object', properties: {
+        ids: { type: 'array', items: { type: 'string' }, description: 'Item ids to fetch' },
+        content: { type: 'boolean', description: 'Include each item\'s extracted body text (capped 8k each)' },
+      }, required: ['ids'],
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'Get weir items (batch)' },
+  },
+  {
     name: 'weir_search', fn: 'search',
-    description: 'RANKED full-text search (the librarian BM25 index) — relevance-ordered, better than weir_queryItems\'s substring `q` for "most relevant about X" on a large corpus. Optional scope filters (feed/type/category/view/unread/saved) narrow it like queryItems. Returns { ranked, count, items:[…,score] } (ranked:false = index not ready, fell back to substring). Use queryItems to LIST a whole feed/folder; use search to FIND by relevance.',
+    description: 'RANKED full-text search (the librarian BM25 index) — relevance-ordered, better than weir_queryItems\'s substring `q` for "most relevant about X" on a large corpus. SEES THE ARCHIVE by default (the standing corpus, never-delete) — hits carry `archived:true` when archived; pass includeArchived:false to limit to active. Optional scope filters (feed/type/category/view/unread/saved) narrow it like queryItems. Returns { ranked, count, items:[…,score,archived?] } (ranked:false = index not ready, fell back to substring). Use queryItems to LIST a whole feed/folder; use search to FIND by relevance; use weir_queryCatalog to search WITHIN a facet set.',
     inputSchema: {
       type: 'object', properties: {
         q: { type: 'string', description: 'The search query' },
@@ -23186,6 +23225,7 @@ const TOOLS = [
         view: { type: 'string', enum: ['inbox', 'saved', 'archived'], description: 'Scope to a view' },
         unread: { type: 'boolean', description: 'Only unread' },
         saved: { type: 'boolean', description: 'Only saved' },
+        includeArchived: { type: 'boolean', description: 'Include archived items (default TRUE — the reference desk sees the whole archive; pass false to limit to active)' },
         limit: { type: 'integer', description: 'Max hits (default 20, cap 100)' },
       }, required: ['q'],
     },
@@ -23443,6 +23483,7 @@ const TOOLS = [
       type: 'object', properties: {
         facets: { type: 'object', description: 'Map of facet name → term or [terms]. e.g. { domain: ["geostatistics"], entity: ["kriging","itabirite"] }. Union within a facet, intersect across facets.' },
         q: { type: 'string', description: 'Optional free-text to AND a ranked-search constraint (weir_search) onto the intersection' },
+        includeArchived: { type: 'boolean', description: 'Include archived items (default TRUE — sees the whole archive; pass false to limit to active)' },
         limit: { type: 'integer', description: 'Max items (default 20, cap 100)' },
       }, required: ['facets'],
     },
@@ -23629,7 +23670,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'f7df76b';          // short content hash of the bundle (build id)
+const COMMIT = '030c746';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

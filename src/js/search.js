@@ -29,7 +29,10 @@ export class SearchIndex {
 
   build() {
     const docs = [];
-    for (const it of this.store.items.values()) if (!it.archived) docs.push(this._doc(it));
+    // Index EVERYTHING incl. archived — the reference desk (weir_search) must see the
+    // standing archive (never-delete; SPEC-reference-desk §2.1). The inbox UI stays
+    // archived-free by filtering on its view-scoped `allowed` id set, not the index.
+    for (const it of this.store.items.values()) docs.push(this._doc(it));
     this.index = Librarian.index({
       docs,
       fields: { title: { boost: 4 }, body: { boost: 1 } },
