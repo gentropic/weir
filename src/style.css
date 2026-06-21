@@ -522,6 +522,8 @@ body {
 .pv-row { padding: 10px 8px; border-radius: var(--au-radius); border-bottom: 1px solid var(--au-border); }
 .pv-row:last-child { border-bottom: none; }
 .rv-rationale { font-size: 12px; color: var(--au-fg-soft); font-style: italic; margin: 4px 0 2px; }
+/* review sidebar row: highlight the count when proposals/cards await ratification */
+.navrow[data-view="review"].has-pending .count { color: var(--au-action); font-weight: 600; }
 .rv-edit-actions { display: flex; gap: 8px; }
 .rv-edit-actions button { font-family: var(--au-font-mono); font-size: 12px; color: var(--au-fg-muted); background: var(--sw-bg-bright); border: 1px solid var(--au-border); border-radius: var(--au-radius); padding: 4px 10px; cursor: pointer; }
 .rv-edit-actions button:hover { color: var(--au-action); border-color: var(--au-action); }

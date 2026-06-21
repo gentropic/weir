@@ -83,9 +83,10 @@ export class App {
 
     // Counts update live (cheap, no flicker); the rail+stream rebuild is debounced
     // so a burst of poll inserts doesn't tear the rows out from under the cursor.
-    for (const ev of ['items', 'prune']) this.store.on(ev, () => { this.renderCounts(); this._scheduleRender(); this._courierDirty = true; });
-    this.store.on('item', () => { this.renderCounts(); this._courierDirty = true; });   // single state changes refresh their row in-place via doAct
-    this.store.on('feed', () => this._scheduleRender());
+    for (const ev of ['items', 'prune']) this.store.on(ev, () => { this.renderCounts(); this.renderReviewStatus(); this._scheduleRender(); this._courierDirty = true; });
+    this.store.on('item', () => { this.renderCounts(); this.renderReviewStatus(); this._courierDirty = true; });   // single state changes refresh their row in-place via doAct
+    this.store.on('feed', () => { this.renderReviewStatus(); this._scheduleRender(); });
+    this.store.on('catalog', () => this.renderReviewStatus());   // a proposed/ratified relation edge changes the queue
     this.poller.on('polled', (e) => {
       this.renderPollStatus();
       if (e && e.error) { this._fetchFails = (this._fetchFails || 0) + 1; if (this._fetchFails >= 3) this.checkBridge(); }
@@ -2060,11 +2061,12 @@ export class App {
     return out;
   }
   renderReviewStatus() {
-    const el = document.getElementById('review-status'); if (!el) return;
     const p = this._pendingProposals();
     const n = this._reviewIds().length + p.feeds.length + p.relations.length + p.books.length;
-    el.textContent = n ? `⚑ ${n} to review` : '';
-    el.classList.toggle('clickable', n > 0);
+    const el = document.getElementById('review-status');
+    if (el) { el.textContent = n ? `⚑ ${n} to review` : ''; el.classList.toggle('clickable', n > 0); }
+    const cnt = document.getElementById('count-review'); if (cnt) cnt.textContent = n ? String(n) : '';
+    const row = document.querySelector('.navrow[data-view="review"]'); if (row) row.classList.toggle('has-pending', n > 0);
   }
 
   // ── agent proposals (the unified review queue's non-catalog half, SPEC-librarian §3):
@@ -2471,7 +2473,7 @@ export class App {
 
   _reflectSearch() { const b = document.getElementById('btn-saveview'); if (b) b.hidden = !this.searchText || !!this.smartView; }
 
-  setView(view) { if (view === 'catalog') return this.setCatalog(); if (view === 'stacks') return this.enterStacks(); this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
+  setView(view) { if (view === 'catalog') return this.setCatalog(); if (view === 'stacks') return this.enterStacks(); if (view === 'review') return this.openReview(); this.view = view; this.feedFilter = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   setRoute(name) { this.route = name; this.view = null; this.feedFilter = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
   selectFeed(id) { this.feedFilter = id; this.view = null; this.route = null; this.catFilter = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
 

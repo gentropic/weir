@@ -1293,6 +1293,7 @@ export class Store {
       r.added_by = by; books++;
       this._markFeedDirty(r.feed_id);
     }
+    if (tags || edges || books) this.emit('items', { inserted: 0, updated: tags + books, skipped: 0 });   // nudge the UI (review count) to re-render
     return { tags, edges, books };
   }
 
