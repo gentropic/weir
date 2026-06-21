@@ -190,6 +190,82 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return out;
   }
 
+  // Faceted INTERSECTION query (GLASS §2 / SPEC-reference-desk §2.2): the Ranganathan
+  // move — interdisciplinary material is found by intersecting facets, not by one shelf
+  // or keyword. `facets` is a map facet→term(s); within a facet the terms UNION, across
+  // facets they INTERSECT. Terms resolve against the controlled vocabulary (a synonym →
+  // its preferred term); unknown / zero-hit terms are reported in `vocabularyNotes`
+  // rather than silently missed (fail loud, GLASS §1). Optional `q` ANDs a ranked
+  // full-text constraint (composes with search, §2.1). Read-only.
+  async function queryCatalog(input = {}) {
+    if (ensureCards) { try { await ensureCards(); } catch { /* fall back to Stage-0 */ } }
+    const reqFacets = input.facets;
+    if (!reqFacets || typeof reqFacets !== 'object' || Array.isArray(reqFacets) || !Object.keys(reqFacets).length) {
+      throw new Error('pass `facets`: a map of facet → term(s), e.g. { domain: ["geostatistics"], entity: ["kriging","itabirite"] }. See weir_listFacets for terms, weir_vocab to resolve one.');
+    }
+    const limit = Math.min(Math.max(1, Number(input.limit) || 20), 100);
+    const vocabularyNotes = [];
+
+    // Normalize + vocab-resolve the requested terms (synonym → preferred term).
+    const want = {};   // facet → Set<term> (union within a facet)
+    for (const [facet, raw] of Object.entries(reqFacets)) {
+      if (!FACETS.includes(facet)) { vocabularyNotes.push({ facet, note: `unknown facet — one of: ${FACETS.join(', ')}` }); continue; }
+      const terms = [].concat(raw).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
+      if (!terms.length) continue;
+      const set = want[facet] || (want[facet] = new Set());
+      const vocab = store.getVocab(facet);
+      for (const t of terms) {
+        if (store.getConcept(facet, t)) { set.add(t); continue; }   // already a preferred term
+        let pref = null;
+        for (const [k, c] of Object.entries(vocab)) if ((c.alt || []).includes(t)) { pref = k; break; }   // a synonym?
+        if (pref) { set.add(pref); vocabularyNotes.push({ facet, input: t, resolvedTo: pref, note: 'non-preferred term → preferred form' }); }
+        else { set.add(t); vocabularyNotes.push({ facet, input: t, note: 'not in the controlled vocabulary — matched literally' }); }
+      }
+    }
+    if (!Object.keys(want).length) return { count: 0, total: 0, items: [], vocabularyNotes };
+
+    // Intersect across facets over the live facet source (cataloged → card facets, else
+    // deterministic Stage-0). Track which requested terms actually land a hit.
+    const matched = {};   // facet → Set<term> that hit ≥1 item
+    const hits = [];
+    for (const it of store.items.values()) {
+      if (it.archived) continue;
+      const f = facetsFor(it);
+      const why = {}; let ok = true;
+      for (const [facet, set] of Object.entries(want)) {
+        const vals = (f[facet] || []).filter((v) => set.has(String(v).toLowerCase()));
+        if (!vals.length) { ok = false; break; }
+        why[facet] = vals;
+      }
+      if (!ok) continue;
+      for (const [facet, vs] of Object.entries(why)) { const s = matched[facet] || (matched[facet] = new Set()); for (const v of vs) s.add(String(v).toLowerCase()); }
+      hits.push({ it, why });
+    }
+
+    // Optional free-text AND (compose with the ranked index, §2.1).
+    let rows = hits;
+    if (input.q) {
+      const r = await search({ q: String(input.q), limit: 100 });
+      const ids = new Set((r.items || []).map((x) => x.id));
+      rows = rows.filter((h) => ids.has(h.it.id));
+    }
+
+    // Fail loud: any requested term that matched nothing in the intersection.
+    for (const [facet, set] of Object.entries(want)) for (const t of set) {
+      if (!(matched[facet] && matched[facet].has(t))) vocabularyNotes.push({ facet, term: t, note: 'matched 0 items in this intersection' });
+    }
+
+    const total = rows.length;
+    const items = rows.slice(0, limit).map(({ it, why }) => {
+      const o = projItem(store, it, false);
+      o.matchedTerms = why;
+      if (it.glass_id) o.glass_id = it.glass_id;
+      o.facets = facetsFor(it);
+      return o;
+    });
+    return { count: items.length, total, items, vocabularyNotes: vocabularyNotes.length ? vocabularyNotes : undefined };
+  }
+
   // ── mutations (the user opted into wide access for their own local data) ──
 
   // Set item flags — on ONE item (`id`) or every item matching a query (the bulk
@@ -848,7 +924,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, search, listFacets, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, search, listFacets, queryCatalog, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1215,6 +1291,18 @@ const TOOLS = [
       },
     },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'List weir facets' },
+  },
+  {
+    name: 'weir_queryCatalog', fn: 'queryCatalog',
+    description: 'Faceted INTERSECTION query over the catalog — the Ranganathan move: find interdisciplinary material by intersecting facets instead of one shelf or keyword. Pass `facets`, a map of facet → term(s): within a facet the terms UNION, across facets they INTERSECT — e.g. { domain:["geostatistics"], entity:["kriging","itabirite"], process:["estimation"] } = (geostatistics) AND (kriging OR itabirite) AND (estimation). Facets: domain, entity, process, method, scale, spatial, stance, form, provenance, temporal (weir_listFacets shows live terms). Terms resolve against the controlled vocabulary (a synonym → its preferred term); unknown or zero-hit terms come back in `vocabularyNotes` instead of silently missing. Optional `q` ANDs a ranked full-text constraint (composes with weir_search). Finds what excerpt/substring search cannot — e.g. entity:"itabirite" hits a cataloged item even when the word is not in its title. Read-only. Returns { count, total, items:[{ …, glass_id?, facets, matchedTerms }], vocabularyNotes? }.',
+    inputSchema: {
+      type: 'object', properties: {
+        facets: { type: 'object', description: 'Map of facet name → term or [terms]. e.g. { domain: ["geostatistics"], entity: ["kriging","itabirite"] }. Union within a facet, intersect across facets.' },
+        q: { type: 'string', description: 'Optional free-text to AND a ranked-search constraint (weir_search) onto the intersection' },
+        limit: { type: 'integer', description: 'Max items (default 20, cap 100)' },
+      }, required: ['facets'],
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'Faceted catalog query' },
   },
   {
     name: 'weir_stacksList', fn: 'stacksList',
