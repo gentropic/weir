@@ -426,7 +426,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (app && ensureCards) { try { await ensureCards(); } catch { /* fall through */ } }
     const limit = Math.min(Math.max(1, Number(input.limit) || 30), 100);
     const kind = input.kind ? String(input.kind) : null;
-    const items = []; const counts = { catalog: 0, feed: 0, relation: 0 };
+    const items = []; const counts = { catalog: 0, feed: 0, relation: 0, book: 0 };
 
     // catalog half — cards the cataloger flagged low-confidence (app's review cache)
     const cr = (app && app._cardReview) || new Map();
@@ -439,19 +439,25 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       const f = app._cardFacets && app._cardFacets.get(id); if (f) o.facets = f;
       items.push(o);
     }
-    // proposal half — agent-added feeds + relation edges, not yet ratified (store-level)
+    // proposal half — agent-added feeds, relation edges, and book holdings, not yet
+    // ratified (store-level). `rationale` (why the agent proposed it) rides along.
     const prop = store.pendingProposals();
     for (const f of prop.feeds) {
       counts.feed++;
       if ((kind && kind !== 'feed') || items.length >= limit) continue;
-      items.push({ kind: 'feed', id: f.id, title: f.name, url: f.url, category: f.category, by: f.by, ratifyWith: 'weir_ratify' });
+      items.push({ kind: 'feed', id: f.id, title: f.name, url: f.url, category: f.category, by: f.by, rationale: f.rationale, ratifyWith: 'weir_ratify' });
     }
     for (const e of prop.relations) {
       counts.relation++;
       if ((kind && kind !== 'relation') || items.length >= limit) continue;
-      items.push({ kind: 'relation', from: e.from, to: e.to, type: e.type, by: e.by, title: `${e.fromTitle} —${e.type}→ ${e.toTitle}`, ratifyWith: 'weir_ratify' });
+      items.push({ kind: 'relation', from: e.from, to: e.to, type: e.type, by: e.by, rationale: e.rationale, title: `${e.fromTitle} —${e.type}→ ${e.toTitle}`, ratifyWith: 'weir_ratify' });
     }
-    counts.total = counts.catalog + counts.feed + counts.relation;
+    for (const b of prop.books) {
+      counts.book++;
+      if ((kind && kind !== 'book') || items.length >= limit) continue;
+      items.push({ kind: 'book', id: b.id, title: b.title, by: b.by, rationale: b.rationale, tags: b.tags, ratifyWith: 'weir_ratify' });
+    }
+    counts.total = counts.catalog + counts.feed + counts.relation + counts.book;
     return { counts, count: items.length, items };
   }
 
@@ -478,7 +484,15 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       const removed = store.unrelateCards(from, to, type ? { type } : {}); await store.flush();
       return { kind, action: 'dismiss', from: String(input.from), to: String(input.to), removed };
     }
-    throw new Error('kind must be "feed" or "relation" (catalog cards: confirm via weir_reviewItem)');
+    if (kind === 'book') {
+      const id = String(input.bookId || input.id || '').trim();
+      const it = id && store.getItem(id);
+      if (!it || it.type !== 'book') throw new Error(`no book "${id}" — see weir_reviewQueue({ kind: "book" })`);
+      const r = store.ratifyBook(id, { dismiss: action === 'dismiss' }); await store.flush();
+      if (app && app.renderStream) app.renderStream();
+      return { kind, action, id, ratified_at: r && r.ratified_at, archived: action === 'dismiss' };
+    }
+    throw new Error('kind must be "feed", "relation", or "book" (catalog cards: confirm via weir_reviewItem)');
   }
 
   // Confirm a card (clear needs_review) and optionally correct its facets.
@@ -597,7 +611,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       return { removed, from: String(input.from), to: String(input.to) };
     }
     const p = agentProv(client);
-    const edge = store.relateCards(from, to, { type: input.type || 'related', source: p.source, by: p.by });
+    const edge = store.relateCards(from, to, { type: input.type || 'related', source: p.source, by: p.by, rationale: input.rationale ? String(input.rationale) : undefined });
     await store.flush();
     return { related: true, from: String(input.from), to: String(input.to), type: edge.type };
   }
@@ -728,7 +742,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     let host = url; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep raw */ }
     const name = input.name || (matched && matched.titleFor && matched.titleFor(url)) || host;
     const p = agentProv(client);   // mark who added it (the gap: feeds carried no provenance)
-    const feed = await store.putFeed({ url: resolved, name, adapter, category: input.category || undefined, source: p.source, added_by: p.by });
+    const feed = await store.putFeed({ url: resolved, name, adapter, category: input.category || undefined, source: p.source, added_by: p.by, rationale: input.rationale ? String(input.rationale) : undefined });
     if (app.poller) app.poller.pollFeed(feed).then(() => app.renderAll && app.renderAll()).catch(() => {});
     if (app.renderRail) app.renderRail();
     return { id: feed.id, name: feed.name, adapter: feed.adapter, url: feed.url, category: feed.category || undefined };
@@ -982,6 +996,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       tags: Array.isArray(b.tags) ? [...new Set(b.tags.map((t) => String(t).trim()).filter(Boolean))] : undefined,
       ddc: b.ddc || undefined, lcc: b.lcc || undefined,
       shelved: (b.shelved != null) ? !!b.shelved : undefined,
+      rationale: b.rationale ? String(b.rationale) : undefined,   // why proposed (shown in the review queue)
     })).filter((b) => b.title || b.lt_id);   // NEW books need a title; an UPDATE (by id) does not — so { id, shelved:true } works
     if (!norm.length) throw new Error('pass new books with a title, or { id, … } to update an existing holding');
     // The import keys by lt_id (when targeting an existing holding) else by isbn||title;
@@ -1040,12 +1055,13 @@ const TOOLS = [
   },
   {
     name: 'weir_addFeed', fn: 'addFeed',
-    description: 'Subscribe to a feed by URL — adapter auto-detected (RSS/Atom/JSON Feed, YouTube channel, GitHub repo); an initial poll fires in the app. Optional `name` + `category` (folder). Returns the created feed { id, name, adapter, url, category }.',
+    description: 'Subscribe to a feed by URL — adapter auto-detected (RSS/Atom/JSON Feed, YouTube channel, GitHub repo); an initial poll fires in the app. Optional `name` + `category` (folder). When YOU (Claude) add it, it is stamped source:agent + your identity and lands in weir_reviewQueue as a `feed` proposal for the user to ratify — pass `rationale` so they see WHY. Returns the created feed.',
     inputSchema: {
       type: 'object', properties: {
         url: { type: 'string', description: 'Feed or page URL to subscribe to' },
         name: { type: 'string', description: 'Display name (default: derived from the URL/adapter)' },
         category: { type: 'string', description: 'Folder to file it under' },
+        rationale: { type: 'string', description: 'Why you are proposing this feed — shown in the review queue at ratify time' },
       }, required: ['url'],
     },
     annotations: { title: 'Add a feed' },
@@ -1201,7 +1217,7 @@ const TOOLS = [
   },
   {
     name: 'weir_addBook', fn: 'addBooks',
-    description: 'Add OR update owned/physical books in the holdings (the "Books" library) — e.g. cataloging a real shelf, or stamping series/seq onto books already there. Each book: title (required), author, isbn (→ Open Library fills cover/date/publisher), series + seq (the volume number — series+seq keep a numbered set TOGETHER and in volume order on the shelf; without seq a series scatters by year), date, tags (yours), ddc/lcc (display codes). To UPDATE an existing holding in place, pass its `id` (e.g. "book:269049145", from the shelf list / weir_queryItems) — read/saved/tags and the catalog card are preserved, and `structured` is MERGED, so you only pass the fields you are changing (existing isbn/ddc/lcc/series/seq are kept; a plain LibraryThing re-import will not wipe a stamped series). Without an id a new book is created (keyed by isbn||title). Batch with `books:[…]` (preferred) or pass ONE book inline. Returns { inserted, updated, books }.',
+    description: 'Add OR update owned/physical books in the holdings (the "Books" library) — e.g. cataloging a real shelf, or stamping series/seq onto books already there. Each book: title (required), author, isbn (→ Open Library fills cover/date/publisher), series + seq (the volume number — series+seq keep a numbered set TOGETHER and in volume order on the shelf; without seq a series scatters by year), date, tags (yours), ddc/lcc (display codes). To UPDATE an existing holding in place, pass its `id` (e.g. "book:269049145", from the shelf list / weir_queryItems) — read/saved/tags and the catalog card are preserved, and `structured` is MERGED, so you only pass the fields you are changing (existing isbn/ddc/lcc/series/seq are kept; a plain LibraryThing re-import will not wipe a stamped series). Without an id a new book is created (keyed by isbn||title). Batch with `books:[…]` (preferred) or pass ONE book inline. A NEW book YOU add is stamped source:agent and surfaces in weir_reviewQueue as a `book` proposal (tag it `to-buy` for a wishlist item you don\'t own yet); pass `rationale` so the user sees why. Returns { inserted, updated, books }.',
     inputSchema: {
       type: 'object', properties: {
         books: {
@@ -1219,6 +1235,7 @@ const TOOLS = [
               ddc: { type: 'string', description: 'Dewey number (display metadata)' },
               lcc: { type: 'string', description: 'Library of Congress class (display metadata)' },
               shelved: { type: 'boolean', description: 'Physical-shelf status — round-trips with the shelf-list export’s "shelved" JSON; preloads the sheet checkboxes' },
+              rationale: { type: 'string', description: 'Why you are proposing this book (e.g. a to-buy suggestion) — shown in the review queue; tag it "to-buy" for a wishlist item you don\'t own yet' },
             },
           },
         },
@@ -1271,18 +1288,19 @@ const TOOLS = [
   },
   {
     name: 'weir_reviewQueue', fn: 'reviewQueue',
-    description: 'The UNIFIED review queue — everything awaiting human attention, tagged by `kind`: "catalog" = cataloger cards flagged low-confidence/unparseable (carry facets + confidence); "feed" = a feed the agent ADDED (source:agent) not yet ratified; "relation" = a relation edge the agent proposed, not yet ratified. Each item carries `ratifyWith` — the tool to act on it: catalog → weir_reviewItem (confirm/correct), feed/relation → weir_ratify (bless or dismiss). Returns { counts:{catalog,feed,relation,total}, count, items }. Optional `kind` filters to one. This is the decides-vs-proposes gate: the agent proposes, you ratify here.',
-    inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['catalog', 'feed', 'relation'], description: 'Filter to one kind (default: all)' }, limit: { type: 'integer', description: 'Max items (default 30, cap 100)' } } },
+    description: 'The UNIFIED review queue — everything awaiting human attention, tagged by `kind`: "catalog" = cataloger cards flagged low-confidence/unparseable (carry facets + confidence); "feed"/"relation"/"book" = things the agent ADDED (source:agent) not yet ratified — a feed, a relation edge, or a book holding (e.g. a to-buy suggestion). Each item carries the proposer `by` identity, a `rationale` (why), and `ratifyWith` — the tool to act on it: catalog → weir_reviewItem (confirm/correct), feed/relation/book → weir_ratify (bless or dismiss). Returns { counts:{catalog,feed,relation,book,total}, count, items }. Optional `kind` filters to one. This is the decides-vs-proposes gate: the agent proposes, you ratify here.',
+    inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['catalog', 'feed', 'relation', 'book'], description: 'Filter to one kind (default: all)' }, limit: { type: 'integer', description: 'Max items (default 30, cap 100)' } } },
     annotations: { readOnlyHint: true, title: 'Review queue' },
   },
   {
     name: 'weir_ratify', fn: 'ratify',
-    description: 'Ratify or dismiss an agent STRUCTURAL proposal from the review queue (decides-vs-proposes §2.1) — a feed the agent added, or a relation edge it proposed. `action:"ratify"` blesses it (it stays, marked ratified, and leaves the queue); `action:"dismiss"` undoes it (removes the proposed feed + its just-polled items, or unrelates the edge). For kind "feed" pass `feedId`; for kind "relation" pass `from` + `to` (+ optional `type`). Catalog cards are confirmed via weir_reviewItem instead, not here. Returns the action taken.',
+    description: 'Ratify or dismiss an agent STRUCTURAL proposal from the review queue (decides-vs-proposes §2.1) — a feed the agent added, a relation edge it proposed, or a book holding it suggested. `action:"ratify"` blesses it (it stays, marked ratified, and leaves the queue); `action:"dismiss"` undoes it (feed → remove it + its just-polled items; relation → unrelate; book → archive it, non-destructive). For kind "feed" pass `feedId`; "book" pass `bookId`; "relation" pass `from` + `to` (+ optional `type`). Catalog cards are confirmed via weir_reviewItem instead, not here. Returns the action taken.',
     inputSchema: {
       type: 'object', properties: {
-        kind: { type: 'string', enum: ['feed', 'relation'], description: 'What kind of proposal' },
+        kind: { type: 'string', enum: ['feed', 'relation', 'book'], description: 'What kind of proposal' },
         action: { type: 'string', enum: ['ratify', 'dismiss'], description: 'ratify = keep + bless; dismiss = undo (default ratify)' },
         feedId: { type: 'string', description: 'kind "feed": the proposed feed id (from weir_reviewQueue)' },
+        bookId: { type: 'string', description: 'kind "book": the proposed book holding id' },
         from: { type: 'string', description: 'kind "relation": the source item id or glass_id' },
         to: { type: 'string', description: 'kind "relation": the target item id or glass_id' },
         type: { type: 'string', description: 'kind "relation": optionally scope to one edge type' },
@@ -1367,12 +1385,13 @@ const TOOLS = [
   },
   {
     name: 'weir_relate', fn: 'relate',
-    description: 'Ratify (or remove) a typed `related` edge between two items — decides-vs-proposes (GLASS §2.1): a facet-overlap suggestion becomes a real edge ONLY when declared here. `from`/`to` are item ids (or glass_ids); both must be cataloged. `type` ∈ related | same-topic | extends | contradicts | responds-to | same-work (default "related"). Pass remove:true to delete the edge (optionally just one type). Stored on the from-item, source "claude"; reversible (weir never deletes the items).',
+    description: 'Propose a typed `related` edge between two items — decides-vs-proposes (GLASS §2.1): a facet-overlap suggestion becomes a real edge ONLY when declared here. `from`/`to` are item ids (or glass_ids); both must be cataloged. `type` ∈ related | same-topic | extends | contradicts | responds-to | same-work (default "related"). Pass `rationale` (why these relate) — it shows in weir_reviewQueue as a `relation` proposal until the user ratifies. Pass remove:true to delete the edge (optionally just one type). Stored on the from-item, stamped source:agent + your identity; reversible (weir never deletes the items).',
     inputSchema: {
       type: 'object', properties: {
         from: { type: 'string', description: 'Source item id / glass_id' },
         to: { type: 'string', description: 'Target item id / glass_id' },
         type: { type: 'string', description: 'related | same-topic | extends | contradicts | responds-to | same-work' },
+        rationale: { type: 'string', description: 'Why these relate — shown in the review queue at ratify time' },
         remove: { type: 'boolean', description: 'Remove the edge instead of creating it' },
       }, required: ['from', 'to'],
     },

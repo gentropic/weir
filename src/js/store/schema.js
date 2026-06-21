@@ -262,6 +262,13 @@ export function makeItem(raw, feed) {
     structured: raw.structured || undefined,
     has_content: !!(raw.content && String(raw.content).length),
     glass_id: raw.glass_id || undefined,   // catalog card id once cataloged (GLASS.md §3.1)
+    // agent provenance for an item the agent proposed (a book holding, SPEC-librarian §2):
+    // who added it + why, and the ratification stamp once a human blesses it.
+    added_by: raw.added_by || undefined,
+    added_src: raw.added_src || undefined,
+    added_rationale: raw.added_rationale || undefined,
+    ratified_at: raw.ratified_at || undefined,
+    ratified_by: raw.ratified_by || undefined,
   };
   // Stacks entries (STACKS.md §9): identity is a stable `uid`, the `path` is just the
   // entry's current address, and the body lives at the real tree path (content_path)
@@ -304,6 +311,9 @@ export function makeFeed(raw) {
     affinity: raw.affinity || 0,           // watch-affinity score (set from Takeout digest)
     source: raw.source || undefined,       // authorship of the feed-add: 'agent' when Claude proposed it (else undefined = human/UI). SPEC-librarian §2
     added_by: raw.added_by || undefined,   // the agent identity that added it (folder=identity), e.g. 'claude:opus-4.8'
+    rationale: raw.rationale || undefined, // why the agent proposed it — shown in the review queue at ratify time
+    ratified_at: raw.ratified_at || undefined, // set when a human blesses the proposal (leaves the queue); ratified_by alongside
+    ratified_by: raw.ratified_by || undefined,
     feed_health: raw.feed_health || {
       last_successful_poll: undefined,
       consecutive_failures: 0,

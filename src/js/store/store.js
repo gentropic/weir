@@ -1231,7 +1231,7 @@ export class Store {
     from.glass = from.glass || {};
     const related = from.glass.related || (from.glass.related = []);
     let edge = related.find((e) => e.target === String(toGlassId) && e.type === type);
-    if (!edge) { edge = { target: String(toGlassId), type, source: opts.source || 'human', by: opts.by || undefined, at: now() }; related.push(edge); }
+    if (!edge) { edge = { target: String(toGlassId), type, source: opts.source || 'human', by: opts.by || undefined, rationale: opts.rationale || undefined, at: now() }; related.push(edge); }
     this._markCardDirty(String(fromGlassId));
     this.emit('catalog', { id: String(fromGlassId), related: true });
     return edge;
@@ -1291,14 +1291,28 @@ export class Store {
   // half — low-confidence cards — lives in the app's _cardReview cache).
   pendingProposals() {
     const feeds = [];
-    for (const f of this.feeds.values()) if (f.source === 'agent' && !f.ratified_at) feeds.push({ id: f.id, name: f.name, category: f.category, by: f.added_by, url: f.url });
+    for (const f of this.feeds.values()) if (f.source === 'agent' && !f.ratified_at) feeds.push({ id: f.id, name: f.name, category: f.category, by: f.added_by, rationale: f.rationale, url: f.url });
     const relations = [];
     for (const [gid, c] of this.cards) for (const e of ((c.glass || {}).related) || []) {
       if (e.source !== 'agent' || e.ratified_at) continue;
       const to = this.cards.get(e.target);
-      relations.push({ from: gid, to: e.target, type: e.type, by: e.by, fromTitle: (c.dublin_core && c.dublin_core.title) || gid, toTitle: (to && to.dublin_core && to.dublin_core.title) || e.target });
+      relations.push({ from: gid, to: e.target, type: e.type, by: e.by, rationale: e.rationale, fromTitle: (c.dublin_core && c.dublin_core.title) || gid, toTitle: (to && to.dublin_core && to.dublin_core.title) || e.target });
     }
-    return { feeds, relations };
+    const books = [];
+    for (const it of this.items.values()) if (it.type === 'book' && it.added_by && !it.ratified_at && !it.archived) books.push({ id: it.id, title: it.title, by: it.added_by, rationale: it.added_rationale, tags: it.tags });
+    return { feeds, relations, books };
+  }
+
+  // Bless / dismiss an agent-proposed book holding (parallels ratifyFeed). Ratify stamps
+  // ratified_at so it leaves the queue; dismiss archives it (never-delete — a rejected
+  // to-buy suggestion is reversible, not destroyed). Returns the item | null.
+  ratifyBook(id, { dismiss } = {}) {
+    const it = this.items.get(String(id)); if (!it || it.type !== 'book') return null;
+    if (dismiss) { it.archived = true; it.expires_at = undefined; }
+    else { it.ratified_at = now(); it.ratified_by = 'human'; }
+    this._markFeedDirty(it.feed_id);
+    this.emit('item', { id: it.id });
+    return it;
   }
 
   // Bless an agent-proposed feed: it stays, marked ratified, so it leaves the queue

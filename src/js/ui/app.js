@@ -2798,7 +2798,7 @@ export class App {
         tags, tag_src: tags.reduce((o, t) => { o[t] = 'human'; return o; }, {}), structured,
         // Provenance only on a NEW holding the agent adds — never relabel a human's book
         // the agent merely edits (SPEC-librarian §2). `added_by` = the agent identity.
-        ...(prov && !prior ? { added_by: prov.by, added_src: prov.source } : {}),
+        ...(prov && !prior ? { added_by: prov.by, added_src: prov.source, ...(b.rationale ? { added_rationale: String(b.rationale) } : {}) } : {}),
       };
     });
     const res = await this.store.upsertItems(raws);
