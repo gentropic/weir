@@ -675,10 +675,23 @@ normalizes legacy stamps (`'llm'`/`'claude'` → `'agent'`).
 **17.3 The unified review queue (decides-vs-proposes, §2.1).** The agent *proposes*;
 the human *ratifies*. `weir_reviewQueue` is one tray for everything awaiting attention,
 tagged by `kind`: `catalog` (cataloger low-confidence cards), `feed` (an agent-added
-feed), `relation` (an agent-proposed edge); each item carries the proposer identity +
-a `ratifyWith` pointer. Catalog cards confirm via `weir_reviewItem`; structural
-proposals via `weir_ratify` (ratify → marked `ratified_at`, leaves the queue; dismiss →
-undo). Nothing the agent adds becomes catalog truth until it's ratified here.
+feed), `relation` (an agent-proposed edge), `book` (an agent-suggested holding, e.g.
+to-buy); each item carries the proposer identity, a `rationale`, and a `ratifyWith`
+pointer. Catalog cards confirm via `weir_reviewItem`; structural proposals via
+`weir_ratify` (ratify → marked `ratified_at`, leaves the queue; dismiss → undo).
+Surfaced in-app as the **`review`** sidebar entry + status chip (live count). Nothing
+the agent adds becomes catalog truth until it's ratified here.
+
+**17.4 Authored cards & the abstain guardrail.** The cataloger is for items with real
+body text; on a **metadata-only** holding (a book with no body/abstract) it would
+*fabricate* from the title. So: the cataloger **abstains** below a small body threshold —
+persists the Stage-0 card flagged `needs_review` (`cataloger:'skipped:thin-metadata'`),
+never inventing — and the agent (or human) **authors the card by hand** via
+`weir_reviewItem` (a `description` + facets; it *creates* the card if none exists),
+stamped `reviewer:'agent'`+identity (vs. `cataloger:provider:model`, vs. `human`). An
+authored card is trusted on its stamp, not re-queued. Workflow/namespaced tags
+(`gcu`/`owned`/`brief:*`…) never leak into the `entity` facet. Full record:
+[docs/design/librarian-authored-cards.md](docs/design/librarian-authored-cards.md).
 
 ---
 
