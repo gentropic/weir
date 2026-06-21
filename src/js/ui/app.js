@@ -278,7 +278,8 @@ export class App {
     document.getElementById('review-body')?.addEventListener('click', (e) => {
       const prow = e.target.closest('.pv-row');   // an agent proposal (feed/relation/book)
       if (prow) {
-        const pbtn = e.target.closest('[data-propact]'); if (!pbtn) return;
+        const pbtn = e.target.closest('[data-propact]');
+        if (!pbtn) { const i = this._reviewAllRows().indexOf(prow); if (i >= 0) this._reviewSelect(i); return; }   // click body → select
         if (pbtn.dataset.propact === 'open') { if (pbtn.dataset.purl) window.open(pbtn.dataset.purl, '_blank', 'noopener'); return; }
         this.ratifyProposal(prow.dataset, pbtn.dataset.propact);
         return;
@@ -286,7 +287,7 @@ export class App {
       const btn = e.target.closest('[data-rvact]');
       const row = e.target.closest('.rv-row'); if (!row) return;
       const id = row.dataset.id; if (!id) return;
-      if (!btn) { const i = this._reviewRows().indexOf(row); if (i >= 0) this._reviewSelect(i); return; }   // click a row → select it
+      if (!btn) { const i = this._reviewAllRows().indexOf(row); if (i >= 0) this._reviewSelect(i); return; }   // click a row → select it
       const act = btn.dataset.rvact;
       if (act === 'ok') this.markReviewed(id);
       else if (act === 'recat') this.catalogItem(id).then(() => this.markReviewed(id));
@@ -2100,7 +2101,7 @@ export class App {
     const catGroup = cat ? `<div class="rv-group"><div class="rv-group-h">catalog — low-confidence cards · ${ids.length}</div>${cat}</div>` : '';
     body.innerHTML = (this._proposalSectionsHtml() + catGroup)
       || '<div class="hint">Nothing to review — no agent proposals, and the cataloger was confident on everything loaded.</div>';
-    const rows = this._reviewRows(); if (rows.length) this._reviewSelect(Math.min(this._reviewSel || 0, rows.length - 1));
+    const rows = this._reviewAllRows(); if (rows.length) this._reviewSelect(Math.min(this._reviewSel || 0, rows.length - 1));
   }
   // Ratify or dismiss an agent proposal from the overlay (decides-vs-proposes §2.1).
   async ratifyProposal(ds, action) {
@@ -2121,6 +2122,10 @@ export class App {
   static get RV_EDIT() { return ['domain', 'entity', 'process', 'method', 'scale', 'spatial', 'stance']; }
 
   _reviewRows() { return [...document.querySelectorAll('#review-body .rv-row')]; }
+  // All selectable rows in DOM order — catalog cards (.rv-row) AND agent proposals
+  // (.pv-row) — so keyboard nav + selection cover both. (Catalog-only actions still
+  // use _reviewRows to find a card by data-id.)
+  _reviewAllRows() { return [...document.querySelectorAll('#review-body .rv-row, #review-body .pv-row')]; }
 
   _reviewRowHtml(id) {
     const it = this.store.getItem(id); if (!it) return '';
@@ -2144,7 +2149,7 @@ export class App {
       this._fillReview();
       document.getElementById('review-overlay').hidden = false;
       this._reviewSel = 0;
-      if (this._reviewRows().length) this._reviewSelect(0);
+      if (this._reviewAllRows().length) this._reviewSelect(0);
       if (!this._reviewKeyFn) { this._reviewKeyFn = (e) => this._reviewKey(e); document.addEventListener('keydown', this._reviewKeyFn, true); }
     });
   }
@@ -2155,7 +2160,7 @@ export class App {
   }
 
   _reviewSelect(i) {
-    const rows = this._reviewRows(); if (!rows.length) return;
+    const rows = this._reviewAllRows(); if (!rows.length) return;
     const n = Math.max(0, Math.min(i, rows.length - 1));
     this._reviewSel = n;
     rows.forEach((r, j) => r.classList.toggle('sel', j === n));
@@ -2166,11 +2171,8 @@ export class App {
   // close + report when the queue empties.
   _reviewReselect() {
     const ov = document.getElementById('review-overlay'); if (!ov || ov.hidden) return;
-    const rows = this._reviewRows();
-    if (!rows.length) {
-      if (document.querySelector('#review-body .pv-row')) { this.renderReviewStatus(); return; }   // proposals remain — keep the overlay open
-      this._reviewClose(); this._catStatus('review queue clear ✓'); return;
-    }
+    const rows = this._reviewAllRows();
+    if (!rows.length) { this._reviewClose(); this._catStatus('review queue clear ✓'); return; }
     this._reviewSelect(Math.min(this._reviewSel || 0, rows.length - 1));
   }
 
@@ -2183,17 +2185,24 @@ export class App {
       return;   // let other keys type into the facet inputs
     }
     e.stopPropagation();   // modal: don't leak keys to the main stream handler
-    const rows = this._reviewRows(); if (!rows.length) return;
-    const cur = this._reviewSel || 0;
-    const sel = rows[Math.max(0, Math.min(cur, rows.length - 1))];
-    const idOf = () => sel && sel.dataset.id;
-    if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); this._reviewSelect(cur + 1); }
-    else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); this._reviewSelect(cur - 1); }
-    else if (e.key === 'a' || e.key === 'Enter') { e.preventDefault(); const id = idOf(); if (id) this.markReviewed(id); }
-    else if (e.key === 'e') { e.preventDefault(); const id = idOf(); if (id) this.reviewEdit(id); }
-    else if (e.key === 'r') { e.preventDefault(); const id = idOf(); if (id) this.catalogItem(id).then(() => this.markReviewed(id)); }
-    else if (e.key === 'x') { e.preventDefault(); const id = idOf(); if (id) this.discardCard(id); }
-    else if (e.key === 'o') { e.preventDefault(); const it = idOf() && this.store.getItem(idOf()); if (it && it.url) window.open(it.url, '_blank', 'noopener'); }
+    const rows = this._reviewAllRows(); if (!rows.length) return;
+    const cur = Math.max(0, Math.min(this._reviewSel || 0, rows.length - 1));
+    const sel = rows[cur];
+    if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); this._reviewSelect(cur + 1); return; }
+    if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); this._reviewSelect(cur - 1); return; }
+    if (!sel) return;
+    if (sel.classList.contains('pv-row')) {   // an agent proposal: a/Enter ratify · x dismiss · o open
+      if (e.key === 'a' || e.key === 'Enter') { e.preventDefault(); this.ratifyProposal(sel.dataset, 'ratify'); }
+      else if (e.key === 'x') { e.preventDefault(); this.ratifyProposal(sel.dataset, 'dismiss'); }
+      else if (e.key === 'o') { e.preventDefault(); const u = sel.querySelector('[data-purl]'); if (u) window.open(u.dataset.purl, '_blank', 'noopener'); }
+      return;
+    }
+    const id = sel.dataset.id;   // a catalog card
+    if (e.key === 'a' || e.key === 'Enter') { e.preventDefault(); if (id) this.markReviewed(id); }
+    else if (e.key === 'e') { e.preventDefault(); if (id) this.reviewEdit(id); }
+    else if (e.key === 'r') { e.preventDefault(); if (id) this.catalogItem(id).then(() => this.markReviewed(id)); }
+    else if (e.key === 'x') { e.preventDefault(); if (id) this.discardCard(id); }
+    else if (e.key === 'o') { e.preventDefault(); const it = id && this.store.getItem(id); if (it && it.url) window.open(it.url, '_blank', 'noopener'); }
   }
 
   // Swap the selected row's facet chips for an inline editor (one input per
