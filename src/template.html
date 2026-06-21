@@ -93,7 +93,7 @@
         <span id="resolver-status" title="Saved-link resolver — hover for the breakdown, click to open Saved Links"></span>
         <span id="telegram-status" class="clickable" title="Telegram capture bot"></span>
         <span id="health-status" title="Feeds that may be hijacked, dead, or stale — click to review"></span>
-        <span id="review-status" title="Catalog cards the librarian flagged low-confidence — click to confirm/correct"></span>
+        <span id="review-status" title="Awaiting your review — catalog cards + the agent's proposals (feeds, relations, books) — click to ratify/correct"></span>
         <span id="courier-status" title="Proposals from your Courier collaborator — click to review (you decide)"></span>
         <span id="catalog-status"></span>
         <span id="notify-status"></span>
@@ -328,13 +328,13 @@
   </div>
 </div>
 
-<!-- Review queue — catalog cards the librarian flagged low-confidence -->
+<!-- Unified review queue — the agent's proposals (feeds/relations/books) + catalog cards -->
 <div class="overlay" id="review-overlay" hidden>
   <div class="panel">
     <div class="panel-head"><span>review queue</span></div>
     <div class="review-body" id="review-body"></div>
     <div class="panel-foot">
-      <span class="hint">j/k move · a approve · e edit facets · r re-catalog · x discard · o open · Esc close</span>
+      <span class="hint">proposals: click ✓ ratify / ✕ dismiss · catalog cards: j/k move · a approve · e edit · r re-catalog · x discard · Esc close</span>
       <button class="btn" id="review-close">Close</button>
     </div>
   </div>

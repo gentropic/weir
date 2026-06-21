@@ -275,6 +275,13 @@ export class App {
     document.getElementById('sync-status')?.addEventListener('click', () => this.openSettings());
     document.getElementById('review-close')?.addEventListener('click', () => this._reviewClose());
     document.getElementById('review-body')?.addEventListener('click', (e) => {
+      const prow = e.target.closest('.pv-row');   // an agent proposal (feed/relation/book)
+      if (prow) {
+        const pbtn = e.target.closest('[data-propact]'); if (!pbtn) return;
+        if (pbtn.dataset.propact === 'open') { if (pbtn.dataset.purl) window.open(pbtn.dataset.purl, '_blank', 'noopener'); return; }
+        this.ratifyProposal(prow.dataset, pbtn.dataset.propact);
+        return;
+      }
       const btn = e.target.closest('[data-rvact]');
       const row = e.target.closest('.rv-row'); if (!row) return;
       const id = row.dataset.id; if (!id) return;
@@ -2054,9 +2061,58 @@ export class App {
   }
   renderReviewStatus() {
     const el = document.getElementById('review-status'); if (!el) return;
-    const n = this._reviewIds().length;
+    const p = this._pendingProposals();
+    const n = this._reviewIds().length + p.feeds.length + p.relations.length + p.books.length;
     el.textContent = n ? `⚑ ${n} to review` : '';
     el.classList.toggle('clickable', n > 0);
+  }
+
+  // ── agent proposals (the unified review queue's non-catalog half, SPEC-librarian §3):
+  // feeds/relations/books the librarian added, awaiting ratify/dismiss. Mirrors the
+  // weir_reviewQueue MCP tool, surfaced in the same overlay as the catalog cards.
+  _pendingProposals() {
+    try { return this.store.pendingProposals(); } catch { return { feeds: [], relations: [], books: [] }; }
+  }
+  _propGroup(label, rows) { return rows.length ? `<div class="rv-group"><div class="rv-group-h">${escapeHtml(label)} · ${rows.length}</div>${rows.join('')}</div>` : ''; }
+  _propRowHtml(kind, o) {
+    const keys = Object.entries(o.key).map(([k, v]) => `data-${k}="${escapeHtml(String(v == null ? '' : v))}"`).join(' ');
+    const by = o.by ? `<span class="rv-feed">${escapeHtml(o.by)}</span>` : '';
+    const meta = o.meta ? `<div class="rv-facets"><span class="dim">${escapeHtml(o.meta)}</span></div>` : '';
+    const rat = o.rationale ? `<div class="rv-rationale">${escapeHtml(o.rationale)}</div>` : '';
+    const open = o.url ? `<button data-propact="open" data-purl="${escapeHtml(o.url)}">Open ↗</button>` : '';
+    return `<div class="pv-row" data-pkind="${kind}" ${keys}><div class="rv-head"><span class="pill">${kind}</span>`
+      + `<span class="rv-name">${escapeHtml(o.title)}</span>${by}</div>${meta}${rat}`
+      + `<div class="rv-actions"><button data-propact="ratify">✓ Ratify</button><button data-propact="dismiss">✕ Dismiss</button>${open}</div></div>`;
+  }
+  _proposalSectionsHtml() {
+    const p = this._pendingProposals();
+    return this._propGroup('feeds the librarian added', p.feeds.map((f) => this._propRowHtml('feed', { key: { pid: f.id }, title: f.name || f.id, by: f.by, rationale: f.rationale, url: f.url, meta: f.category })))
+      + this._propGroup('relations proposed', p.relations.map((e) => this._propRowHtml('relation', { key: { pfrom: e.from, pto: e.to, ptype: e.type }, title: `${e.fromTitle} —${e.type}→ ${e.toTitle}`, by: e.by, rationale: e.rationale })))
+      + this._propGroup('books proposed', p.books.map((b) => this._propRowHtml('book', { key: { pid: b.id }, title: b.title || b.id, by: b.by, rationale: b.rationale, meta: (b.tags || []).join(', ') })));
+  }
+  // Fill (or refresh) the overlay body: proposal sections + catalog low-confidence cards.
+  _fillReview() {
+    const body = document.getElementById('review-body'); if (!body) return;
+    const ids = this._reviewIds().slice(0, 150);
+    const cat = ids.map((id) => this._reviewRowHtml(id)).filter(Boolean).join('');
+    const catGroup = cat ? `<div class="rv-group"><div class="rv-group-h">catalog — low-confidence cards · ${ids.length}</div>${cat}</div>` : '';
+    body.innerHTML = (this._proposalSectionsHtml() + catGroup)
+      || '<div class="hint">Nothing to review — no agent proposals, and the cataloger was confident on everything loaded.</div>';
+    const rows = this._reviewRows(); if (rows.length) this._reviewSelect(Math.min(this._reviewSel || 0, rows.length - 1));
+  }
+  // Ratify or dismiss an agent proposal from the overlay (decides-vs-proposes §2.1).
+  async ratifyProposal(ds, action) {
+    const kind = ds.pkind;
+    try {
+      if (kind === 'feed') { if (action === 'ratify') await this.store.ratifyFeed(ds.pid); else await this.store.removeFeed(ds.pid); }
+      else if (kind === 'book') this.store.ratifyBook(ds.pid, { dismiss: action === 'dismiss' });
+      else if (kind === 'relation') { if (action === 'ratify') this.store.ratifyEdge(ds.pfrom, ds.pto, ds.ptype || undefined); else this.store.unrelateCards(ds.pfrom, ds.pto, ds.ptype ? { type: ds.ptype } : {}); }
+      else return;
+      await this.store.flush();
+    } catch (e) { this._catStatus(`${action} failed: ${e.message}`); return; }
+    if (kind === 'feed') this.renderRail();   // sources list changed
+    this.renderReviewStatus();
+    this._fillReview();
   }
   // Editable (LLM-language) facet axes — the ones worth correcting by hand;
   // temporal/form/provenance are deterministic so they're shown, not edited.
@@ -2083,9 +2139,7 @@ export class App {
   openReview() {
     const ensure = (this._cardReview && this._cardReview.size) ? Promise.resolve() : this.loadCardFacets();
     ensure.then(() => {
-      const ids = this._reviewIds().slice(0, 150);
-      document.getElementById('review-body').innerHTML = ids.map((id) => this._reviewRowHtml(id)).filter(Boolean).join('')
-        || '<div class="hint">Nothing flagged for review — the cataloger was confident on everything loaded.</div>';
+      this._fillReview();
       document.getElementById('review-overlay').hidden = false;
       this._reviewSel = 0;
       if (this._reviewRows().length) this._reviewSelect(0);
@@ -2111,7 +2165,10 @@ export class App {
   _reviewReselect() {
     const ov = document.getElementById('review-overlay'); if (!ov || ov.hidden) return;
     const rows = this._reviewRows();
-    if (!rows.length) { this._reviewClose(); this._catStatus('review queue clear ✓'); return; }
+    if (!rows.length) {
+      if (document.querySelector('#review-body .pv-row')) { this.renderReviewStatus(); return; }   // proposals remain — keep the overlay open
+      this._reviewClose(); this._catStatus('review queue clear ✓'); return;
+    }
     this._reviewSelect(Math.min(this._reviewSel || 0, rows.length - 1));
   }
 
