@@ -674,7 +674,10 @@ agent write stamps `source:'agent'` + an **identity** (`by`): tags → `tag_by`,
 `by`, feeds → `source`/`added_by`, book holdings → `added_by` (new holdings only). The
 identity is **per-connection — folder = identity**, delivered by the numen multichannel
 shim as `client.identity` (../numen/docs/multichannel.md). `weir_provenanceMigrate`
-normalizes legacy stamps (`'llm'`/`'claude'` → `'agent'`).
+normalizes legacy stamps (`'llm'`/`'claude'` → `'agent'`). It's **inspectable through the
+read tools**, not just the UI: `weir_getItem` returns the card's authorship (`card.cataloger`
+/`reviewer`/`by`) + item `added_by`/`tag_by`; `weir_queryItems({ addedBy, taggedBy })` filters
+to the agent footprint ("everything `claude:librarian` added/tagged").
 
 **17.3 The unified review queue (decides-vs-proposes, §2.1).** The agent *proposes*;
 the human *ratifies*. `weir_reviewQueue` is one tray for everything awaiting attention,

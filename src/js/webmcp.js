@@ -35,10 +35,13 @@ function projItem(store, it, full) {
     published: it.published_at ? new Date(it.published_at).toISOString() : undefined,
     read: !!it.read, saved: !!it.saved,
     tags: (it.tags && it.tags.length) ? it.tags : undefined,
+    added_by: it.added_by || undefined,   // provenance: the agent identity that ADDED this item (e.g. a book holding)
   };
   if (full) {
     o.archived = !!it.archived; o.route = it.route || undefined; o.glass_id = it.glass_id || undefined;
     o.excerpt = it.excerpt || undefined;
+    if (it.tag_src && Object.keys(it.tag_src).length) o.tag_src = it.tag_src;   // tag → who applied it (human|agent|cataloger)
+    if (it.tag_by && Object.keys(it.tag_by).length) o.tag_by = it.tag_by;       // tag → the agent identity that applied it
   } else if (it.excerpt) {
     o.excerpt = it.excerpt.length > 280 ? it.excerpt.slice(0, 280) + '…' : it.excerpt;
   }
@@ -104,7 +107,13 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     // even when timestamps collide). Re-sort explicitly — don't rely on Map order.
     const pa = (r) => r.published_at || 0;
     const cmp = (a, b) => (pa(b) - pa(a)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-    const rows = store.query(opts).sort(cmp);
+    let rows = store.query(opts);
+    // Provenance filters (the agent footprint): items the agent ADDED (added_by) or
+    // TAGGED (some tag's tag_by). Pass `true` for any-agent, or an identity string to
+    // scope to one (e.g. "claude:librarian"). Post-filtered — store.query has no such index.
+    if (input.addedBy != null) { const v = input.addedBy === true ? null : String(input.addedBy); rows = rows.filter((r) => r.added_by && (v == null || r.added_by === v)); }
+    if (input.taggedBy != null) { const v = input.taggedBy === true ? null : String(input.taggedBy); rows = rows.filter((r) => r.tag_by && Object.values(r.tag_by).some((b) => v == null || b === v)); }
+    rows = rows.sort(cmp);
     let start = 0;
     if (cursor) {
       const c = decCursor(cursor);
@@ -143,7 +152,13 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (it.glass_id) {
       try {
         const c = await store.getCard(it.glass_id);
-        if (c) { o.facets = c.facets; if (c.dublin_core && c.dublin_core.description) o.description = c.dublin_core.description; }
+        if (c) {
+          o.facets = c.facets; if (c.dublin_core && c.dublin_core.description) o.description = c.dublin_core.description;
+          // card authorship (three-tier provenance): who cataloged (cataloger=provider:model),
+          // who reviewed/authored (reviewer human|agent + by), and whether it's flagged.
+          const g = c.glass || {};
+          o.card = { cataloger: g.cataloger, reviewer: g.reviewer || undefined, by: g.by || undefined, confidence: g.confidence, needs_review: !!g.needs_review };
+        }
       } catch { /* card unreadable */ }
     }
     if (input.content && it.has_content) {
@@ -1079,7 +1094,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
 const TOOLS = [
   {
     name: 'weir_queryItems', fn: 'queryItems',
-    description: 'Search/list weir feed items, newest first. Filters: q (substring over title/excerpt/text), feed (a source by id OR name, e.g. "Saved Links"), category (folder name; "" = ungrouped), type (article|video|release|paper|status|track|podcast|commit|issue|note), view (inbox|saved|archived), unread (bool), saved (bool), limit (default 30, max 100). Filters combine. Use feed/category to LIST a whole source (more reliable than q, which is substring-only). Paginated: returns { count, total, hasMore, items, nextCursor }; page by passing nextCursor back with the SAME filters. Items are compact (id, title, url, feed, published, tags, excerpt). Use weir_listSources first to see feed/folder names.',
+    description: 'Search/list weir feed items, newest first. Filters: q (substring over title/excerpt/text), feed (a source by id OR name, e.g. "Saved Links"), category (folder name; "" = ungrouped), type (article|video|release|paper|status|track|podcast|commit|issue|note), view (inbox|saved|archived), unread (bool), saved (bool), limit (default 30, max 100). PROVENANCE filters (the agent footprint): addedBy = items the agent ADDED (true = any agent, or an identity string like "claude:librarian"); taggedBy = items the agent TAGGED. Filters combine. Paginated: returns { count, total, hasMore, items, nextCursor }; page by passing nextCursor back with the SAME filters. Items are compact (id, title, url, feed, published, tags, added_by, excerpt). Use weir_listSources first to see feed/folder names.',
     inputSchema: {
       type: 'object', properties: {
         q: { type: 'string', description: 'Substring search over title/excerpt/text' },
@@ -1089,6 +1104,8 @@ const TOOLS = [
         view: { type: 'string', enum: ['inbox', 'saved', 'archived'], description: 'Which view to scope to' },
         unread: { type: 'boolean', description: 'Only unread items' },
         saved: { type: 'boolean', description: 'Only saved (true) / only unsaved (false)' },
+        addedBy: { description: 'Items the agent ADDED — true (any agent) or an identity string (e.g. "claude:librarian")' },
+        taggedBy: { description: 'Items the agent TAGGED — true (any agent) or an identity string' },
         limit: { type: 'integer', description: 'Max items per page (default 30, cap 100)' },
         cursor: { type: 'string', description: 'Opaque pagination cursor from a previous call’s nextCursor — reuse the same filters' },
       },
@@ -1187,7 +1204,7 @@ const TOOLS = [
   },
   {
     name: 'weir_getItem', fn: 'getItem',
-    description: "Get one weir item by id: glass facets + description (if cataloged), plus its knowledge-graph edges — `links` (what its body links to via [[ref]], resolved to {ref,id,title}) and `backlinks` (items whose body links to it). Pass content:true to include the extracted article/note text (capped 8k).",
+    description: "Get one weir item by id: glass facets + description (if cataloged), the card's `card` authorship block (cataloger=provider:model, reviewer human|agent, by=identity, needs_review), item provenance (`added_by`, plus `tag_src`/`tag_by` = who applied each tag), and its knowledge-graph edges — `links` (what its body links to via [[ref]], resolved to {ref,id,title}) and `backlinks` (items whose body links to it). Pass content:true to include the extracted article/note text (capped 8k).",
     inputSchema: {
       type: 'object', properties: {
         id: { type: 'string', description: 'Item id (from weir_queryItems)' },

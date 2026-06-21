@@ -429,4 +429,20 @@ assert.equal((await tools.relatedTo({ id: 'v1' })).backlinks[0].id, 'a1', 'v1 is
 assert.equal((await tools.relate({ from: 'a1', to: 'v1', remove: true })).removed, 1, 'edge removed');
 await assert.rejects(() => tools.relatedTo({ id: 'no-such-item' }), /no catalog card/, 'uncataloged item errors clearly');
 
+// ── provenance surfaced in the read tools (the agent footprint is now inspectable) ──
+store.getItem('a1').added_by = 'claude:test';   // simulate an agent-added item
+const gi = await tools.getItem({ id: 'a1' });
+assert.equal(gi.added_by, 'claude:test', 'getItem surfaces item added_by');
+assert.ok(gi.tag_by && Object.values(gi.tag_by).includes('claude:test'), 'getItem surfaces tag_by (who tagged)');
+// card authorship — on a freshly-authored item (v1's card was mangled by the KG tests above)
+await store.upsertItems([{ id: 'prov1', feed_id: 'f', type: 'note', title: 'Prov note', url: 'http://b/p', published_at: 1 }]);
+await tools.reviewItem({ id: 'prov1', description: 'authored by hand' }, { identity: 'claude:test' });
+const gp = await tools.getItem({ id: 'prov1' });
+assert.equal(gp.card.reviewer, 'agent', 'getItem surfaces card reviewer (agent)');
+assert.equal(gp.card.by, 'claude:test', 'getItem surfaces card author identity');
+// queryItems provenance filters: addedBy + taggedBy (any-agent + by identity)
+assert.ok((await tools.queryItems({ addedBy: true })).items.some((i) => i.id === 'a1'), 'addedBy:true finds agent-added items');
+assert.equal((await tools.queryItems({ addedBy: 'nobody' })).count, 0, 'addedBy scoped to an identity excludes others');
+assert.ok((await tools.queryItems({ taggedBy: 'claude:test' })).items.some((i) => i.id === 'a1'), 'taggedBy:identity finds items the agent tagged');
+
 console.log('webmcp tools smoke ok:', JSON.stringify({ items: all.count, facets: Object.keys(f).length, mutations: calls.length }));
