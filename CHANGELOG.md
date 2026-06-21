@@ -6,6 +6,48 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Glass: the webmcp agent surface — reference desk, provenance & a unified review queue — 2026-06-21
+
+- **Reference desk (read).** Two new read-only retrieval tools complete the
+  grounded-reference surface (GLASS §17.1): **`weir_queryCatalog`** — a faceted
+  *intersection* query (union within a facet, intersect across facets) with
+  controlled-vocabulary resolution and fail-loud `vocabularyNotes`; finds what
+  excerpt search can't (e.g. `entity:"itabirite"` when the word isn't in a title).
+  **`weir_quote`** — citation verification: confirm a quote is in a source, return a
+  stable `glass_id#start–end` locator + context, or report no-match so the agent
+  refuses to assert it. (The other reference verbs — `weir_search`, `weir_vocab`,
+  `weir_relatedTo` — already shipped.)
+- **Provenance taxonomy** (GLASS §17.2). Authorship unified to a three-tier `source`:
+  `human` (the UI), `cataloger` (weir's internal LLM-as-service, on the card as
+  `glass.cataloger = provider:model`), and `agent` (an external agent over MCP). Every
+  agent write now stamps `source:'agent'` + an **identity** (`by`): tags → `tag_by`,
+  edges → `by`, feeds → `source`/`added_by`, book holdings → `added_by` (new holdings
+  only). Fixes the old split where the agent was labelled `'llm'` (tags) and `'claude'`
+  (edges/notes) inconsistently while feed/book adds carried no marker at all.
+  **`weir_provenanceMigrate`** rewrites legacy stamps → `agent` (idempotent).
+- **Unified review queue** (GLASS §17.3, decides-vs-proposes §2.1). `weir_reviewQueue`
+  is now ONE tray tagged by `kind` — `catalog` (cataloger low-confidence cards), `feed`
+  (an agent-added feed), `relation` (an agent-proposed edge) — each carrying the
+  proposer identity + a `ratifyWith` pointer. New **`weir_ratify`** blesses (→ marked
+  `ratified_at`, leaves the queue) or dismisses (undo) a structural proposal; catalog
+  cards keep confirming via `weir_reviewItem`.
+- **`weir-desk`** — a sibling repo: a librarian + reference-desk agent (Claude Code)
+  that drives the running weir over MCP and never touches its source. Full design
+  records: `docs/design/reference-desk.md`, `docs/design/librarian.md`.
+
+### webmcp/numen: fs multichannel — two agents on one weir at once — 2026-06-21
+
+- The `fs` transport now serves **more than one bridge per page** (numen 0.1.3): one
+  `FsChannel` per folder, all sharing the page's tool registry, so the **dev** agent
+  (this repo) and the **librarian** (`weir-desk`) connect to one running weir at the
+  same time. The bridge and wire protocol are unchanged — the change is purely
+  page-side (`shim.js`: `addFolder` / `removeFolder` / `channels`). It makes
+  **folder = identity** literal: the calling channel's identity rides into
+  `tool.execute(input, client)` as `client.identity` — the carrier the provenance work
+  consumes. weir Settings gains a second "dev folder" channel + a per-channel status
+  line; boot reconnects every persisted channel. See `../numen/docs/multichannel.md`
+  (TRANSPORTS §6.5); proven by `numen/tools/smoke-fs-multichannel.mjs`.
+
 ### Glass: a full call-number classification + the physical home library — 2026-06-20
 
 - The glass **call number** grew from a loose facet projection into a complete
