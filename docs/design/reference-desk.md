@@ -13,10 +13,15 @@
 
 > **Status: IMPLEMENTED (2026-06-21).** Design record — kept for the rationale; the
 > authoritative summary is GLASS.md §17. What shipped: `weir_queryCatalog` (§2.2,
-> commit `2ff00f2`) and `weir_quote` (§3.2b, `40d5c8d`); the other "core" tools were
-> already shipped (`weir_search` = §2.1, `weir_vocab` = §2.3, `weir_relatedTo` = §3.1).
-> Still deferred: batch `weir_getItems` (§3.3), archive-visibility + facet filters on
-> `weir_search` (§2.1 notes), semantic recall (§3.4), full-body indexing.
+> commit `2ff00f2`), `weir_quote` (§3.2b, `40d5c8d`), **archive-visibility on
+> `weir_search` + `weir_queryCatalog`** (§2.1, `2c21322` — index holds archived; default
+> include, `includeArchived:false` to limit; the inbox UI stays archived-free via its
+> view filter), and **batch `weir_getItems`** (§3.3, `2c21322`). The other "core" tools
+> were already shipped (`weir_search` = §2.1, `weir_vocab` = §2.3, `weir_relatedTo` = §3.1).
+> Facet-filtered search was **subsumed by `weir_queryCatalog({facets,q})`** — not built
+> separately (avoids a redundant verb). Still deferred: semantic recall (§3.4, gated),
+> full-body indexing (§2.1; excerpt-ranked for now), and a separate archived index if the
+> all-items index grows costly at scale.
 
 | | |
 |---|---|

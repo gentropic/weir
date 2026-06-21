@@ -656,11 +656,15 @@ and a human can check. The verbs:
   `vocabularyNotes` (fail loud). Finds what excerpt search can't (e.g.
   `entity:"itabirite"` when the word isn't in the title).
 - `weir_relatedTo` — ratified edges + facet-overlap suggestions (§10).
-  `weir_vocab` — thesaurus resolution (§7). `weir_getItem` — body + citation chain.
+  `weir_vocab` — thesaurus resolution (§7). `weir_getItem` / `weir_getItems` — body +
+  citation chain (the batch form for fan-out reads).
 - `weir_quote` — **citation verification** (strict-grounding's self-check): confirm a
   candidate quote is in a source, return a stable `glass_id#start–end` locator +
   context, or report no-match so the agent refuses to assert it.
-All read-only. No generation inside weir, no embeddings as the retrieval substrate.
+Search + the faceted query **see the whole archive by default** (never-delete means the
+standing archive is the corpus; `includeArchived:false` limits to active) — the inbox UI
+stays archived-free via its own view filter. All read-only. No generation inside weir, no
+embeddings as the retrieval substrate.
 
 **17.2 Provenance taxonomy.** Authorship is a three-tier `source`: **`human`** (the
 UI), **`cataloger`** (weir's internal LLM-as-service — recorded on the card as
