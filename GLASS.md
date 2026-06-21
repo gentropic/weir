@@ -637,6 +637,51 @@ pack beneath it.
 
 ---
 
+## 17. The agent surface — reference desk, provenance & the review queue **[implemented]**
+
+GLASS §1.1 drew the line: dumb pipes, smart service. The intelligence lives *on top*
+of weir's deterministic interface, via webmcp, as an external agent (Claude Code in
+the sibling `weir-desk` repo). This section is the authoritative summary of that
+surface; the full design records (rationale, alternatives, deferred work) are
+[docs/design/reference-desk.md](docs/design/reference-desk.md) (read half) and
+[docs/design/librarian.md](docs/design/librarian.md) (write half).
+
+**17.1 Reference desk (read).** Retrieve / rank / relate / quote — grounded reference
+work over the standing corpus, with provenance on every result so the agent can cite
+and a human can check. The verbs:
+- `weir_search` — ranked BM25F relevance (§8). `weir_queryItems` — list/filter.
+- `weir_queryCatalog` — **faceted intersection** (the Ranganathan move, §2): a
+  facet→term(s) map, union within a facet, intersect across facets; terms resolve
+  against the controlled vocabulary, unknown/zero-hit terms reported in
+  `vocabularyNotes` (fail loud). Finds what excerpt search can't (e.g.
+  `entity:"itabirite"` when the word isn't in the title).
+- `weir_relatedTo` — ratified edges + facet-overlap suggestions (§10).
+  `weir_vocab` — thesaurus resolution (§7). `weir_getItem` — body + citation chain.
+- `weir_quote` — **citation verification** (strict-grounding's self-check): confirm a
+  candidate quote is in a source, return a stable `glass_id#start–end` locator +
+  context, or report no-match so the agent refuses to assert it.
+All read-only. No generation inside weir, no embeddings as the retrieval substrate.
+
+**17.2 Provenance taxonomy.** Authorship is a three-tier `source`: **`human`** (the
+UI), **`cataloger`** (weir's internal LLM-as-service — recorded on the card as
+`glass.cataloger = provider:model`), and **`agent`** (an external agent over MCP).
+Per-field, tags/edges carry only `human`|`agent`; `cataloger` lives on the card. Every
+agent write stamps `source:'agent'` + an **identity** (`by`): tags → `tag_by`, edges →
+`by`, feeds → `source`/`added_by`, book holdings → `added_by` (new holdings only). The
+identity is **per-connection — folder = identity**, delivered by the numen multichannel
+shim as `client.identity` (../numen/docs/multichannel.md). `weir_provenanceMigrate`
+normalizes legacy stamps (`'llm'`/`'claude'` → `'agent'`).
+
+**17.3 The unified review queue (decides-vs-proposes, §2.1).** The agent *proposes*;
+the human *ratifies*. `weir_reviewQueue` is one tray for everything awaiting attention,
+tagged by `kind`: `catalog` (cataloger low-confidence cards), `feed` (an agent-added
+feed), `relation` (an agent-proposed edge); each item carries the proposer identity +
+a `ratifyWith` pointer. Catalog cards confirm via `weir_reviewItem`; structural
+proposals via `weir_ratify` (ratify → marked `ratified_at`, leaves the queue; dismiss →
+undo). Nothing the agent adds becomes catalog truth until it's ratified here.
+
+---
+
 The neo-dadaist throughline holds: zero-dependency, single-file, browser-as-runtime,
 local-first, auditable by construction, never-delete. Glass is that ethos applied
 to **memory itself** — a knowledge base whose every classification decision is
