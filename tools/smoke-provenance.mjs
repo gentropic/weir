@@ -53,4 +53,19 @@ assert.ok(counts.tags >= 1 && counts.edges >= 1, 'migration reports counts');
 const again = store.migrateProvenance();
 assert.equal(again.tags, 0); assert.equal(again.edges, 0, 're-running migration is a no-op (idempotent)');
 
+// ── backfill: a book whose added_by was stripped (pre-fix bug), found by web-proposed tag ──
+await store.putFeed({ id: 'books', name: 'Books', adapter: 'feed', url: 'b' });
+await store.upsertItems([{ id: 'book:9', feed_id: 'books', type: 'book', title: 'ESPHome in Practice', url: 'b', published_at: 9, tags: ['to-buy', 'web-proposed'] }]);   // no added_by (the bug)
+assert.ok(!store.getItem('book:9').added_by, 'precondition: book missing added_by');
+assert.equal(store.pendingProposals().books.length, 0, 'a book without added_by is NOT in the queue');
+const bf = store.migrateProvenance({ backfillBooks: 'claude:librarian' });
+assert.equal(bf.books, 1, 'backfill stamped 1 book');
+assert.equal(store.getItem('book:9').added_by, 'claude:librarian', 'added_by backfilled from the web-proposed tag');
+assert.equal(store.pendingProposals().books.length, 1, 'backfilled book now appears in the queue');
+assert.equal(store.migrateProvenance({ backfillBooks: 'claude:librarian' }).books, 0, 'backfill is idempotent');
+// a human to-buy book (no web-proposed tag) is left alone
+await store.upsertItems([{ id: 'book:10', feed_id: 'books', type: 'book', title: 'My wishlist book', url: 'b', published_at: 10, tags: ['to-buy'] }]);
+store.migrateProvenance({ backfillBooks: 'claude:librarian' });
+assert.ok(!store.getItem('book:10').added_by, 'a human to-buy book (no web-proposed tag) is not touched');
+
 console.log('provenance (SPEC-librarian §2) smoke ok');

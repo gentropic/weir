@@ -1016,8 +1016,8 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // historically-split stamps — tags 'llm', edges 'claude' — to the unified 'agent'
   // tier across the whole corpus. Idempotent; returns counts. A capability, not a
   // hand-fix (CLAUDE.md). Run once after the taxonomy lands; safe to re-run.
-  async function provenanceMigrate() {
-    const counts = store.migrateProvenance();
+  async function provenanceMigrate(input = {}) {
+    const counts = store.migrateProvenance({ backfillBooks: input.backfillBooks });
     await store.flush();
     return { migrated: counts };
   }
@@ -1211,9 +1211,9 @@ const TOOLS = [
   },
   {
     name: 'weir_provenanceMigrate', fn: 'provenanceMigrate',
-    description: 'One-shot cleanup: normalize the agent\'s historical authorship stamps to the unified `source:agent` tier — tags previously marked \'llm\' and relation edges marked \'claude\' (both meant Claude) become \'agent\'. Idempotent and safe to re-run; nothing is deleted. Run once after the provenance taxonomy landed. Returns { migrated: { tags, edges } }.',
-    inputSchema: { type: 'object', properties: {} },
-    annotations: { title: 'Migrate provenance to agent tier' },
+    description: 'One-shot cleanup: normalize the agent\'s historical authorship stamps to the unified `source:agent` tier — tags previously marked \'llm\' and relation edges marked \'claude\' (both meant Claude) become \'agent\'. Pass `backfillBooks` (an identity string, e.g. "claude:librarian") to ALSO repair agent-proposed book holdings whose `added_by` was stripped by the pre-fix makeItem bug — identified by their `web-proposed` tag — so they re-enter the review queue. Idempotent and safe to re-run; nothing is deleted. Returns { migrated: { tags, edges, books } }.',
+    inputSchema: { type: 'object', properties: { backfillBooks: { type: 'string', description: 'Identity to stamp on web-proposed books missing added_by (e.g. "claude:librarian"); omit to skip the book backfill' } } },
+    annotations: { title: 'Migrate / backfill provenance' },
   },
   {
     name: 'weir_addBook', fn: 'addBooks',

@@ -13603,8 +13603,12 @@ class Store {
   // meaning the same hand. Rewrite both to the unified 'agent' tier. Idempotent; returns
   // counts. A capability, not a hand-fix (run via weir_provenanceMigrate). The caller
   // flushes. (Note `source` on stacks notes is left for a later pass — cosmetic.)
-  migrateProvenance() {
-    let tags = 0, edges = 0;
+  // `opts.backfillBooks` (an identity string, or true → 'claude') also repairs
+  // agent-proposed book holdings whose `added_by` was stripped by the pre-fix makeItem
+  // bug: identified by the agent's `web-proposed` tag, stamp the identity so they
+  // re-enter the review queue. A targeted, idempotent backfill of bug-damaged data.
+  migrateProvenance(opts = {}) {
+    let tags = 0, edges = 0, books = 0;
     for (const r of this.items.values()) {
       if (!r.tag_src) continue;
       let touched = false;
@@ -13617,7 +13621,14 @@ class Store {
       for (const e of rel) if (e.source === 'claude') { e.source = 'agent'; edges++; touched = true; }
       if (touched) this._markCardDirty(gid);
     }
-    return { tags, edges };
+    const by = opts.backfillBooks === true ? 'claude' : (typeof opts.backfillBooks === 'string' ? opts.backfillBooks.trim() : null);
+    if (by) for (const r of this.items.values()) {
+      if (r.type !== 'book' || r.added_by || r.archived) continue;
+      if (!(r.tags && r.tags.includes('web-proposed'))) continue;   // the agent's web-acquisition marker
+      r.added_by = by; books++;
+      this._markFeedDirty(r.feed_id);
+    }
+    return { tags, edges, books };
   }
 
   // ── the review queue's non-catalog half: agent structural proposals (SPEC-librarian §3) ──
@@ -22975,8 +22986,8 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // historically-split stamps — tags 'llm', edges 'claude' — to the unified 'agent'
   // tier across the whole corpus. Idempotent; returns counts. A capability, not a
   // hand-fix (CLAUDE.md). Run once after the taxonomy lands; safe to re-run.
-  async function provenanceMigrate() {
-    const counts = store.migrateProvenance();
+  async function provenanceMigrate(input = {}) {
+    const counts = store.migrateProvenance({ backfillBooks: input.backfillBooks });
     await store.flush();
     return { migrated: counts };
   }
@@ -23170,9 +23181,9 @@ const TOOLS = [
   },
   {
     name: 'weir_provenanceMigrate', fn: 'provenanceMigrate',
-    description: 'One-shot cleanup: normalize the agent\'s historical authorship stamps to the unified `source:agent` tier — tags previously marked \'llm\' and relation edges marked \'claude\' (both meant Claude) become \'agent\'. Idempotent and safe to re-run; nothing is deleted. Run once after the provenance taxonomy landed. Returns { migrated: { tags, edges } }.',
-    inputSchema: { type: 'object', properties: {} },
-    annotations: { title: 'Migrate provenance to agent tier' },
+    description: 'One-shot cleanup: normalize the agent\'s historical authorship stamps to the unified `source:agent` tier — tags previously marked \'llm\' and relation edges marked \'claude\' (both meant Claude) become \'agent\'. Pass `backfillBooks` (an identity string, e.g. "claude:librarian") to ALSO repair agent-proposed book holdings whose `added_by` was stripped by the pre-fix makeItem bug — identified by their `web-proposed` tag — so they re-enter the review queue. Idempotent and safe to re-run; nothing is deleted. Returns { migrated: { tags, edges, books } }.',
+    inputSchema: { type: 'object', properties: { backfillBooks: { type: 'string', description: 'Identity to stamp on web-proposed books missing added_by (e.g. "claude:librarian"); omit to skip the book backfill' } } },
+    annotations: { title: 'Migrate / backfill provenance' },
   },
   {
     name: 'weir_addBook', fn: 'addBooks',
@@ -23561,7 +23572,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'e51f115';          // short content hash of the bundle (build id)
+const COMMIT = '3070e80';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

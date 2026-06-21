@@ -1268,8 +1268,12 @@ export class Store {
   // meaning the same hand. Rewrite both to the unified 'agent' tier. Idempotent; returns
   // counts. A capability, not a hand-fix (run via weir_provenanceMigrate). The caller
   // flushes. (Note `source` on stacks notes is left for a later pass — cosmetic.)
-  migrateProvenance() {
-    let tags = 0, edges = 0;
+  // `opts.backfillBooks` (an identity string, or true → 'claude') also repairs
+  // agent-proposed book holdings whose `added_by` was stripped by the pre-fix makeItem
+  // bug: identified by the agent's `web-proposed` tag, stamp the identity so they
+  // re-enter the review queue. A targeted, idempotent backfill of bug-damaged data.
+  migrateProvenance(opts = {}) {
+    let tags = 0, edges = 0, books = 0;
     for (const r of this.items.values()) {
       if (!r.tag_src) continue;
       let touched = false;
@@ -1282,7 +1286,14 @@ export class Store {
       for (const e of rel) if (e.source === 'claude') { e.source = 'agent'; edges++; touched = true; }
       if (touched) this._markCardDirty(gid);
     }
-    return { tags, edges };
+    const by = opts.backfillBooks === true ? 'claude' : (typeof opts.backfillBooks === 'string' ? opts.backfillBooks.trim() : null);
+    if (by) for (const r of this.items.values()) {
+      if (r.type !== 'book' || r.added_by || r.archived) continue;
+      if (!(r.tags && r.tags.includes('web-proposed'))) continue;   // the agent's web-acquisition marker
+      r.added_by = by; books++;
+      this._markFeedDirty(r.feed_id);
+    }
+    return { tags, edges, books };
   }
 
   // ── the review queue's non-catalog half: agent structural proposals (SPEC-librarian §3) ──
