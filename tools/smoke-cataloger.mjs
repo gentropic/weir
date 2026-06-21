@@ -60,12 +60,17 @@ assert.match(merged.dublin_core.description, /OK and SK/);
 assert.deepEqual(parseCatalog('not json at all', stage0).card.facets.domain, [], 'bad JSON → unchanged + ok:false');
 assert.equal(parseCatalog('nope', stage0).ok, false);
 
+// ── tag hygiene: workflow/namespaced tags must NOT leak into the entity facet ──
+const hy = buildCard({ id: 'h', feed_id: 'f', type: 'note', title: 'T', tags: ['gcu', 'owned', 'kriging', 'brief:x', 'web-proposed'] }, { name: 'F', adapter: 'feed' });
+assert.deepEqual(hy.facets.entity, ['kriging'], 'entity drops workflow (gcu/owned/web-proposed) + namespaced (brief:x) tags');
+
 assert.equal(stripToText('<p>Hello <b>world</b></p>'), 'Hello world', 'strip html');
 
 // ── catalogStoreItem: end-to-end over a store (mock LLM) ──
 const store = new Store(await VFS.create()); await store._hydrate();
 await store.putFeed({ id: 'f', name: 'arXiv', adapter: 'feed', url: 'http://a/f' });
-await store.upsertItems([{ id: 'p1', feed_id: 'f', type: 'paper', title: 'OK vs SK', tags: ['kriging'], content: '<p>full text here</p>' }]);
+const BODY = '<p>Ordinary and simple kriging are compared for iron-grade estimation in an itabirite deposit, with variography, cross-validation, and a sensitivity study over the search neighbourhood.</p>';   // >80 chars stripped → past the guardrail
+await store.upsertItems([{ id: 'p1', feed_id: 'f', type: 'paper', title: 'OK vs SK', tags: ['kriging'], content: BODY }]);
 const res = await catalogStoreItem(store, 'p1', { provider: 'nanogpt', model: 'kimi-k2.6', key: 'x', fetch: llmFetch });
 assert.ok(res.glass_id, 'cataloged → glass_id');
 assert.equal(store.getItem('p1').glass_id, res.glass_id, 'item stamped');
@@ -74,6 +79,14 @@ assert.deepEqual(card.facets.domain, ['geostatistics', 'mining'], 'enriched card
 assert.ok(card.facets.entity.includes('itabirite'), 'LLM entity added');
 assert.equal(card.glass.cataloger, 'nanogpt:kimi-k2.6');
 assert.equal(card.glass.needs_review, false, 'good parse → no review');
+
+// ── guardrail: a metadata-only item (thin body) ABSTAINS — no fabrication ──
+await store.upsertItems([{ id: 'thin', feed_id: 'f', type: 'book', title: 'The Book That Plays Back', tags: ['owned'], excerpt: '' }]);   // no body, no abstract
+const skip = await catalogStoreItem(store, 'thin', { provider: 'nanogpt', model: 'kimi-k2.6', key: 'x', fetch: llmFetch });
+assert.equal(skip.ok, false); assert.equal(skip.skipped, 'thin-metadata', 'abstained on thin metadata');
+const skipCard = await store.getCard(skip.glass_id);
+assert.deepEqual(skipCard.facets.domain, [], 'no fabricated domain (LLM not called)');
+assert.equal(skipCard.glass.cataloger, 'skipped:thin-metadata'); assert.equal(skipCard.glass.needs_review, true, 'left for authoring');
 
 // usage ledger
 const u = await store.getUsage();
@@ -85,7 +98,7 @@ assert.equal((await store.getUsage()).providers.nanogpt.billed_input, 1200 + 200
 // ── regression: two un-cataloged items get DISTINCT cards (no seq-001 collision) ──
 // buildCard used to fabricate glass-…-001 for every item, so a second catalog
 // overwrote the first's card and cross-contaminated facets. Each must self-file.
-await store.upsertItems([{ id: 'p2', feed_id: 'f', type: 'paper', title: 'Variograms', tags: ['variogram'], content: '<p>full text</p>' }]);
+await store.upsertItems([{ id: 'p2', feed_id: 'f', type: 'paper', title: 'Variograms', tags: ['variogram'], content: BODY }]);
 const res2 = await catalogStoreItem(store, 'p2', { provider: 'nanogpt', model: 'kimi-k2.6', key: 'x', fetch: llmFetch });
 assert.notEqual(res2.glass_id, res.glass_id, 'second item gets its OWN glass_id (no collision)');
 assert.equal(store.getItem('p2').glass_id, res2.glass_id, 'p2 stamped with its own id');

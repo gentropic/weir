@@ -305,7 +305,18 @@ assert.equal(card2.glass.reviewer, 'human', 'stamped human review');
 assert.equal(reviewApp._cardReview.get('a1').needs_review, false, 'app cache updated');
 const queue2 = await rvTools.reviewQueue({});
 assert.equal(queue2.counts.total, 0, 'queue empty after review');
-await assert.rejects(rvTools.reviewItem({ id: 'v1' }), /isn’t cataloged|not cataloged|isn't cataloged/, 'uncataloged item rejected');
+// ── reviewItem AUTHOR path (SPEC-librarian-authored-cards): a description (and/or an
+// un-cataloged item) writes the card by hand — no LLM — stamped agent over MCP ──
+const auth = await rvTools.reviewItem({ id: 'v1', description: 'A bounded 3D-print farm build.', facets: { domain: ['diy'], entity: ['3d printing'] } }, { identity: 'claude:test' });
+assert.ok(auth.authored && auth.glass_id, 'authored a card for an un-cataloged item (no reject)');
+assert.equal(store.getItem('v1').glass_id, auth.glass_id, 'item linked to the new card');
+const vcard = await store.getCard(auth.glass_id);
+assert.equal(vcard.dublin_core.description, 'A bounded 3D-print farm build.', 'description set by hand');
+assert.deepEqual(vcard.facets.domain, ['diy'], 'authored facets applied');
+assert.equal(vcard.glass.reviewer, 'agent', 'MCP author stamps reviewer:agent (not human)');
+assert.equal(vcard.glass.by, 'claude:test', 'agent identity carried onto the card');
+assert.equal(vcard.glass.needs_review, false, 'authored card is not flagged');
+await assert.rejects(rvTools.reviewItem({ description: 'x' }), /No item/, 'still needs an id');
 
 // ── setCatalog: writes config (not the key), clamps; listModels needs app ──
 const cfg = await tools.setCatalog({ provider: 'nanogpt', model: 'deepseek/deepseek-v3.2', paceMs: 0, maxBodyChars: 99999 });

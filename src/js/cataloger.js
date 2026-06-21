@@ -73,6 +73,16 @@ export async function catalogStoreItem(store, id, opts = {}) {
     const det = detectBiblio(item.url);
     if (det) { const bib = await fetchBiblio(det, { fetch: opts.fetch, mailto: opts.mailto }); if (bib) { base = applyBiblio(base, bib); if (bib.abstract) body = bib.abstract; } }
   }
+  // Guardrail (SPEC-librarian-authored-cards §3): with too little real text to read
+  // (a metadata-only holding, e.g. a book with no body and no resolvable abstract), the
+  // LLM would FABRICATE from the title. Abstain instead — persist the Stage-0 card,
+  // flagged needs_review for a human/agent to author. Never invent.
+  const MIN_BODY = opts.minBody ?? 80;
+  if (stripToText(body).length < MIN_BODY) {
+    base.glass = { ...base.glass, cataloger: 'skipped:thin-metadata', confidence: 0.2, needs_review: true };
+    const glass_id = await store.writeCard(base);
+    return { glass_id, ok: false, skipped: 'thin-metadata', card: base };
+  }
   const { card: enriched, usage, model, provider, ok } = await catalogItem({ ...opts, item, card: base, body });
   const glass_id = await store.writeCard(enriched);
   await store.recordUsage(provider, model, usage);

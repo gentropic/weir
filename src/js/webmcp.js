@@ -13,7 +13,7 @@
 // exactly like weir's LLM client reaches Lemonade. (See gentropic/webmcp SPEC §4.1.)
 
 import { stripToText } from './cataloger.js';
-import { facetsOf, FACETS } from './glass.js';
+import { facetsOf, FACETS, buildCard } from './glass.js';
 import { listModels } from './llm.js';
 import { getKey } from './llmkeys.js';
 
@@ -381,7 +381,9 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     const fresh = store.getItem(it.id);
     let facets = r.card && r.card.facets, description;
     if (fresh.glass_id) { try { const c = await store.getCard(fresh.glass_id); if (c) { facets = c.facets; description = c.dublin_core && c.dublin_core.description; } } catch { /* card unreadable */ } }
-    return { glass_id: fresh.glass_id, ok: r.ok !== false, facets, description };
+    const out = { glass_id: fresh.glass_id, ok: r.ok !== false, facets, description };
+    if (r.skipped) { out.skipped = r.skipped; out.note = 'Too little real text to catalog without fabricating — left flagged needs_review, not guessed. Author the card yourself: weir_reviewItem({ id, description, facets }).'; }
+    return out;
   }
 
   // Start / stop / inspect the background catalog batch.
@@ -495,16 +497,37 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     throw new Error('kind must be "feed", "relation", or "book" (catalog cards: confirm via weir_reviewItem)');
   }
 
-  // Confirm a card (clear needs_review) and optionally correct its facets.
-  async function reviewItem(input = {}) {
-    if (!app) throw new Error('review is only available in the running app');
+  // Confirm / correct / AUTHOR a catalog card. Facets-only on an existing card =
+  // confirm. With a `description` (and/or on an un-cataloged item) = AUTHOR: write the
+  // card by hand, creating one if none exists — the fix for metadata-only holdings the
+  // cataloger can only hallucinate (SPEC-librarian-authored-cards §1). Stamped agent
+  // (reviewer:'agent' + identity) when called over MCP, else human (the UI).
+  async function reviewItem(input = {}, client) {
     const it = input.id != null && store.getItem(String(input.id));
     if (!it) throw new Error(`No item with id "${input.id}".`);
-    if (!it.glass_id) throw new Error(`Item "${input.id}" isn't cataloged yet.`);
-    const card = await store.markCardReviewed(it.glass_id, { facets: input.facets });
-    if (app._cardReview && app._cardReview.get(it.id)) app._cardReview.get(it.id).needs_review = false;
-    if (input.facets && app._cardFacets) app._cardFacets.set(it.id, card.facets);
-    if (app.renderReviewStatus) app.renderReviewStatus();
+    const reviewer = client ? 'agent' : 'human';
+    const by = client ? (client.identity || 'agent') : undefined;
+    const setLive = (card) => {
+      if (app && app._cardFacets) app._cardFacets.set(it.id, card.facets);
+      if (app && app._cardReview && app._cardReview.get(it.id)) app._cardReview.get(it.id).needs_review = false;
+      if (app && app.renderReviewStatus) app.renderReviewStatus();
+    };
+    // AUTHOR path: a description was supplied, or the item has no card yet → write a
+    // card by hand (base = the existing card, else a fresh Stage-0 one), no LLM.
+    if (input.description != null || !it.glass_id) {
+      const base = (it.glass_id && await store.getCard(it.glass_id)) || buildCard(it, store.getFeed(it.feed_id));
+      const dc = { ...base.dublin_core };
+      if (input.description != null) dc.description = String(input.description).trim() || undefined;
+      const facets = (input.facets && typeof input.facets === 'object') ? { ...base.facets, ...input.facets } : base.facets;
+      const card = { ...base, dublin_core: dc, facets, glass: { ...base.glass, document_ref: it.id, needs_review: false, reviewer, by, reviewed_at: Date.now(), confidence: 0.9 } };
+      const glass_id = await store.writeCard(card);
+      await store.flush();
+      setLive(card);
+      return { glass_id, reviewed: true, authored: true, description: card.dublin_core.description, facets: card.facets };
+    }
+    // CONFIRM path: an existing card, facets-only.
+    const card = await store.markCardReviewed(it.glass_id, { facets: input.facets, reviewer, by });
+    setLive(card);
     return { glass_id: it.glass_id, reviewed: true, facets: card.facets };
   }
 
@@ -1249,7 +1272,7 @@ const TOOLS = [
   },
   {
     name: 'weir_catalogItem', fn: 'catalogItem',
-    description: 'Catalog one item with the configured LLM right now (fills its glass facets + description). Returns glass_id, facets, description. Needs the cataloger configured and reachable (Lemonade via the bridge).',
+    description: 'Catalog one item with the configured LLM right now (fills its glass facets + description) — best for items with real body text. Returns glass_id, facets, description. On a metadata-only item (too little text to read, e.g. a book with no body/abstract) it ABSTAINS rather than fabricate: returns ok:false + skipped + a note, leaving it needs_review — author it yourself via weir_reviewItem({ id, description, facets }). Needs the cataloger configured and reachable (Lemonade via the bridge).',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Item id (from weir_queryItems)' } }, required: ['id'] },
     annotations: { title: 'Catalog an item' },
   },
@@ -1310,10 +1333,11 @@ const TOOLS = [
   },
   {
     name: 'weir_reviewItem', fn: 'reviewItem',
-    description: 'Confirm a cataloger card (clears needs_review, stamps a human review) and OPTIONALLY correct its facets. Pass facets as an object of facet→string[] to overwrite those facets (e.g. {"scale":[],"domain":["gaming"]}); omit to just approve as-is.',
+    description: 'Confirm, correct, or AUTHOR a catalog card. Facets-only on an existing card = confirm (clears needs_review). Pass a `description` (a precise one-sentence summary) to set the card\'s blurb by hand — and if the item has no card yet, this CREATES one (a deliberate "I know this item" add, e.g. a metadata-only book the cataloger can only hallucinate). Authored over MCP, the card is stamped source:agent + your identity. `facets` is an object of facet→string[] overwriting only the given facets (e.g. {"entity":["minecraft"],"scale":[]}). Pairs with weir_addBook → weir_reviewItem to land a pointed add fully formed.',
     inputSchema: {
       type: 'object', properties: {
-        id: { type: 'string', description: 'Item id (from weir_reviewQueue)' },
+        id: { type: 'string', description: 'Item id (from weir_reviewQueue / weir_queryItems)' },
+        description: { type: 'string', description: 'A precise one-sentence card summary to set by hand (creates the card if none exists)' },
         facets: { type: 'object', description: 'Optional facet corrections, e.g. {"scale":[],"entity":["minecraft"]} — overwrites only the given facets' },
       }, required: ['id'],
     },

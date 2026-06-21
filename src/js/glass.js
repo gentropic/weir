@@ -37,9 +37,15 @@ export function nextGlassId(cataloged, n) {
 // stay empty until the Stage-1 cataloger. Used by buildCard AND the live catalog
 // view (so the browser is instant + always current; Stage 1 will source enriched
 // facets from the persisted card index instead).
+// Workflow / provenance tags are NOT subjects — they must not leak into the `entity`
+// facet (which is "what this is ABOUT"). Drop a known stoplist + any namespaced tag
+// (`brief:*`, `source:*`, …). SPEC-librarian-authored-cards §4.
+const ENTITY_TAG_STOP = new Set(['gcu', 'owned', 'gcu-published', 'to-buy', 'web-proposed', 'wishlist', 'claude-added']);
+function isWorkflowTag(t) { return ENTITY_TAG_STOP.has(t) || t.includes(':'); }
+
 export function facetsOf(item, feed) {
   const year = yearOf(item.published_at);
-  const entity = Array.isArray(item.tags) ? [...new Set(item.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean))] : [];
+  const entity = Array.isArray(item.tags) ? [...new Set(item.tags.map((t) => String(t).toLowerCase().trim()).filter(Boolean).filter((t) => !isWorkflowTag(t)))] : [];
   return {
     domain: [], entity, process: [], method: [], scale: [],
     form: [TYPE_TO_FORM[item.type] || 'article'],

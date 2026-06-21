@@ -1156,7 +1156,8 @@ export class Store {
     if (!card) throw new Error(`no such card: ${glassId}`);
     card.glass = card.glass || {};
     card.glass.needs_review = false;
-    card.glass.reviewer = 'human';
+    card.glass.reviewer = opts.reviewer || 'human';   // 'human' (UI) | 'agent' (MCP) — the three-tier on cards
+    if (opts.by) card.glass.by = opts.by; else delete card.glass.by;
     card.glass.reviewed_at = now();
     if (opts.confidence != null) card.glass.confidence = opts.confidence;
     else if (!(card.glass.confidence >= 0.9)) card.glass.confidence = 0.9;
