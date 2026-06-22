@@ -971,6 +971,7 @@ export class Store {
         published_at: e.created, fetched_at: e.created,
         excerpt: e.excerpt || '', tags: fileTags,
         uid: e.uid, path: e.path, content_path: `/stacks/${e.path}`, mime: e.mime,
+        added_by: e.added_by || undefined,   // agent identity that authored it (weir_listMine); human notes carry none
       }, this.feeds.get('stacks') || { id: 'stacks' });
       rec.has_content = true;
       if (Array.isArray(e.links)) rec.links = e.links;   // [[ref]] targets, for backlinks
@@ -988,6 +989,7 @@ export class Store {
       rec.has_content = true;
       if (Array.isArray(e.links)) rec.links = e.links;
       if (e.target != null) rec.target = e.target;
+      if (e.added_by != null) rec.added_by = e.added_by;   // preserve agent authorship across rescans
       if (opts.replaceTags) {
         // authoritative save → the given tags are the exact set (keep prior source
         // for surviving tags, 'file' for new; drop the rest)
@@ -1434,6 +1436,38 @@ export class Store {
     const books = [];
     for (const it of this.items.values()) if (it.type === 'book' && it.added_by && !it.ratified_at && !it.archived) books.push({ id: it.id, title: it.title, by: it.added_by, rationale: it.added_rationale, tags: it.tags });
     return { feeds, relations, books };
+  }
+
+  // The agent's footprint as a CURRENT-STATE lens (SPEC-librarian-provenance-view): every
+  // contribution stamped by an agent identity, across kinds, with its ratification status.
+  // It is a pure query over the existing stamps (tag_by / note+book added_by / edge `by` /
+  // feed added_by / card glass.by) — NOT an audit log: weir's stamps are attribution, and
+  // the undo/correct paths are provenance-destructive (a human card-correct deletes glass.by,
+  // a tag-remove drops tag_by), so "what I did that was later undone/corrected" is NOT
+  // recoverable here. That history lives in the agent's own memory; this is the ground-truth
+  // it reconciles against. (An append-only contribution log is the someday upgrade — ROADMAP.)
+  // `identity`: an identity string to scope to, or null/undefined = any agent. `kinds`: a
+  // subset of tag|note|edge|feed|book|catalog. `status`: filter to one status.
+  listMine({ identity, kinds, status } = {}) {
+    const wantKind = (kinds && kinds.length) ? new Set(kinds) : null;
+    const mine = (by) => !!by && (!identity || by === identity);   // identity match, or "any agent"
+    const out = [];
+    const add = (c) => { if ((!wantKind || wantKind.has(c.kind)) && (!status || c.status === status)) out.push(c); };
+    for (const it of this.items.values()) {
+      if (it.tag_by) for (const t of Object.keys(it.tag_by)) if (mine(it.tag_by[t])) add({ kind: 'tag', id: it.id, label: t, title: it.title, identity: it.tag_by[t], status: 'applied' });
+      if (mine(it.added_by)) {
+        if (it.type === 'note') add({ kind: 'note', id: it.id, label: it.title, identity: it.added_by, status: 'applied', at: it.published_at });
+        else if (it.type === 'book') add({ kind: 'book', id: it.id, label: it.title, identity: it.added_by, status: it.archived ? 'dismissed' : (it.ratified_at ? 'ratified' : 'pending'), at: it.fetched_at, rationale: it.added_rationale });
+      }
+    }
+    for (const f of this.feeds.values()) if (mine(f.added_by)) add({ kind: 'feed', id: f.id, label: f.name, identity: f.added_by, status: f.ratified_at ? 'ratified' : 'pending', rationale: f.rationale });
+    for (const [gid, c] of this.cards) {
+      for (const e of ((c.glass || {}).related) || []) if (mine(e.by)) add({ kind: 'edge', id: gid, to: e.target, type: e.type, label: `${(c.dublin_core && c.dublin_core.title) || gid} —${e.type}→ ${e.target}`, identity: e.by, status: e.ratified_at ? 'ratified' : 'pending', at: e.at, rationale: e.rationale });
+      if (c.glass && mine(c.glass.by) && c.glass.reviewer === 'agent') add({ kind: 'catalog', id: (c.glass.document_ref || gid), glass_id: gid, label: (c.dublin_core && c.dublin_core.title) || gid, identity: c.glass.by, status: 'authored' });
+    }
+    const counts = { total: out.length, byKind: {}, byStatus: {} };
+    for (const c of out) { counts.byKind[c.kind] = (counts.byKind[c.kind] || 0) + 1; counts.byStatus[c.status] = (counts.byStatus[c.status] || 0) + 1; }
+    return { counts, contributions: out };
   }
 
   // Bless / dismiss an agent-proposed book holding (parallels ratifyFeed). Ratify stamps

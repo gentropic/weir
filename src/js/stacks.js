@@ -194,7 +194,7 @@ export class StacksStore {
       uid, path: rel, type: 'note',
       title: data.title || this._titleFromBody(body, rel),
       tags: Array.isArray(data.tags) ? data.tags : [],
-      created, source: data.source, target: data.target,   // W3C annotation target (item id) → backlinks
+      created, source: data.source, added_by: data.by, target: data.target,   // `by` = agent identity (weir_listMine); target = W3C annotation target
       excerpt: deriveExcerpt(body, 300),
       links: this._wikiRefs(body),
     };
@@ -244,7 +244,7 @@ export class StacksStore {
 
   // ── authoring ──
   // Create a note. `folder` explicit → filed there; omitted → stacks rules → inbox.
-  async writeNote({ folder, name, title, markdown = '', tags = [], source, uid, created, target } = {}) {
+  async writeNote({ folder, name, title, markdown = '', tags = [], source, addedBy, uid, created, target } = {}) {
     uid = uid || this._uid();
     created = created || now();
     title = title || this._titleFromBody(markdown, name || '');
@@ -254,9 +254,12 @@ export class StacksStore {
     const rel = await this._uniqueRel(this._join(resolved.folder, base));
     // `target` (W3C Web Annotation): the item this note annotates. A scalar id = the
     // whole-resource target (no selector yet); becomes a nested {source,selector} later.
-    const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source, target });
+    // `by` = the agent identity that authored it (folder=identity), so it's attributable
+    // in weir_listMine — emitted to frontmatter so it survives a rescan. Human (UI) notes
+    // pass no addedBy and stay unattributed.
+    const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source, by: addedBy, target });
     await this._writeText(this._abs(rel), `---\n${fm}---\n\n${String(markdown).trim()}\n`);
-    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) });
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, added_by: addedBy, target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) });
     this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
     return rec;
   }
@@ -275,7 +278,7 @@ export class StacksStore {
     await this._writeText(abs, `---\n${fm}---\n\n${String(markdown).trim()}\n`);
     // replaceTags: a save is authoritative over the entry's tag set (so it can remove,
     // not just add) — unlike a scan, which unions to protect human/llm tags.
-    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, target: data.target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) }, { replaceTags: true });
+    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, added_by: data.by, target: data.target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) }, { replaceTags: true });
     this.store.emit('item', { id: rec.id });
     return rec;
   }

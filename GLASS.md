@@ -686,7 +686,17 @@ shim as `client.identity` (../numen/docs/multichannel.md). `weir_provenanceMigra
 normalizes legacy stamps (`'llm'`/`'claude'` → `'agent'`). It's **inspectable through the
 read tools**, not just the UI: `weir_getItem` returns the card's authorship (`card.cataloger`
 /`reviewer`/`by`) + item `added_by`/`tag_by`; `weir_queryItems({ addedBy, taggedBy })` filters
-to the agent footprint ("everything `claude:librarian` added/tagged").
+to the agent footprint ("everything `claude:librarian` added/tagged"). **`weir_listMine`** is
+the unified lens across *all* kinds — tags, notes, edges, feeds, books, authored cards — by
+identity (default the calling channel; `"*"` = any, the cross-channel view), each with its
+ratification `status` (pending/ratified/applied/authored). It is a **current-state** query,
+not an audit log: weir's stamps are attribution, and the undo/correct paths are
+provenance-destructive (a human card-correct deletes `glass.by`; a tag-remove drops `tag_by`),
+so contributions later undone/corrected are *not* recoverable here — that history lives in the
+agent's own memory, which it reconciles against this lens (an append-only contribution log is a
+deferred upgrade; see ROADMAP + [docs/design/librarian-provenance-view.md](docs/design/librarian-provenance-view.md)).
+For agent notes to be attributable, note authorship is stamped with the identity (`by` in
+frontmatter), not just `source:'agent'`.
 
 **17.3 The unified review queue (decides-vs-proposes, §2.1).** The agent *proposes*;
 the human *ratifies*. `weir_reviewQueue` is one tray for everything awaiting attention,

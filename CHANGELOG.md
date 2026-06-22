@@ -6,6 +6,22 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### weir_listMine — the agent's footprint as a provenance lens — 2026-06-22
+
+- **`weir_listMine`** (GLASS §17.2) — every contribution stamped by an agent identity,
+  across kinds (tag · note · edge · feed · book · catalog), with per-kind ratification
+  `status` (pending|ratified|applied|authored|dismissed) + counts. Defaults to the calling
+  channel; `identity:"*"` = any agent (cross-channel view); `kinds`/`status` filters. The
+  unified self-audit / propose-vs-ratify lens that pairs with `weir_reviewQueue` (the pending
+  tray). **Current-state, not an audit log** — undone/corrected contributions aren't shown
+  (weir's stamps are attribution; the undo paths erase them), so it's the ground truth the
+  agent reconciles its *memory* against. An append-only contribution log is a deferred
+  upgrade (ROADMAP + `docs/design/librarian-provenance-view.md`).
+- **Note-identity stamp** (prerequisite) — agent-authored notes now carry the identity (`by`
+  in frontmatter + `item.added_by`, surviving a rescan), not just `source:'agent'`, so notes
+  are attributable in `weir_listMine`. Human (UI) notes stay unattributed.
+- Tests: `tools/smoke-listmine.mjs`. With this, the session's `spec_inbox/` is clear.
+
 ### Repos-as-source pilot fixes — path ingest kills the verbatim conduit — 2026-06-22
 
 From the librarian's first live `weir_ingestRepo` (BMA):

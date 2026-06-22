@@ -1063,7 +1063,8 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     } else {
       let folder = input.folder, name = input.name;
       if (path) { const i = path.lastIndexOf('/'); if (folder == null) folder = i >= 0 ? path.slice(0, i) : 'inbox'; if (name == null) name = i >= 0 ? path.slice(i + 1) : path; }
-      rec = await stacks.writeNote({ folder: folder || 'inbox', name, title: input.title, markdown: String(input.markdown), tags, source: agentProv(client).source });
+      const wp = agentProv(client);
+      rec = await stacks.writeNote({ folder: folder || 'inbox', name, title: input.title, markdown: String(input.markdown), tags, source: wp.source, addedBy: wp.by });
     }
     await store.flush();
     if (app.renderStacks) app.renderStacks();
@@ -1242,13 +1243,28 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // historically-split stamps — tags 'llm', edges 'claude' — to the unified 'agent'
   // tier across the whole corpus. Idempotent; returns counts. A capability, not a
   // hand-fix (CLAUDE.md). Run once after the taxonomy lands; safe to re-run.
+  // The agent's footprint — a current-state provenance lens (SPEC-librarian-provenance-view).
+  // Defaults to the CALLING channel's identity; pass identity:'*' for any agent (the
+  // cross-channel view). Read-only. NOT an audit log — see store.listMine: undone/corrected
+  // contributions aren't recoverable (the stamps are attribution; the agent's memory holds
+  // history, and reconciles it against this lens).
+  async function listMine(input = {}, client) {
+    const raw = input.identity != null ? String(input.identity) : ((client && client.identity) || undefined);
+    const identity = (raw === '*' || raw === 'any') ? undefined : raw;
+    const kinds = Array.isArray(input.kinds) ? input.kinds.map(String) : (input.kinds ? [String(input.kinds)] : undefined);
+    const status = input.status ? String(input.status) : undefined;
+    const r = store.listMine({ identity, kinds, status });
+    const limit = Math.min(Math.max(1, Number(input.limit) || 100), 500);
+    return { identity: identity || '(any agent)', counts: r.counts, count: Math.min(r.contributions.length, limit), contributions: r.contributions.slice(0, limit), ...(r.contributions.length > limit ? { omitted: r.contributions.length - limit } : {}) };
+  }
+
   async function provenanceMigrate(input = {}) {
     const counts = store.migrateProvenance({ backfillBooks: input.backfillBooks });
     await store.flush();
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, listMine, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1562,6 +1578,19 @@ const TOOLS = [
     description: 'The UNIFIED review queue — everything awaiting human attention, tagged by `kind`: "catalog" = cataloger cards flagged low-confidence/unparseable (carry facets + confidence); "feed"/"relation"/"book" = things the agent ADDED (source:agent) not yet ratified — a feed, a relation edge, or a book holding (e.g. a to-buy suggestion). Each item carries the proposer `by` identity, a `rationale` (why), and `ratifyWith` — the tool to act on it: catalog → weir_reviewItem (confirm/correct), feed/relation/book → weir_ratify (bless or dismiss). Returns { counts:{catalog,feed,relation,book,total}, count, items }. Optional `kind` filters to one. This is the decides-vs-proposes gate: the agent proposes, you ratify here.',
     inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['catalog', 'feed', 'relation', 'book'], description: 'Filter to one kind (default: all)' }, limit: { type: 'integer', description: 'Max items (default 30, cap 100)' } } },
     annotations: { readOnlyHint: true, title: 'Review queue' },
+  },
+  {
+    name: 'weir_listMine', fn: 'listMine',
+    description: 'Your footprint on the corpus — every contribution stamped by an agent identity, across kinds, with its ratification status. The provenance LENS for self-audit, the propose-vs-ratify ledger, and cross-channel coordination; pairs with weir_reviewQueue (which shows only the pending tray). Defaults to the CALLING channel\'s identity; pass identity:"*" for any agent (the cross-channel view), or a specific identity string. `kinds` filters to a subset of tag|note|edge|feed|book|catalog; `status` filters to one (pending|ratified|applied|authored|dismissed). Returns { identity, counts:{total, byKind, byStatus}, contributions:[{ kind, id, label, identity, status, … }] }. IMPORTANT: this is a CURRENT-STATE lens, not a history — contributions later undone or corrected by a human are NOT shown (weir\'s stamps are attribution; the undo paths erase them). It is the ground truth to reconcile your MEMORY against (memory says you added X but it is not here → your memory is stale). Read-only.',
+    inputSchema: {
+      type: 'object', properties: {
+        identity: { type: 'string', description: 'Scope to an identity (default: the calling channel); "*" = any agent' },
+        kinds: { type: 'array', items: { type: 'string', enum: ['tag', 'note', 'edge', 'feed', 'book', 'catalog'] }, description: 'Limit to these contribution kinds' },
+        status: { type: 'string', description: 'Filter to one status: pending | ratified | applied | authored | dismissed' },
+        limit: { type: 'integer', description: 'Max contributions (default 100, cap 500)' },
+      },
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'List my contributions' },
   },
   {
     name: 'weir_ratify', fn: 'ratify',

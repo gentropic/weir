@@ -450,6 +450,16 @@ answer).
 
 ## Larger / research
 
+- **Agent contribution log (someday — `weir_listMine` history).** `weir_listMine` (GLASS
+  §17.2) is a **current-state** lens: it can't show contributions a human later undid or
+  corrected, because weir's stamps are attribution and the undo paths are
+  provenance-destructive (card-correct deletes `glass.by`; tag-remove drops `tag_by`). The
+  upgrade is an **append-only contribution log** — every agent write appends an entry; listMine
+  reads `log ⋈ current state` to surface `corrected`/`removed`. A real new data model + an
+  append at each agent mutation, so deferred (the comparison-with-the-agent's-memory model
+  covers today's need). Lighter middle path: make those few mutations provenance-*preserving*
+  (tombstone `tag_by`, keep the original author on card correction) to get `corrected`
+  incrementally. See [docs/design/librarian-provenance-view.md](docs/design/librarian-provenance-view.md).
 - **More adapters:** ~~GitHub~~ ✅ Shipped 2026-06-01 (releases/commits/tags Atom
   → `release`/`commit` items; add-time URL resolution). Remaining: `scrape`
   (public-page change tracking → `track` items), arXiv (→ `paper`), Mastodon,

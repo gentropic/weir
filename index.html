@@ -13451,6 +13451,7 @@ class Store {
         published_at: e.created, fetched_at: e.created,
         excerpt: e.excerpt || '', tags: fileTags,
         uid: e.uid, path: e.path, content_path: `/stacks/${e.path}`, mime: e.mime,
+        added_by: e.added_by || undefined,   // agent identity that authored it (weir_listMine); human notes carry none
       }, this.feeds.get('stacks') || { id: 'stacks' });
       rec.has_content = true;
       if (Array.isArray(e.links)) rec.links = e.links;   // [[ref]] targets, for backlinks
@@ -13468,6 +13469,7 @@ class Store {
       rec.has_content = true;
       if (Array.isArray(e.links)) rec.links = e.links;
       if (e.target != null) rec.target = e.target;
+      if (e.added_by != null) rec.added_by = e.added_by;   // preserve agent authorship across rescans
       if (opts.replaceTags) {
         // authoritative save → the given tags are the exact set (keep prior source
         // for surviving tags, 'file' for new; drop the rest)
@@ -13916,6 +13918,38 @@ class Store {
     return { feeds, relations, books };
   }
 
+  // The agent's footprint as a CURRENT-STATE lens (SPEC-librarian-provenance-view): every
+  // contribution stamped by an agent identity, across kinds, with its ratification status.
+  // It is a pure query over the existing stamps (tag_by / note+book added_by / edge `by` /
+  // feed added_by / card glass.by) — NOT an audit log: weir's stamps are attribution, and
+  // the undo/correct paths are provenance-destructive (a human card-correct deletes glass.by,
+  // a tag-remove drops tag_by), so "what I did that was later undone/corrected" is NOT
+  // recoverable here. That history lives in the agent's own memory; this is the ground-truth
+  // it reconciles against. (An append-only contribution log is the someday upgrade — ROADMAP.)
+  // `identity`: an identity string to scope to, or null/undefined = any agent. `kinds`: a
+  // subset of tag|note|edge|feed|book|catalog. `status`: filter to one status.
+  listMine({ identity, kinds, status } = {}) {
+    const wantKind = (kinds && kinds.length) ? new Set(kinds) : null;
+    const mine = (by) => !!by && (!identity || by === identity);   // identity match, or "any agent"
+    const out = [];
+    const add = (c) => { if ((!wantKind || wantKind.has(c.kind)) && (!status || c.status === status)) out.push(c); };
+    for (const it of this.items.values()) {
+      if (it.tag_by) for (const t of Object.keys(it.tag_by)) if (mine(it.tag_by[t])) add({ kind: 'tag', id: it.id, label: t, title: it.title, identity: it.tag_by[t], status: 'applied' });
+      if (mine(it.added_by)) {
+        if (it.type === 'note') add({ kind: 'note', id: it.id, label: it.title, identity: it.added_by, status: 'applied', at: it.published_at });
+        else if (it.type === 'book') add({ kind: 'book', id: it.id, label: it.title, identity: it.added_by, status: it.archived ? 'dismissed' : (it.ratified_at ? 'ratified' : 'pending'), at: it.fetched_at, rationale: it.added_rationale });
+      }
+    }
+    for (const f of this.feeds.values()) if (mine(f.added_by)) add({ kind: 'feed', id: f.id, label: f.name, identity: f.added_by, status: f.ratified_at ? 'ratified' : 'pending', rationale: f.rationale });
+    for (const [gid, c] of this.cards) {
+      for (const e of ((c.glass || {}).related) || []) if (mine(e.by)) add({ kind: 'edge', id: gid, to: e.target, type: e.type, label: `${(c.dublin_core && c.dublin_core.title) || gid} —${e.type}→ ${e.target}`, identity: e.by, status: e.ratified_at ? 'ratified' : 'pending', at: e.at, rationale: e.rationale });
+      if (c.glass && mine(c.glass.by) && c.glass.reviewer === 'agent') add({ kind: 'catalog', id: (c.glass.document_ref || gid), glass_id: gid, label: (c.dublin_core && c.dublin_core.title) || gid, identity: c.glass.by, status: 'authored' });
+    }
+    const counts = { total: out.length, byKind: {}, byStatus: {} };
+    for (const c of out) { counts.byKind[c.kind] = (counts.byKind[c.kind] || 0) + 1; counts.byStatus[c.status] = (counts.byStatus[c.status] || 0) + 1; }
+    return { counts, contributions: out };
+  }
+
   // Bless / dismiss an agent-proposed book holding (parallels ratifyFeed). Ratify stamps
   // ratified_at so it leaves the queue; dismiss archives it (never-delete — a rejected
   // to-buy suggestion is reversible, not destroyed). Returns the item | null.
@@ -14348,7 +14382,7 @@ class StacksStore {
       uid, path: rel, type: 'note',
       title: data.title || this._titleFromBody(body, rel),
       tags: Array.isArray(data.tags) ? data.tags : [],
-      created, source: data.source, target: data.target,   // W3C annotation target (item id) → backlinks
+      created, source: data.source, added_by: data.by, target: data.target,   // `by` = agent identity (weir_listMine); target = W3C annotation target
       excerpt: deriveExcerpt(body, 300),
       links: this._wikiRefs(body),
     };
@@ -14398,7 +14432,7 @@ class StacksStore {
 
   // ── authoring ──
   // Create a note. `folder` explicit → filed there; omitted → stacks rules → inbox.
-  async writeNote({ folder, name, title, markdown = '', tags = [], source, uid, created, target } = {}) {
+  async writeNote({ folder, name, title, markdown = '', tags = [], source, addedBy, uid, created, target } = {}) {
     uid = uid || this._uid();
     created = created || now();
     title = title || this._titleFromBody(markdown, name || '');
@@ -14408,9 +14442,12 @@ class StacksStore {
     const rel = await this._uniqueRel(this._join(resolved.folder, base));
     // `target` (W3C Web Annotation): the item this note annotates. A scalar id = the
     // whole-resource target (no selector yet); becomes a nested {source,selector} later.
-    const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source, target });
+    // `by` = the agent identity that authored it (folder=identity), so it's attributable
+    // in weir_listMine — emitted to frontmatter so it survives a rescan. Human (UI) notes
+    // pass no addedBy and stay unattributed.
+    const fm = this._fmEmit({ uid, title, tags: allTags, created: new Date(created).toISOString(), source, by: addedBy, target });
     await this._writeText(this._abs(rel), `---\n${fm}---\n\n${String(markdown).trim()}\n`);
-    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) });
+    const rec = this.store.syncStacksEntry({ uid, path: rel, type: 'note', title, tags: allTags, created, source, added_by: addedBy, target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) });
     this.store.emit('items', { inserted: 1, updated: 0, skipped: 0 });
     return rec;
   }
@@ -14429,7 +14466,7 @@ class StacksStore {
     await this._writeText(abs, `---\n${fm}---\n\n${String(markdown).trim()}\n`);
     // replaceTags: a save is authoritative over the entry's tag set (so it can remove,
     // not just add) — unlike a scan, which unions to protect human/llm tags.
-    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, target: data.target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) }, { replaceTags: true });
+    const rec = this.store.syncStacksEntry({ uid, path: item.path, type: 'note', title: nextTitle, tags: nextTags, created, source: data.source, added_by: data.by, target: data.target, excerpt: deriveExcerpt(markdown, 300), links: this._wikiRefs(markdown) }, { replaceTags: true });
     this.store.emit('item', { id: rec.id });
     return rec;
   }
@@ -23405,7 +23442,8 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     } else {
       let folder = input.folder, name = input.name;
       if (path) { const i = path.lastIndexOf('/'); if (folder == null) folder = i >= 0 ? path.slice(0, i) : 'inbox'; if (name == null) name = i >= 0 ? path.slice(i + 1) : path; }
-      rec = await stacks.writeNote({ folder: folder || 'inbox', name, title: input.title, markdown: String(input.markdown), tags, source: agentProv(client).source });
+      const wp = agentProv(client);
+      rec = await stacks.writeNote({ folder: folder || 'inbox', name, title: input.title, markdown: String(input.markdown), tags, source: wp.source, addedBy: wp.by });
     }
     await store.flush();
     if (app.renderStacks) app.renderStacks();
@@ -23584,13 +23622,28 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // historically-split stamps — tags 'llm', edges 'claude' — to the unified 'agent'
   // tier across the whole corpus. Idempotent; returns counts. A capability, not a
   // hand-fix (CLAUDE.md). Run once after the taxonomy lands; safe to re-run.
+  // The agent's footprint — a current-state provenance lens (SPEC-librarian-provenance-view).
+  // Defaults to the CALLING channel's identity; pass identity:'*' for any agent (the
+  // cross-channel view). Read-only. NOT an audit log — see store.listMine: undone/corrected
+  // contributions aren't recoverable (the stamps are attribution; the agent's memory holds
+  // history, and reconciles it against this lens).
+  async function listMine(input = {}, client) {
+    const raw = input.identity != null ? String(input.identity) : ((client && client.identity) || undefined);
+    const identity = (raw === '*' || raw === 'any') ? undefined : raw;
+    const kinds = Array.isArray(input.kinds) ? input.kinds.map(String) : (input.kinds ? [String(input.kinds)] : undefined);
+    const status = input.status ? String(input.status) : undefined;
+    const r = store.listMine({ identity, kinds, status });
+    const limit = Math.min(Math.max(1, Number(input.limit) || 100), 500);
+    return { identity: identity || '(any agent)', counts: r.counts, count: Math.min(r.contributions.length, limit), contributions: r.contributions.slice(0, limit), ...(r.contributions.length > limit ? { omitted: r.contributions.length - limit } : {}) };
+  }
+
   async function provenanceMigrate(input = {}) {
     const counts = store.migrateProvenance({ backfillBooks: input.backfillBooks });
     await store.flush();
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, listMine, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -23904,6 +23957,19 @@ const TOOLS = [
     description: 'The UNIFIED review queue — everything awaiting human attention, tagged by `kind`: "catalog" = cataloger cards flagged low-confidence/unparseable (carry facets + confidence); "feed"/"relation"/"book" = things the agent ADDED (source:agent) not yet ratified — a feed, a relation edge, or a book holding (e.g. a to-buy suggestion). Each item carries the proposer `by` identity, a `rationale` (why), and `ratifyWith` — the tool to act on it: catalog → weir_reviewItem (confirm/correct), feed/relation/book → weir_ratify (bless or dismiss). Returns { counts:{catalog,feed,relation,book,total}, count, items }. Optional `kind` filters to one. This is the decides-vs-proposes gate: the agent proposes, you ratify here.',
     inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['catalog', 'feed', 'relation', 'book'], description: 'Filter to one kind (default: all)' }, limit: { type: 'integer', description: 'Max items (default 30, cap 100)' } } },
     annotations: { readOnlyHint: true, title: 'Review queue' },
+  },
+  {
+    name: 'weir_listMine', fn: 'listMine',
+    description: 'Your footprint on the corpus — every contribution stamped by an agent identity, across kinds, with its ratification status. The provenance LENS for self-audit, the propose-vs-ratify ledger, and cross-channel coordination; pairs with weir_reviewQueue (which shows only the pending tray). Defaults to the CALLING channel\'s identity; pass identity:"*" for any agent (the cross-channel view), or a specific identity string. `kinds` filters to a subset of tag|note|edge|feed|book|catalog; `status` filters to one (pending|ratified|applied|authored|dismissed). Returns { identity, counts:{total, byKind, byStatus}, contributions:[{ kind, id, label, identity, status, … }] }. IMPORTANT: this is a CURRENT-STATE lens, not a history — contributions later undone or corrected by a human are NOT shown (weir\'s stamps are attribution; the undo paths erase them). It is the ground truth to reconcile your MEMORY against (memory says you added X but it is not here → your memory is stale). Read-only.',
+    inputSchema: {
+      type: 'object', properties: {
+        identity: { type: 'string', description: 'Scope to an identity (default: the calling channel); "*" = any agent' },
+        kinds: { type: 'array', items: { type: 'string', enum: ['tag', 'note', 'edge', 'feed', 'book', 'catalog'] }, description: 'Limit to these contribution kinds' },
+        status: { type: 'string', description: 'Filter to one status: pending | ratified | applied | authored | dismissed' },
+        limit: { type: 'integer', description: 'Max contributions (default 100, cap 500)' },
+      },
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'List my contributions' },
   },
   {
     name: 'weir_ratify', fn: 'ratify',
@@ -24245,7 +24311,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'c80b3c6';          // short content hash of the bundle (build id)
+const COMMIT = '9b8323e';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
