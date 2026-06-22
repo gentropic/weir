@@ -155,3 +155,14 @@ metadata-only ingest is visible. The cure for the existing items is re-ingesting
 (mount granted) — stable ids (`repo:<slug>:<hash(path)>`) make `upsertItems` *update in place*,
 writing the bodies — then `weir_catalogControl recatalog category:"repos"` (NOT `clear`, which
 would drop hand-authored cards) redoes the skipped ones into body-rich cards.
+
+**Then the `paths:` read itself was broken** (the librarian's re-ingest came back all-bodyless):
+`app.readRepoDoc` fed the string from `vfs.readFile` (no-encoding → `file.text()`) into
+`new Uint8Array(str)` — which is **length 0** — so every mounted doc decoded to `""`. (The
+read/slug-prepend was correct; only the byte handling was wrong.) Fixed by extracting a pure
+`readMountedDoc(vfs, repoDir, path)` (in `fsmount.js`) that reads as UTF-8 **text** — and is
+node-tested against a memory VFS, which the earlier smoke missed by *mocking* `readRepoDoc`
+instead of exercising it. The handler also now returns **`bodylessReason`**
+(`not-found | read-error | empty | no-path`) per the librarian's ask, so a failed read
+self-diagnoses. Paths stay repo-relative (weir prepends `<mount>/<repo>/`), so re-ingest updates
+the same items in place.

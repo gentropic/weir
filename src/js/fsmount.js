@@ -70,3 +70,24 @@ export async function folderHasStore(handle) {
 
 // A short label for the folder (its name), for the UI.
 export function handleName(handle) { return (handle && handle.name) || 'folder'; }
+
+// Read one repo-relative doc from a mounted (read-only) repos-parent VFS:
+// `<repoDir>/<path>` as UTF-8 TEXT, ≤ maxBytes. Blocks `..` traversal so a path can't
+// escape the repo dir. Returns the text, or null if the file isn't there. Pure (takes a
+// vfs + strings) so it's node-testable — the read MUST go through vfs.readFile, whose
+// no-/utf8-encoding contract returns a STRING (file.text()); the earlier bug fed that
+// string to `new Uint8Array(...)` (→ length 0 → ""), silently emptying every doc.
+export async function readMountedDoc(vfs, repoDir, path, opts = {}) {
+  if (!vfs) throw new Error('repos folder not mounted');
+  const clean = String(path).replace(/\\/g, '/').replace(/^\/+/, '');
+  if (clean.split('/').includes('..')) throw new Error(`invalid path "${path}" (no .. traversal)`);
+  const dir = String(repoDir).replace(/^\/+|\/+$/g, '');
+  const abs = `/${dir}/${clean}`;
+  let raw;
+  try { raw = await vfs.readFile(abs, 'utf8'); }
+  catch (e) { if (e && (e.code === 'ENOENT' || e.name === 'NotFoundError')) return null; throw e; }
+  const text = typeof raw === 'string' ? raw : new TextDecoder('utf-8', { fatal: false }).decode(raw instanceof Uint8Array ? raw : new Uint8Array(raw || []));
+  const max = opts.maxBytes || 1_000_000;
+  if (text.length > max) throw new Error(`${path} exceeds ${Math.round(max / 1000)} KB`);
+  return text;
+}

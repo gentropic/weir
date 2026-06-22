@@ -19,6 +19,12 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
   cataloged (no text to read), which is what left 60 repo docs as `skipped:thin-metadata` (the
   bodies were never ingested). The cure is re-ingesting with `paths:` (mounted) — stable ids
   update the items in place, populating bodies — then `recatalog`.
+- **FIX: `paths:` mount read returned empty bytes for every file.** `app.readRepoDoc` fed the
+  string from `vfs.readFile` (no encoding → `file.text()`) into `new Uint8Array(str)`, which is
+  length 0 → every mounted doc decoded to `""` → `bodyless`. The read logic is now a pure,
+  node-tested `readMountedDoc(vfs, repoDir, path)` (reads as UTF-8 text). Plus `bodylessReason`
+  (`not-found | read-error | empty | no-path`) in the result so a failed read self-diagnoses.
+  This is what was actually blocking the whole repos-as-source content layer.
 
 ### Retrieval tuning — curation-aware ranking in weir_search (cheap, pre-embeddings) — 2026-06-22
 

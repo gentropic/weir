@@ -1286,17 +1286,20 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     for (const d of docs) if (!d || !d.path) throw new Error('each doc needs a `path` (its path within the repo)');
     // `paths` (no verbatim conduit): weir reads each NAMED file from the read-only repos
     // mount — never the full text through the call, never walking the tree (fixes #5).
-    const skipped = [];
+    // `reason` records WHY any path yields no body (not-found | read-error | empty | no-path),
+    // so a failed read self-diagnoses instead of an opaque `bodyless` (the librarian's ask).
+    const reason = {};
     if (paths.length) {
       if (!app.readRepoDoc) throw new Error('repos folder not mounted — mount your GitHub folder (read-only) in Settings, or pass docs:[{markdown}]');
-      const repoDir = String(input.repo).replace(/[\\/]+$/, '').replace(/^.*[\\/]/, '');   // basename
+      const repoDir = String(input.repo).replace(/[\\/]+$/, '').replace(/^.*[\\/]/, '');   // basename → subfolder under the mount
       for (const p of paths) {
         const path = typeof p === 'string' ? p : (p && p.path);
-        if (!path) { skipped.push({ path: String(p), error: 'no path' }); continue; }
+        if (!path) { reason[String(p)] = 'no-path'; continue; }
         let content;
         try { content = await app.readRepoDoc(repoDir, path); }
-        catch (e) { skipped.push({ path, error: e.message }); continue; }
-        if (content == null) { skipped.push({ path, error: 'not found in the mounted repo' }); continue; }
+        catch (e) { reason[path] = `read-error: ${e.message}`; continue; }
+        if (content == null) { reason[path] = 'not-found'; continue; }
+        if (!String(content).trim()) { reason[path] = 'empty'; continue; }   // file exists but is blank
         docs.push({ path, markdown: content, title: (p && p.title) || undefined, url: (p && p.url) || undefined });
       }
     }
@@ -1309,9 +1312,11 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       category: input.category ? String(input.category) : undefined,
       source: p.source, added_by: p.by, rationale: clampRationale(input.rationale),
     });
+    for (const bp of (r.bodyless || [])) if (!reason[bp]) reason[bp] = 'empty';   // inline docs:[{markdown:''}] that store flagged
     await store.flush();
     if (app.renderAll) app.renderAll();
-    return { ok: true, ...r, ...(skipped.length ? { skipped } : {}) };
+    const bodyless = Object.keys(reason);
+    return { ok: true, ...r, bodyless: bodyless.length ? bodyless : undefined, bodylessReason: bodyless.length ? reason : undefined };
   }
 
   // One-shot provenance normalization (SPEC-librarian §2): rewrite the agent's
@@ -1599,7 +1604,7 @@ const TOOLS = [
   },
   {
     name: 'weir_ingestRepo', fn: 'ingestRepo',
-    description: 'Ingest a code repo’s own DOCS as a first-class source (SPEC-repos-as-source) — so the GCU constellation becomes a queryable subgraph in weir. weir never runs git; YOU (with the files + git) decide WHAT to ingest. `repo` = the repo name/path (e.g. "auditable"). `anchor` = the commit SHA these docs are from. TWO ways to supply content: (a) **`paths`** = [path strings, or { path, title?, url? }] — weir reads each NAMED file from the read-only repos folder you mounted in Settings (no full text through this call; the way to ingest at fidelity without a verbatim conduit); (b) **`docs`** = [{ path, title?, markdown, url?, date? }] — you pass the body inline (use for a gitignored/untracked file like CLAUDE.md, or when no folder is mounted). Mix both. README/SPEC/docs/CLAUDE.md — docs, NOT code. First call CREATES the source as a proposal (→ weir_reviewQueue, ratify like a feed); later calls REFRESH it (and can fix the name/category/rationale in place). REFRESH recipe: read the stored anchor from weir_listSources, run `git diff --name-only <anchor> HEAD -- <doc globs>` (+ `--diff-filter=D` for deletions) locally, then call this with only the changed `paths`/`docs` + the new HEAD as `anchor` + deleted paths in `removed`. Idempotent (stable ids; never resets read/saved/tags); `removed` archives (never deletes). Docs become `doc` items — searchable, quotable, relatable; relate your dive-map (a stacks note) to them with weir_relate. Returns { ok, source, inserted, updated, removed, anchor, skipped?, bodyless? } — `bodyless` lists paths ingested with NO body (metadata-only); those can\'t be cataloged (no text to read), so pass their content via `paths` (mounted) or `docs:[{markdown}]`.',
+    description: 'Ingest a code repo’s own DOCS as a first-class source (SPEC-repos-as-source) — so the GCU constellation becomes a queryable subgraph in weir. weir never runs git; YOU (with the files + git) decide WHAT to ingest. `repo` = the repo name/path (e.g. "auditable"). `anchor` = the commit SHA these docs are from. TWO ways to supply content: (a) **`paths`** = [path strings, or { path, title?, url? }] — weir reads each NAMED file from the read-only repos folder you mounted in Settings (no full text through this call; the way to ingest at fidelity without a verbatim conduit); (b) **`docs`** = [{ path, title?, markdown, url?, date? }] — you pass the body inline (use for a gitignored/untracked file like CLAUDE.md, or when no folder is mounted). Mix both. README/SPEC/docs/CLAUDE.md — docs, NOT code. First call CREATES the source as a proposal (→ weir_reviewQueue, ratify like a feed); later calls REFRESH it (and can fix the name/category/rationale in place). REFRESH recipe: read the stored anchor from weir_listSources, run `git diff --name-only <anchor> HEAD -- <doc globs>` (+ `--diff-filter=D` for deletions) locally, then call this with only the changed `paths`/`docs` + the new HEAD as `anchor` + deleted paths in `removed`. Idempotent (stable ids; never resets read/saved/tags); `removed` archives (never deletes). Docs become `doc` items — searchable, quotable, relatable; relate your dive-map (a stacks note) to them with weir_relate. Returns { ok, source, inserted, updated, removed, anchor, bodyless?, bodylessReason? } — `bodyless` lists paths that landed with NO body (they can\'t be cataloged — no text to read), and `bodylessReason` maps each to WHY (not-found | read-error:<msg> | empty | no-path) so you can self-diagnose. Paths are repo-relative (weir prepends the repo slug → `<mount>/<repo>/<path>`); keep them repo-relative so re-ingest updates the same items in place.',
     inputSchema: {
       type: 'object', properties: {
         repo: { type: 'string', description: 'The repo name or path (e.g. "auditable" or "../auditable") — the source key + mounted-folder dir is its basename' },

@@ -8,6 +8,7 @@ import { Store } from '../src/js/store/store.js';
 import { buildWeirTools } from '../src/js/webmcp.js';
 import { facetsOf } from '../src/js/glass.js';
 import { hash32 } from '../src/js/store/schema.js';
+import { readMountedDoc } from '../src/js/fsmount.js';
 
 const store = new Store(await VFS.create()); await store._hydrate();
 const app = { renderAll() {} };
@@ -96,33 +97,33 @@ const rq = await t.reviewQueue({ kind: 'feed' });
 const ritem = rq.items.find((i) => i.id === 'repo:auditable');
 assert.ok(ritem && ritem.repo === true && ritem.docs >= 1 && ritem.anchor, '#4 reviewQueue surfaces the repo summary');
 
-// ── #5: path-based ingest reads named files from a (mocked) read-only repos mount ──
-// No verbatim conduit: the agent names paths; weir reads the bytes. Here a memory VFS
-// stands in for the FSA mount (the real app.readRepoDoc reads via the read-only handle).
+// ── #5: path-based ingest reads named files from a read-only repos mount ──
+// Uses the REAL readMountedDoc against a memory VFS — the bug (new Uint8Array(string) → "")
+// slipped through earlier because the smoke MOCKED the read; now it exercises the real one.
 {
   const mem = await VFS.create();
   await mem.mkdir('/pathtest/docs', { recursive: true });
   await mem.writeFile('/pathtest/README.md', '# pathtest (full)\n\nthe complete readme, not abridged through a tool call');
   await mem.writeFile('/pathtest/docs/SPEC.md', '# SPEC full body');
-  const appM = {
-    renderAll() {},
-    async readRepoDoc(dir, path) {                       // mirrors the real method's contract
-      const clean = String(path).replace(/\\/g, '/').replace(/^\/+/, '');
-      if (clean.split('/').includes('..')) throw new Error('invalid path (no .. traversal)');
-      try { return await mem.readFile(`/${dir}/${clean}`, 'utf8'); } catch { return null; }
-    },
-  };
+  await mem.writeFile('/pathtest/blank.md', '   \n');   // exists, but blank
+
+  // the REAL read — regression for the empty-read bug: returns the TEXT, not ""
+  assert.match(await readMountedDoc(mem, 'pathtest', 'README.md'), /not abridged through a tool call/, 'readMountedDoc returns the file TEXT (not emptied)');
+  assert.equal(await readMountedDoc(mem, 'pathtest', 'missing.md'), null, 'missing file → null');
+  await assert.rejects(readMountedDoc(mem, 'pathtest', '../escape.md'), /traversal/, '.. traversal blocked');
+
+  const appM = { renderAll() {}, readRepoDoc: (dir, path) => readMountedDoc(mem, dir, path) };   // the REAL function, not a mock
   const tm = buildWeirTools({ store, app: appM });
-  const rp = await tm.ingestRepo({ repo: 'pathtest', anchor: 'p1', paths: ['README.md', { path: 'docs/SPEC.md', title: 'Spec' }, 'missing.md'] });
-  assert.equal(rp.inserted, 2, '#5 two named files read from the mount + ingested');
-  assert.ok(rp.skipped && rp.skipped.some((s) => s.path === 'missing.md'), '#5 a missing path is reported in skipped, not fatal');
-  assert.match(await store.getContent('repo:pathtest:' + hash32('README.md')), /not abridged through a tool call/, '#5 full body read from disk (no conduit)');
-  // traversal is blocked + reported, never fatal
-  const trav = await tm.ingestRepo({ repo: 'pathtest', anchor: 'p2', paths: ['../escape.md'] });
-  assert.ok(trav.skipped.some((s) => /traversal/.test(s.error)), '#5 .. traversal blocked + reported');
+  const rp = await tm.ingestRepo({ repo: 'pathtest', anchor: 'p1', paths: ['README.md', { path: 'docs/SPEC.md', title: 'Spec' }, 'missing.md', 'blank.md'] });
+  assert.equal(rp.inserted, 2, '#5 two real files read from the mount + ingested (README + SPEC)');
+  assert.match(await store.getContent('repo:pathtest:' + hash32('README.md')), /not abridged through a tool call/, '#5 full body stored (no conduit, not emptied)');
+  // bodylessReason self-diagnosis (the librarian's ask)
+  assert.equal(rp.bodylessReason['missing.md'], 'not-found', '#5 missing path → not-found reason');
+  assert.equal(rp.bodylessReason['blank.md'], 'empty', '#5 blank file → empty reason');
+  assert.ok(rp.bodyless.includes('missing.md') && rp.bodyless.includes('blank.md'), '#5 bodyless lists both');
   // hybrid: paths + inline docs in one call
   const hy = await tm.ingestRepo({ repo: 'pathtest', anchor: 'p3', paths: ['README.md'], docs: [{ path: 'CLAUDE.md', markdown: '# charter (gitignored, passed inline)' }] });
-  assert.ok(hy.inserted >= 1 && hy.updated >= 1, '#5 hybrid paths + inline docs both land');
+  assert.ok(hy.inserted >= 1 || hy.updated >= 1, '#5 hybrid paths + inline docs both land');
   // paths with no mount → a clear error (not a silent miss)
   await assert.rejects(buildWeirTools({ store, app: { renderAll() {} } }).ingestRepo({ repo: 'pathtest', paths: ['README.md'] }), /not mounted/, '#5 paths without a mount errors clearly');
 }

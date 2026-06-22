@@ -20,7 +20,7 @@ import { parseFeed } from '../adapters/feed.js';
 import { monogram } from '../favicon.js';
 import { assessFeed } from '../health.js';
 import { Store } from '../store/store.js';
-import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle, loadHandle } from '../fsmount.js';
+import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle, loadHandle, readMountedDoc } from '../fsmount.js';
 import { VFS } from '../../../vendor/vfs.js';   // read-only repos mount (SPEC-repos-as-source-fixes #5)
 import { facetsOf, FACETS } from '../glass.js';
 import { WORLD_PATH, WORLD_VIEWBOX } from '../../../vendor/worldmap.js';
@@ -3898,16 +3898,7 @@ export class App {
   // The single point where weir touches a repo file — only ever a path the agent named.
   async readRepoDoc(repoDir, path) {
     if (!this.reposVfs) throw new Error('repos folder not mounted — mount it (read-only) in Settings → Courier, or pass docs:[{markdown}]');
-    const clean = String(path).replace(/\\/g, '/').replace(/^\/+/, '');
-    if (clean.split('/').includes('..')) throw new Error(`invalid path "${path}" (no .. traversal)`);
-    const dir = String(repoDir).replace(/^\/+|\/+$/g, '');
-    const abs = `/${dir}/${clean}`;
-    let buf;
-    try { buf = await this.reposVfs.readFile(abs); }
-    catch (e) { if (e && (e.code === 'ENOENT' || e.name === 'NotFoundError')) return null; throw e; }
-    const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
-    if (bytes.length > 1_000_000) throw new Error(`${path} exceeds 1 MB`);
-    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    return readMountedDoc(this.reposVfs, repoDir, path);   // pure + node-tested (the read returns TEXT)
   }
   renderReposSettings() {
     const loc = document.getElementById('set-repos-loc');
