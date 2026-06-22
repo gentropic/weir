@@ -6,6 +6,21 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Retrieval tuning — curation-aware ranking in weir_search (cheap, pre-embeddings) — 2026-06-22
+
+From the librarian's repo-ingest pilot (a broad query swamped by the feed firehose):
+- **`weir_search` is curation-aware by default** — a no-ML post-hoc rerank of the lexical
+  top-k (pool ≈5× the limit → rescore → slice) by `curationTier × facet-match`: the curated
+  minority (books, notes, repo `doc` items, saved links; the `stacks`/`saved`/`books`/`repo:*`
+  sources) ×2.5, the feed/video firehose ×0.6, plus a bonus when query terms hit an item's
+  facet terms (pulls the `entity:"itabirite"`-not-in-title recall into ranking). Each hit
+  carries its `tier` (inspectable). `rerank:false` = raw BM25; `curated:true` = hard-scope to
+  the curated tier. Reranks the **MCP reference-desk search only** (not the in-app path).
+  Recency deliberately omitted (a reference corpus keeps its canonical old sources).
+- Tests: `tools/smoke-rerank.mjs`. Deferred (ROADMAP + design record): #3 graph-expansion
+  retrieval and the dense multilingual lane (behind this cheap tier). Live acceptance = the
+  librarian's three pinned eval queries. Record: `docs/design/retrieval-tuning.md`.
+
 ### weir_listMine — the agent's footprint as a provenance lens — 2026-06-22
 
 - **`weir_listMine`** (GLASS §17.2) — every contribution stamped by an agent identity,

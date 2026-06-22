@@ -649,7 +649,14 @@ surface; the full design records (rationale, alternatives, deferred work) are
 **17.1 Reference desk (read).** Retrieve / rank / relate / quote — grounded reference
 work over the standing corpus, with provenance on every result so the agent can cite
 and a human can check. The verbs:
-- `weir_search` — ranked BM25F relevance (§8). `weir_queryItems` — list/filter.
+- `weir_search` — ranked BM25F relevance (§8), **curation-aware by default**: a no-ML
+  post-hoc rerank of the lexical top-k lifts the curated minority (books, notes, repo `doc`
+  items, saved links) over the auto-ingested feed/video firehose, with a facet-match bonus —
+  for a reference query the curated layer is the signal, the firehose the noise (the corpus is
+  ~80% firehose). Each hit carries its `tier`; `rerank:false` = raw BM25, `curated:true` =
+  hard-scope to the curated tier. The cheap lexical/graph tier *before* embeddings (the dense
+  multilingual lane is deferred behind it). Full record:
+  [docs/design/retrieval-tuning.md](docs/design/retrieval-tuning.md). `weir_queryItems` — list/filter.
 - `weir_queryCatalog` — **faceted intersection** (the Ranganathan move, §2): a
   facet→term(s) map, union within a facet, intersect across facets; terms resolve
   against the controlled vocabulary, unknown/zero-hit terms reported in

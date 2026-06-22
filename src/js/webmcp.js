@@ -69,6 +69,36 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return (live && live.get(it.id)) || facetsOf(it, store.getFeed(it.feed_id));
   };
 
+  // ── retrieval tuning (SPEC-retrieval-tuning): rank the curated minority over the feed
+  // firehose, no ML — a post-hoc rescore of the lexical top-k by source-class + facet-match.
+  // The corpus is ~80% auto-ingested feed/video; for a reference query the curated layer
+  // (books, notes, repo docs, saved links) is the signal, the firehose the noise.
+  const CURATION_WEIGHT = { curated: 2.5, neutral: 1.0, firehose: 0.6 };
+  function curationTier(it) {
+    if (!it) return 'neutral';
+    if (it.type === 'book' || it.type === 'note' || it.type === 'doc') return 'curated';
+    const fid = it.feed_id || '';
+    if (fid === 'stacks' || fid === 'saved' || fid === 'books' || fid.startsWith('repo:')) return 'curated';
+    const ad = (store.getFeed(fid) || {}).adapter;
+    if (ad === 'feed' || ad === 'youtube') return 'firehose';   // web-feed / video-platform = the firehose
+    return 'neutral';
+  }
+  // Multiplier on a lexical score: curation tier × facet-match (query terms ∈ the item's
+  // facet terms — pulls the "the term is in the facets, not the title" recall into ranking).
+  // NB recency is deliberately omitted: a reference corpus wants the canonical old source
+  // (a 1963 paper) to keep ranking, not be demoted for age.
+  function rankFactor(it, qTerms) {
+    let f = CURATION_WEIGHT[curationTier(it)] || 1;
+    if (qTerms.length) {
+      const terms = new Set();
+      const fc = facetsFor(it) || {};
+      for (const k of Object.keys(fc)) for (const v of (fc[k] || [])) terms.add(String(v).toLowerCase());
+      let hits = 0; for (const t of qTerms) if (terms.has(t)) hits++;
+      if (hits) f *= 1 + 0.2 * Math.min(hits, 5);
+    }
+    return f;
+  }
+
   // Resolve a `feed` arg (a feed id OR a display name, case-insensitive) to a
   // feed_id, so the model can say feed:"Saved Links" without knowing the id.
   function resolveFeedId(feed) {
@@ -846,22 +876,32 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   async function search(input = {}) {
     const q = String(input.q || input.text || '').trim();
     if (!q) throw new Error('provide `q` (the search query)');
+    if (ensureCards) { try { await ensureCards(); } catch { /* fall back to Stage-0 facets */ } }   // warm facets for the reranker
     const limit = Math.min(Math.max(1, Number(input.limit) || 20), 100);
     const idx = app && app.searchIndex;
     const scoped = input.feed || input.type || input.view || input.category !== undefined || input.unread !== undefined || input.saved !== undefined;
     // Reference-desk default: SEE THE ARCHIVE (never-delete; SPEC §2.1). The index now
     // holds archived items too; exclude them only when includeArchived === false.
     const noArchive = input.includeArchived === false;
+    const curatedOnly = input.curated === true;                 // hard-scope to the curated tier (#4)
+    const rerank = input.rerank !== false;                      // curation-aware ranking on by default (the reference desk)
+    const qTerms = q.toLowerCase().split(/[^a-z0-9]+/i).filter((w) => w.length > 1);
     if (idx && idx.ready) {
       const preds = [];
       if (scoped) { const allowed = new Set(store.query(buildQuery(input)).map((r) => r.id)); preds.push((id) => allowed.has(id)); }
       if (noArchive) preds.push((id) => { const it = store.getItem(id); return it && !it.archived; });
+      if (curatedOnly) preds.push((id) => curationTier(store.getItem(id)) === 'curated');
       const filter = preds.length ? (id) => preds.every((p) => p(id)) : undefined;
-      const hits = idx.search(q, { limit, filter }) || [];
-      return { ranked: true, count: hits.length, items: hits.map((h) => { const it = store.getItem(h.id); return it ? { ...projItem(store, it, false), score: h.score, archived: it.archived || undefined } : null; }).filter(Boolean) };
+      // A reranker can only reorder what it sees — pull a larger pool, rescore, then slice.
+      const poolK = rerank ? Math.min(Math.max(limit * 5, 50), 200) : limit;
+      let hits = idx.search(q, { limit: poolK, filter }) || [];
+      if (rerank) hits = hits.map((h) => { const it = store.getItem(h.id); return { ...h, lex: h.score, score: h.score * (it ? rankFactor(it, qTerms) : 1) }; }).sort((a, b) => b.score - a.score);
+      hits = hits.slice(0, limit);
+      return { ranked: true, reranked: rerank || undefined, count: hits.length, items: hits.map((h) => { const it = store.getItem(h.id); if (!it) return null; return { ...projItem(store, it, false), score: +Number(h.score).toFixed(3), ...(rerank ? { tier: curationTier(it) } : {}), archived: it.archived || undefined }; }).filter(Boolean) };
     }
     let rows = store.query({ ...buildQuery(input), text: q });
     if (!noArchive && !scoped) { const seen = new Set(rows.map((r) => r.id)); for (const it of store.items.values()) if (it.archived && !seen.has(it.id) && (it.search_text || '').includes(q.toLowerCase())) rows.push(it); }   // fallback: fold archived in
+    if (curatedOnly) rows = rows.filter((r) => curationTier(r) === 'curated');
     rows = rows.slice(0, limit);
     return { ranked: false, count: rows.length, items: rows.map((r) => projItem(store, r, false)) };
   }
@@ -1405,16 +1445,18 @@ const TOOLS = [
   },
   {
     name: 'weir_search', fn: 'search',
-    description: 'RANKED full-text search (the librarian BM25 index) — relevance-ordered, better than weir_queryItems\'s substring `q` for "most relevant about X" on a large corpus. SEES THE ARCHIVE by default (the standing corpus, never-delete) — hits carry `archived:true` when archived; pass includeArchived:false to limit to active. Optional scope filters (feed/type/category/view/unread/saved) narrow it like queryItems. Returns { ranked, count, items:[…,score,archived?] } (ranked:false = index not ready, fell back to substring). Use queryItems to LIST a whole feed/folder; use search to FIND by relevance; use weir_queryCatalog to search WITHIN a facet set.',
+    description: 'RANKED full-text search (the librarian BM25 index) — relevance-ordered, better than weir_queryItems\'s substring `q` for "most relevant about X" on a large corpus. CURATION-AWARE by default: results are reranked so the curated minority (books, notes, repo `doc` items, saved links) outranks the auto-ingested feed/video firehose, with a bonus when the query matches an item\'s facet terms — for a reference query the curated layer is the signal (pass rerank:false for raw BM25, or curated:true to hard-scope to the curated tier only). Each hit carries its `tier` (curated|neutral|firehose) when reranked. SEES THE ARCHIVE by default (the standing corpus, never-delete) — hits carry `archived:true` when archived; pass includeArchived:false to limit to active. Optional scope filters (feed/type/category/view/unread/saved) narrow it like queryItems. Returns { ranked, reranked?, count, items:[…,score,tier?,archived?] } (ranked:false = index not ready, fell back to substring). Use queryItems to LIST a whole feed/folder; use search to FIND by relevance; use weir_queryCatalog to search WITHIN a facet set.',
     inputSchema: {
       type: 'object', properties: {
         q: { type: 'string', description: 'The search query' },
         feed: { type: 'string', description: 'Scope to a source (id or display name)' },
         category: { type: 'string', description: 'Scope to a folder ("" = ungrouped)' },
-        type: { type: 'string', description: 'Scope to an item type' },
+        type: { type: 'string', description: 'Scope to an item type (e.g. "doc" for repo/project docs)' },
         view: { type: 'string', enum: ['inbox', 'saved', 'archived'], description: 'Scope to a view' },
         unread: { type: 'boolean', description: 'Only unread' },
         saved: { type: 'boolean', description: 'Only saved' },
+        curated: { type: 'boolean', description: 'Hard-scope to the curated tier only (books/notes/repo docs/saved links) — excludes the feed firehose' },
+        rerank: { type: 'boolean', description: 'Curation-aware reranking (default true); pass false for raw BM25 relevance' },
         includeArchived: { type: 'boolean', description: 'Include archived items (default TRUE — the reference desk sees the whole archive; pass false to limit to active)' },
         limit: { type: 'integer', description: 'Max hits (default 20, cap 100)' },
       }, required: ['q'],

@@ -450,6 +450,15 @@ answer).
 
 ## Larger / research
 
+- **Retrieval, next tiers (after the cheap rerank shipped 2026-06-22).** The curation-aware
+  rerank + curated scoping in `weir_search` is the cheap lexical tier (GLASS §17.1,
+  [docs/design/retrieval-tuning.md](docs/design/retrieval-tuning.md)). Deferred behind it: **(a)
+  graph-expansion retrieval** — "synthesis-first, sources-by-edge": return a dive-map as the
+  entry hit, expand along `related`/`same-topic` edges to the primary docs (partly doable today
+  via `weir_search` → `weir_relatedTo`; a dedicated mode is the convenience). **(b) the dense
+  multilingual lane** — embeddings scoped to the curated tier for the true residual
+  (cross-lingual EN↔pt-BR + paraphrase), per the librarian's semantic-search brief / a future
+  `SPEC-hybrid-retrieval`. Order: rerank (done) → graph expansion → dense, if still needed.
 - **Agent contribution log (someday — `weir_listMine` history).** `weir_listMine` (GLASS
   §17.2) is a **current-state** lens: it can't show contributions a human later undid or
   corrected, because weir's stamps are attribution and the undo paths are
