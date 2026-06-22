@@ -104,6 +104,41 @@ show fetch-health noise.
 - A repo source's **own in-app browse affordance** beyond `listSources` grouping — the
   source shows in the tree under `repos/`; richer UI is a later nicety.
 
+---
+
+## Pilot fixes (2026-06-22) — from first contact (BMA ingest)
+
+The first live `weir_ingestRepo` (BMA's README → `repo:bma`) proved the flow and produced
+a punch-list (`SPEC-repos-as-source-fixes`), all addressed:
+
+1. **Refresh updates `rationale` in place** (+ name/category) — a poor first blurb on the
+   still-pending proposal was previously unfixable short of remove+re-add.
+2. **Rationale clamped at the MCP boundary** (`clampRationale`, ≤500 ch, ellipsized,
+   applied to `ingestRepo`/`addFeed`/`relate`/`addBook`) — a malformed 4 KB blob can no
+   longer wall the review queue.
+3. **Repo docs get their own `form`** — `TYPE_TO_FORM` maps `doc → 'doc'` (was `'article'`),
+   so `weir_queryCatalog({facets:{form:['doc']}})` scopes to project documentation
+   (`weir_queryItems({type:'doc'})` already did the simple filter).
+4. **Repo sources self-summarize in the review queue** — `pendingProposals`/`reviewQueue`
+   carry `{repo, docs:N, anchor}`, so the queue reads "N docs from `<repo>` @ `<anchor>`"
+   without leaning on rationale text (subsumes #2's blast radius).
+5. **Path-based ingest from a read-only repos mount — the conduit unlock (the big one).**
+   The agent was a *verbatim conduit*: every doc's full text went through the MCP-call
+   tokens (the librarian had to *abridge* hopper's README). Now `weir_ingestRepo` accepts
+   **`paths:[…]`** alongside `docs:[…]`; weir reads each named file from a **read-only FSA
+   mount** of the repos parent folder (`fsmount` gained a `mode` param; `app.reposVfs` +
+   `app.readRepoDoc` + a boot reconnect + a Settings affordance). The agent still owns the
+   `git diff` (which paths) and never carries content; weir reads **only the named files**
+   (`..` traversal blocked, ≤1 MB, UTF-8), never walking the tree, and can never write
+   (read-only grant). **Transport decision (with Arthur):** weir reads the repos **in
+   place** (5a) rather than via a Courier copy (5b) — simplest, and on a single-user
+   machine where the Claude Code agents already have full FS access, a read-only weir mount
+   adds no exposure within the trust domain. The junction/symlink route was considered and
+   dropped (a junction'd folder = the same access, gated on fragile FSA-follows-symlink
+   behavior). Caveat: weir reads the **working tree**, so ingest assumes a clean tree at the
+   anchor. Setup is a one-time human gesture in the weir tab (+ a permission re-grant on
+   launch); an unmounted `paths:` call fails with a clear message and `docs:` still works.
+
 ## Tests
 `tools/smoke-repos.mjs` (wired into `npm run smoke`): first ingest creates the source +
 `doc` items (proposal, never-polled, searchable); refresh re-ingests the delta, advances

@@ -570,7 +570,9 @@ export class Store {
         config,
       });
     } else {
-      feed = await this.updateFeed(feedId, { config, ...(name ? { name } : {}), ...(category ? { category } : {}) });
+      // refresh can fix the still-pending proposal's blurb/name/folder in place
+      // (SPEC-repos-as-source-fixes #1) — else a poor first rationale was unfixable.
+      feed = await this.updateFeed(feedId, { config, ...(name ? { name } : {}), ...(category ? { category } : {}), ...(rationale != null ? { rationale } : {}) });
     }
     const raws = docs.map((d) => {
       const path = String(d.path || '').replace(/^\/+/, '');
@@ -1413,7 +1415,16 @@ export class Store {
   // half — low-confidence cards — lives in the app's _cardReview cache).
   pendingProposals() {
     const feeds = [];
-    for (const f of this.feeds.values()) if (f.source === 'agent' && !f.ratified_at) feeds.push({ id: f.id, name: f.name, category: f.category, by: f.added_by, rationale: f.rationale, url: f.url });
+    for (const f of this.feeds.values()) if (f.source === 'agent' && !f.ratified_at) {
+      const o = { id: f.id, name: f.name, category: f.category, by: f.added_by, rationale: f.rationale, url: f.url };
+      // a repo source summarizes itself — "N docs @ <anchor>" — so the queue reads
+      // clearly at ratify time without leaning on the rationale (SPEC-repos-as-source-fixes #4)
+      if (f.config && f.config.kind === 'repo') {
+        let docs = 0; for (const id of (this.byFeed.get(f.id) || [])) { const r = this.items.get(id); if (r && !r.archived) docs++; }
+        o.kind = 'repo'; o.docs = docs; o.anchor = f.config.anchor;
+      }
+      feeds.push(o);
+    }
     const relations = [];
     for (const [gid, c] of this.cards) for (const e of ((c.glass || {}).related) || []) {
       if (e.source !== 'agent' || e.ratified_at) continue;

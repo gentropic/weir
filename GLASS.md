@@ -728,10 +728,14 @@ record: [docs/design/stacks-first-class.md](docs/design/stacks-first-class.md).
 (`adapter:'repo'`, like `stacks`/`saved`), so the GCU constellation becomes a queryable
 subgraph: `weir_search "totality security boundary"` hits hopper's actual docs *and* the
 librarian's dive-map, related. **weir never reads the repo or runs `git`** — the browser
-has no filesystem-of-record and no process. The **agent** (which has the files + git)
-hands docs in via **`weir_ingestRepo({repo, anchor, docs, removed?})`**; weir stores them
-as `doc` items (stable id `repo:<slug>:<pathhash>`, idempotent via `upsertItems` — never
-resets read/saved/tags), keyed to a commit **`anchor`** held in the source's `config`.
+has no filesystem-of-record and no `git`. The **agent** (which has the files + git) drives
+**`weir_ingestRepo({repo, anchor, docs?, paths?, removed?})`**; weir stores the docs
+as `doc` items (own `form:'doc'`; stable id `repo:<slug>:<pathhash>`, idempotent via
+`upsertItems` — never resets read/saved/tags), keyed to a commit **`anchor`** held in the
+source's `config`. Content arrives two ways: **`docs:[{markdown}]`** (inline — for a
+gitignored `CLAUDE.md` or when nothing's mounted) or **`paths:[…]`** (the agent names
+changed files; weir reads each from a **read-only FSA mount** of the repos parent folder
+— no verbatim-conduit cost, and weir reads only the named files, never walking the tree).
 First call creates the source as an agent **proposal** (→ the review queue, ratified like
 a feed, §17.3); the source's `kind:'repo'` is the provenance marker ("the project's
 words" — no new `source` tier). **Refresh = the dive-ledger, agent-side:** read the

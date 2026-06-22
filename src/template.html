@@ -294,6 +294,12 @@
         <label class="set-row">author tag<input type="text" id="set-courier-author" class="field" autocomplete="off" spellcheck="false" placeholder="laney" title="The author stamped on dispatches ingested from this Courier, so you can tell them from your own notes."></label>
         <div class="hint"><b>Optional.</b> An FS-backed exchange with an external collaborator (e.g. <b>Laney</b>): weir publishes a curated slice into <code>out/</code> (your vocabulary + recent captures) and ingests dispatches from <code>in/</code> as <code>author</code>-tagged notes. Point this at the folder you sync (Syncthing, …) — how it's shared is up to you; weir just reads the folder. Its <code>README.md</code> documents the protocol for the collaborator.</div>
       </section>
+      <section class="set-group">
+        <h4>Repos — source ingest (read-only)</h4>
+        <div class="set-row"><span>folder: <b id="set-repos-loc">not connected</b></span><span id="set-repos-actions"></span></div>
+        <div class="set-row"><span id="set-repos-status" class="hint">—</span></div>
+        <div class="hint"><b>Optional.</b> Mount your repos parent folder (e.g. <code>~/Documents/GitHub</code>) <b>read-only</b> so the agent can ingest a repo's docs as a source (<code>weir_ingestRepo</code> with <code>paths:[…]</code>) without sending every doc's full text through the tool call. weir reads only the exact files named in an ingest — it never browses the tree — and can never write here (read-only grant).</div>
+      </section>
       </div>
       </div>
     </div>

@@ -21,6 +21,7 @@ import { monogram } from '../favicon.js';
 import { assessFeed } from '../health.js';
 import { Store } from '../store/store.js';
 import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle, loadHandle } from '../fsmount.js';
+import { VFS } from '../../../vendor/vfs.js';   // read-only repos mount (SPEC-repos-as-source-fixes #5)
 import { facetsOf, FACETS } from '../glass.js';
 import { WORLD_PATH, WORLD_VIEWBOX } from '../../../vendor/worldmap.js';
 import { getKey, hasKey, saveKey } from '../llmkeys.js';
@@ -254,6 +255,7 @@ export class App {
     backupFile?.addEventListener('change', async () => { const f = backupFile.files[0]; if (f) await this.restoreBackup(await f.text()); backupFile.value = ''; });
     document.getElementById('set-storage-actions')?.addEventListener('click', (e) => this.onMountAction(e));
     document.getElementById('set-courier-actions')?.addEventListener('click', (e) => this.onCourierAction(e));
+    document.getElementById('set-repos-actions')?.addEventListener('click', (e) => this.onReposAction(e));
     document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
     document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
     document.getElementById('bridge-recheck')?.addEventListener('click', () => this.checkBridge());
@@ -3671,6 +3673,7 @@ export class App {
     this._refreshStorageInfo();
     this.renderStorageMount();
     this.renderCourierSettings();
+    this.renderReposSettings();
     { const f = document.getElementById('settings-filter'); if (f) f.value = ''; }   // fresh filter each open
     this._showSettingsTab(this._setTab || 'reading');   // restore the last-open tab
     { const wv = document.getElementById('weir-version'), va = document.getElementById('set-version-about'); if (wv && va) va.textContent = wv.textContent; }
@@ -3862,6 +3865,61 @@ export class App {
       loc.textContent = 'not connected';
       acts.innerHTML = fsaOk ? '<button class="btn-link" data-courier="connect">connect a folder…</button>' : '<span class="hint">needs Edge/Chrome</span>';
       if (st) st.textContent = '—';
+    }
+  }
+
+  // ── Repos mount (read-only) — source ingest without the verbatim conduit ────
+  // weir mounts the repos PARENT folder read-only; the agent runs git diff and names
+  // CHANGED paths to weir_ingestRepo, and weir reads just those files from the mount —
+  // never walking the tree, never writing (SPEC-repos-as-source-fixes #5). The agent
+  // owns git; weir only reads named bytes.
+  onReposAction(e) {
+    const a = e.target?.dataset?.repos; if (!a) return;
+    if (a === 'connect') this.mountReposFolder();
+    else if (a === 'disconnect') this.disconnectReposFolder();
+  }
+  async _openReposVfs(handle) { this.reposHandle = handle; this.reposVfs = await VFS.create({ type: 'fsaa', handle }); }
+  async mountReposFolder() {
+    const msg = document.getElementById('set-repos-status');
+    let handle;
+    try { handle = await pickDirectory('weir-repos', 'read'); }      // READ-ONLY grant
+    catch (e) { if (e && e.name === 'AbortError') return; if (msg) msg.textContent = e.message; return; }
+    try { await this._openReposVfs(handle); await saveHandle(handle, 'repos'); if (msg) msg.textContent = ''; }
+    catch (e) { if (msg) msg.textContent = `mount failed: ${e.message}`; }
+    this.renderReposSettings();
+  }
+  async disconnectReposFolder() {
+    this.reposVfs = null; this.reposHandle = null;
+    await clearHandle('repos');
+    this.renderReposSettings();
+  }
+  // Read ONE named doc from the mounted repos folder: <repoDir>/<path>, UTF-8, ≤1 MB.
+  // Blocks `..` traversal so a path can't escape the repo dir. Returns null if absent.
+  // The single point where weir touches a repo file — only ever a path the agent named.
+  async readRepoDoc(repoDir, path) {
+    if (!this.reposVfs) throw new Error('repos folder not mounted — mount it (read-only) in Settings → Courier, or pass docs:[{markdown}]');
+    const clean = String(path).replace(/\\/g, '/').replace(/^\/+/, '');
+    if (clean.split('/').includes('..')) throw new Error(`invalid path "${path}" (no .. traversal)`);
+    const dir = String(repoDir).replace(/^\/+|\/+$/g, '');
+    const abs = `/${dir}/${clean}`;
+    let buf;
+    try { buf = await this.reposVfs.readFile(abs); }
+    catch (e) { if (e && (e.code === 'ENOENT' || e.name === 'NotFoundError')) return null; throw e; }
+    const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    if (bytes.length > 1_000_000) throw new Error(`${path} exceeds 1 MB`);
+    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  }
+  renderReposSettings() {
+    const loc = document.getElementById('set-repos-loc');
+    const acts = document.getElementById('set-repos-actions');
+    if (!loc || !acts) return;
+    const fsaOk = typeof window !== 'undefined' && !!window.showDirectoryPicker;
+    if (this.reposVfs && this.reposHandle) {
+      loc.textContent = (this.reposHandle.name || 'folder') + ' ✓ (read-only)';
+      acts.innerHTML = '<button class="btn-link" data-repos="disconnect">disconnect</button>';
+    } else {
+      loc.textContent = 'not connected';
+      acts.innerHTML = fsaOk ? '<button class="btn-link" data-repos="connect">mount a folder…</button>' : '<span class="hint">needs Edge/Chrome</span>';
     }
   }
 

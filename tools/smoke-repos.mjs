@@ -6,6 +6,8 @@ import assert from 'node:assert';
 import { VFS } from '../vendor/vfs.js';
 import { Store } from '../src/js/store/store.js';
 import { buildWeirTools } from '../src/js/webmcp.js';
+import { facetsOf } from '../src/js/glass.js';
+import { hash32 } from '../src/js/store/schema.js';
 
 const store = new Store(await VFS.create()); await store._hydrate();
 const app = { renderAll() {} };
@@ -72,6 +74,58 @@ const made = await t.relate({ from: 'stacks:map1', to: readme.id, type: 'same-to
 assert.equal(made.related, true, 'dive-map relates to a repo doc (both auto-carded if needed)');
 const rel = await t.relatedTo({ id: readme.id });
 assert.ok(rel.backlinks.some((b) => b.id === 'stacks:map1'), 'the repo doc is back-linked from the dive-map');
+
+// ── pilot punch-list fixes (SPEC-repos-as-source-fixes) ──
+// #1: refresh updates the still-pending proposal's rationale in place
+assert.equal(store.getFeed('repo:auditable').rationale, 'GCU constellation map', 'rationale stored at creation');
+await t.ingestRepo({ repo: '../auditable', anchor: 'dddd444', rationale: 'a better blurb' });
+assert.equal(store.getFeed('repo:auditable').rationale, 'a better blurb', '#1 refresh updated the rationale in place');
+
+// #2: an oversized rationale is clamped at the MCP boundary (can't wall the queue)
+await t.ingestRepo({ repo: '../auditable', anchor: 'eeee555', rationale: 'x'.repeat(2000) });
+const clamped = store.getFeed('repo:auditable').rationale;
+assert.ok(clamped.length <= 500 && clamped.endsWith('…'), '#2 oversized rationale clamped + ellipsized');
+
+// #3: repo docs get their own catalog `form` (not 'article'), so the corpus can scope to project docs
+assert.deepEqual(facetsOf(store.getItem(readme.id), store.getFeed('repo:auditable')).form, ['doc'], '#3 form facet = doc');
+
+// #4: the repo source summarizes itself in the review queue (N docs @ anchor), not via rationale text
+const rp = store.pendingProposals().feeds.find((f) => f.id === 'repo:auditable');
+assert.ok(rp && rp.kind === 'repo' && rp.docs >= 1 && rp.anchor === 'eeee555', '#4 pendingProposals carries repo docs + anchor');
+const rq = await t.reviewQueue({ kind: 'feed' });
+const ritem = rq.items.find((i) => i.id === 'repo:auditable');
+assert.ok(ritem && ritem.repo === true && ritem.docs >= 1 && ritem.anchor, '#4 reviewQueue surfaces the repo summary');
+
+// ── #5: path-based ingest reads named files from a (mocked) read-only repos mount ──
+// No verbatim conduit: the agent names paths; weir reads the bytes. Here a memory VFS
+// stands in for the FSA mount (the real app.readRepoDoc reads via the read-only handle).
+{
+  const mem = await VFS.create();
+  await mem.mkdir('/pathtest/docs', { recursive: true });
+  await mem.writeFile('/pathtest/README.md', '# pathtest (full)\n\nthe complete readme, not abridged through a tool call');
+  await mem.writeFile('/pathtest/docs/SPEC.md', '# SPEC full body');
+  const appM = {
+    renderAll() {},
+    async readRepoDoc(dir, path) {                       // mirrors the real method's contract
+      const clean = String(path).replace(/\\/g, '/').replace(/^\/+/, '');
+      if (clean.split('/').includes('..')) throw new Error('invalid path (no .. traversal)');
+      try { return await mem.readFile(`/${dir}/${clean}`, 'utf8'); } catch { return null; }
+    },
+  };
+  const tm = buildWeirTools({ store, app: appM });
+  const rp = await tm.ingestRepo({ repo: 'pathtest', anchor: 'p1', paths: ['README.md', { path: 'docs/SPEC.md', title: 'Spec' }, 'missing.md'] });
+  assert.equal(rp.inserted, 2, '#5 two named files read from the mount + ingested');
+  assert.ok(rp.skipped && rp.skipped.some((s) => s.path === 'missing.md'), '#5 a missing path is reported in skipped, not fatal');
+  assert.match(await store.getContent('repo:pathtest:' + hash32('README.md')), /not abridged through a tool call/, '#5 full body read from disk (no conduit)');
+  // traversal is blocked + reported, never fatal
+  const trav = await tm.ingestRepo({ repo: 'pathtest', anchor: 'p2', paths: ['../escape.md'] });
+  assert.ok(trav.skipped.some((s) => /traversal/.test(s.error)), '#5 .. traversal blocked + reported');
+  // hybrid: paths + inline docs in one call
+  const hy = await tm.ingestRepo({ repo: 'pathtest', anchor: 'p3', paths: ['README.md'], docs: [{ path: 'CLAUDE.md', markdown: '# charter (gitignored, passed inline)' }] });
+  assert.ok(hy.inserted >= 1 && hy.updated >= 1, '#5 hybrid paths + inline docs both land');
+  // paths with no mount → a clear error (not a silent miss)
+  await assert.rejects(buildWeirTools({ store, app: { renderAll() {} } }).ingestRepo({ repo: 'pathtest', paths: ['README.md'] }), /not mounted/, '#5 paths without a mount errors clearly');
+}
 
 // ── validation ──
 await assert.rejects(t.ingestRepo({}), /repo/, 'needs a repo');

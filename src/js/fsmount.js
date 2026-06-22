@@ -38,18 +38,19 @@ export async function clearHandle(key = HANDLE_KEY) { try { await _tx('readwrite
 
 // Prompt the user to pick a directory (needs a user gesture). `id` lets the browser
 // remember a distinct last-folder per purpose (store vs each courier).
-export async function pickDirectory(id = 'weir-store') {
+export async function pickDirectory(id = 'weir-store', mode = 'readwrite') {
   if (typeof window === 'undefined' || !window.showDirectoryPicker) {
     throw new Error('This browser has no File System Access API — try Edge or Chrome (desktop).');
   }
-  return window.showDirectoryPicker({ mode: 'readwrite', id });
+  return window.showDirectoryPicker({ mode, id });   // mode 'read' for a read-only mount (e.g. the repos folder)
 }
 
 // 'granted' | 'prompt' | 'denied'. `request: true` triggers the permission
-// prompt (must be inside a user gesture).
-export async function handlePermission(handle, request = false) {
+// prompt (must be inside a user gesture). `mode` matches the grant requested at
+// pick time ('read' for a read-only mount, 'readwrite' for the store/Courier).
+export async function handlePermission(handle, request = false, mode = 'readwrite') {
   if (!handle || !handle.queryPermission) return 'denied';
-  const opts = { mode: 'readwrite' };
+  const opts = { mode };
   try {
     const q = await handle.queryPermission(opts);
     if (q === 'granted') return 'granted';

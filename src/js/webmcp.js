@@ -99,6 +99,10 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // channel's identity (folder = identity, carried by the shim as client.identity).
   // SPEC-librarian §2. A null client (ws/http, or a local invoke) → a bare 'agent'.
   function agentProv(client) { return { source: 'agent', by: (client && client.identity) || 'agent' }; }
+  // A rationale is a short human-facing blurb for the review queue — cap agent-supplied
+  // values at the MCP boundary so a malformed/oversized call (e.g. a 4 KB escaped-JSON
+  // blob) can't wall the queue (SPEC-repos-as-source-fixes #2). Returns undefined for empty.
+  function clampRationale(s) { if (s == null) return undefined; const t = String(s).trim(); if (!t) return undefined; return t.length > 500 ? t.slice(0, 499) + '…' : t; }
 
   async function queryItems(input = {}) {
     const { cursor } = input;
@@ -521,7 +525,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     for (const f of prop.feeds) {
       counts.feed++;
       if ((kind && kind !== 'feed') || items.length >= limit) continue;
-      items.push({ kind: 'feed', id: f.id, title: f.name, url: f.url, category: f.category, by: f.by, rationale: f.rationale, ratifyWith: 'weir_ratify' });
+      items.push({ kind: 'feed', id: f.id, title: f.name, url: f.url, category: f.category, by: f.by, rationale: f.rationale, ratifyWith: 'weir_ratify', ...(f.kind === 'repo' ? { repo: true, docs: f.docs, anchor: f.anchor } : {}) });
     }
     for (const e of prop.relations) {
       counts.relation++;
@@ -735,7 +739,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     const from = await toGlassId(input.from, { create: true });
     const to = await toGlassId(input.to, { create: true });
     const p = agentProv(client);
-    const edge = store.relateCards(from, to, { type: input.type || 'related', source: p.source, by: p.by, rationale: input.rationale ? String(input.rationale) : undefined });
+    const edge = store.relateCards(from, to, { type: input.type || 'related', source: p.source, by: p.by, rationale: clampRationale(input.rationale) });
     await store.flush();
     return { related: true, from: String(input.from), to: String(input.to), type: edge.type };
   }
@@ -873,7 +877,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     let host = url; try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* keep raw */ }
     const name = input.name || (matched && matched.titleFor && matched.titleFor(url)) || host;
     const p = agentProv(client);   // mark who added it (the gap: feeds carried no provenance)
-    const feed = await store.putFeed({ url: resolved, name, adapter, category: input.category || undefined, source: p.source, added_by: p.by, rationale: input.rationale ? String(input.rationale) : undefined });
+    const feed = await store.putFeed({ url: resolved, name, adapter, category: input.category || undefined, source: p.source, added_by: p.by, rationale: clampRationale(input.rationale) });
     if (app.poller) app.poller.pollFeed(feed).then(() => app.renderAll && app.renderAll()).catch(() => {});
     if (app.renderRail) app.renderRail();
     return { id: feed.id, name: feed.name, adapter: feed.adapter, url: feed.url, category: feed.category || undefined };
@@ -1153,7 +1157,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       tags: Array.isArray(b.tags) ? [...new Set(b.tags.map((t) => String(t).trim()).filter(Boolean))] : undefined,
       ddc: b.ddc || undefined, lcc: b.lcc || undefined,
       shelved: (b.shelved != null) ? !!b.shelved : undefined,
-      rationale: b.rationale ? String(b.rationale) : undefined,   // why proposed (shown in the review queue)
+      rationale: clampRationale(b.rationale),   // why proposed (shown in the review queue)
     })).filter((b) => b.title || b.lt_id);   // NEW books need a title; an UPDATE (by id) does not — so { id, shelved:true } works
     if (!norm.length) throw new Error('pass new books with a title, or { id, … } to update an existing holding');
     // The import keys by lt_id (when targeting an existing holding) else by isbn||title;
@@ -1199,10 +1203,27 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   async function ingestRepo(input = {}, client) {
     if (!app) throw new Error('ingestRepo is only available in the running app');
     if (input.repo == null || String(input.repo).trim() === '') throw new Error('provide `repo` (the repo name or path, e.g. "auditable" or "../auditable")');
-    const docs = Array.isArray(input.docs) ? input.docs : [];
+    const docs = Array.isArray(input.docs) ? input.docs.slice() : [];
+    const paths = Array.isArray(input.paths) ? input.paths : [];
     const removed = Array.isArray(input.removed) ? input.removed : [];
-    if (!docs.length && !removed.length && input.anchor == null) throw new Error('pass `docs` (doc bodies to ingest), `removed` (paths to archive), and/or `anchor`');
+    if (!docs.length && !paths.length && !removed.length && input.anchor == null) throw new Error('pass `docs` (doc bodies), `paths` (read from the mounted repos folder), `removed` (paths to archive), and/or `anchor`');
     for (const d of docs) if (!d || !d.path) throw new Error('each doc needs a `path` (its path within the repo)');
+    // `paths` (no verbatim conduit): weir reads each NAMED file from the read-only repos
+    // mount — never the full text through the call, never walking the tree (fixes #5).
+    const skipped = [];
+    if (paths.length) {
+      if (!app.readRepoDoc) throw new Error('repos folder not mounted — mount your GitHub folder (read-only) in Settings, or pass docs:[{markdown}]');
+      const repoDir = String(input.repo).replace(/[\\/]+$/, '').replace(/^.*[\\/]/, '');   // basename
+      for (const p of paths) {
+        const path = typeof p === 'string' ? p : (p && p.path);
+        if (!path) { skipped.push({ path: String(p), error: 'no path' }); continue; }
+        let content;
+        try { content = await app.readRepoDoc(repoDir, path); }
+        catch (e) { skipped.push({ path, error: e.message }); continue; }
+        if (content == null) { skipped.push({ path, error: 'not found in the mounted repo' }); continue; }
+        docs.push({ path, markdown: content, title: (p && p.title) || undefined, url: (p && p.url) || undefined });
+      }
+    }
     const p = agentProv(client);
     const r = await store.ingestRepo({
       repo: String(input.repo),
@@ -1210,11 +1231,11 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       anchor: input.anchor != null ? String(input.anchor) : undefined,
       docs, removed,
       category: input.category ? String(input.category) : undefined,
-      source: p.source, added_by: p.by, rationale: input.rationale ? String(input.rationale) : undefined,
+      source: p.source, added_by: p.by, rationale: clampRationale(input.rationale),
     });
     await store.flush();
     if (app.renderAll) app.renderAll();
-    return { ok: true, ...r };
+    return { ok: true, ...r, ...(skipped.length ? { skipped } : {}) };
   }
 
   // One-shot provenance normalization (SPEC-librarian §2): rewrite the agent's
@@ -1482,16 +1503,17 @@ const TOOLS = [
   },
   {
     name: 'weir_ingestRepo', fn: 'ingestRepo',
-    description: 'Ingest a code repo’s own DOCS as a first-class source (SPEC-repos-as-source) — so the GCU constellation becomes a queryable subgraph in weir. weir does NOT read the repo or run git; YOU (with the files + git) hand the docs in. `repo` = the repo name/path (e.g. "auditable"); `docs` = [{ path, title?, markdown, url?, date? }] — its README/SPEC/docs/CLAUDE.md (docs, NOT code). `anchor` = the commit SHA these docs are from. First call CREATES the source as a proposal (→ weir_reviewQueue, ratify like a feed); later calls REFRESH it. REFRESH recipe: read the stored anchor from weir_listSources, run `git diff --name-only <anchor> HEAD -- <doc globs>` (+ `--diff-filter=D` for deletions) locally, then call this with ONLY the changed docs + the new HEAD as `anchor` + deleted paths in `removed`. Idempotent (stable ids; never resets read/saved/tags); `removed` archives (never deletes). Docs become `doc` items — searchable, quotable, and relatable like any item; relate your dive-map (a stacks note) to them with weir_relate. Returns { ok, source, inserted, updated, removed, anchor }.',
+    description: 'Ingest a code repo’s own DOCS as a first-class source (SPEC-repos-as-source) — so the GCU constellation becomes a queryable subgraph in weir. weir never runs git; YOU (with the files + git) decide WHAT to ingest. `repo` = the repo name/path (e.g. "auditable"). `anchor` = the commit SHA these docs are from. TWO ways to supply content: (a) **`paths`** = [path strings, or { path, title?, url? }] — weir reads each NAMED file from the read-only repos folder you mounted in Settings (no full text through this call; the way to ingest at fidelity without a verbatim conduit); (b) **`docs`** = [{ path, title?, markdown, url?, date? }] — you pass the body inline (use for a gitignored/untracked file like CLAUDE.md, or when no folder is mounted). Mix both. README/SPEC/docs/CLAUDE.md — docs, NOT code. First call CREATES the source as a proposal (→ weir_reviewQueue, ratify like a feed); later calls REFRESH it (and can fix the name/category/rationale in place). REFRESH recipe: read the stored anchor from weir_listSources, run `git diff --name-only <anchor> HEAD -- <doc globs>` (+ `--diff-filter=D` for deletions) locally, then call this with only the changed `paths`/`docs` + the new HEAD as `anchor` + deleted paths in `removed`. Idempotent (stable ids; never resets read/saved/tags); `removed` archives (never deletes). Docs become `doc` items — searchable, quotable, relatable; relate your dive-map (a stacks note) to them with weir_relate. Returns { ok, source, inserted, updated, removed, anchor, skipped? }.',
     inputSchema: {
       type: 'object', properties: {
-        repo: { type: 'string', description: 'The repo name or path (e.g. "auditable" or "../auditable") — the source key is its basename' },
-        name: { type: 'string', description: 'Display name for the source (default: "<repo> (repo)")' },
+        repo: { type: 'string', description: 'The repo name or path (e.g. "auditable" or "../auditable") — the source key + mounted-folder dir is its basename' },
+        name: { type: 'string', description: 'Display name for the source (default: "<repo> (repo)"); updatable on refresh' },
         anchor: { type: 'string', description: 'The commit SHA these docs are from — the dive-ledger anchor; advanced on each refresh' },
-        docs: { type: 'array', description: 'Docs to ingest/update: [{ path, title?, markdown, url?, date? }] (docs only, not code)', items: { type: 'object', properties: { path: { type: 'string' }, title: { type: 'string' }, markdown: { type: 'string' }, url: { type: 'string' }, date: { type: 'string' } }, required: ['path'] } },
+        paths: { type: 'array', description: 'Doc paths to READ from the mounted repos folder: ["README.md", …] or [{ path, title?, url? }]. No verbatim conduit — weir reads the named files itself.', items: {} },
+        docs: { type: 'array', description: 'Docs with inline bodies: [{ path, title?, markdown, url?, date? }] — for gitignored/untracked files or when no folder is mounted', items: { type: 'object', properties: { path: { type: 'string' }, title: { type: 'string' }, markdown: { type: 'string' }, url: { type: 'string' }, date: { type: 'string' } }, required: ['path'] } },
         removed: { type: 'array', items: { type: 'string' }, description: 'Doc paths deleted since the anchor — archived (never deleted)' },
-        category: { type: 'string', description: 'Folder to group the source under (default "repos")' },
-        rationale: { type: 'string', description: 'Why you are adding this source — shown in the review queue at ratify time' },
+        category: { type: 'string', description: 'Folder to group the source under (default "repos"); updatable on refresh' },
+        rationale: { type: 'string', description: 'Why you are adding this source — shown in the review queue; updatable on refresh (capped to a short blurb)' },
       }, required: ['repo'],
     },
     annotations: { title: 'Ingest a repo as a source' },

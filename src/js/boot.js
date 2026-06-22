@@ -137,6 +137,13 @@ async function boot() {
       if (h && (await handlePermission(h)) === 'granted') { await app.courier.mount(h); await app.courier.publish().catch(() => {}); app.renderCourierSettings?.(); }
     } catch { /* offline / no folder — user connects from Settings */ }
   })();
+  // Repos mount (read-only) — silently reconnect if still granted (SPEC-repos-as-source-fixes #5).
+  (async () => {
+    try {
+      const h = await loadHandle('repos');
+      if (h && (await handlePermission(h, false, 'read')) === 'granted') { await app._openReposVfs(h); app.renderReposSettings?.(); }
+    } catch { /* no repos folder — user mounts from Settings */ }
+  })();
 
   app.mount();
   // The `reader` role never polls — the `hub` is the corpus's single writer (SYNC.md §2);

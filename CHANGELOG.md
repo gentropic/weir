@@ -6,6 +6,25 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Repos-as-source pilot fixes — path ingest kills the verbatim conduit — 2026-06-22
+
+From the librarian's first live `weir_ingestRepo` (BMA):
+- **`weir_ingestRepo` gains `paths:[…]`** — the agent names changed files; weir reads each
+  from a **read-only FSA mount** of the repos parent folder (mount it in Settings → Courier),
+  so a doc's full text no longer travels through the tool call. weir reads **only the named
+  files** (`..` traversal blocked, ≤1 MB, UTF-8), never walks the tree, and can't write
+  (read-only grant). Inline `docs:[{markdown}]` still works (gitignored/unmounted case) and
+  mixes with `paths`. `skipped[]` reports unreadable paths; an unmounted `paths:` call errors
+  clearly. (`fsmount` gained a read-only `mode`; `app.reposVfs`/`readRepoDoc` + boot reconnect.)
+- **Refresh can fix the pending proposal** — `rationale` (+ name/category) now updatable on a
+  later `weir_ingestRepo`, not just at creation.
+- **Rationale clamped** (≤500 ch) at the MCP boundary (`ingestRepo`/`addFeed`/`relate`/
+  `addBook`) — a malformed oversized blob can't wall the review queue.
+- **Repo docs get `form:'doc'`** (was `'article'`) — `weir_queryCatalog({facets:{form:['doc']}})`
+  scopes to project documentation.
+- **Repo proposals self-summarize** in `weir_reviewQueue` — `{repo, docs:N, anchor}`.
+- Tests: extended `tools/smoke-repos.mjs`. Record: `docs/design/repos-as-source.md` (Pilot fixes).
+
 ### Citation export — weir_cite, the grounded-writing primitive — 2026-06-22
 
 - **`weir_cite`** (GLASS §17.1) — the companion to `weir_quote` (quote *verifies* a span;
