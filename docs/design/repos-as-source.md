@@ -153,8 +153,19 @@ metadata-only (no `markdown`/`paths` content), and weir accepted that silently. 
 `ingestRepo` now returns **`bodyless: [paths]`** for any doc handed in without a body, so a
 metadata-only ingest is visible. The cure for the existing items is re-ingesting with `paths:`
 (mount granted) — stable ids (`repo:<slug>:<hash(path)>`) make `upsertItems` *update in place*,
-writing the bodies — then `weir_catalogControl recatalog category:"repos"` (NOT `clear`, which
-would drop hand-authored cards) redoes the skipped ones into body-rich cards.
+writing the bodies — then `weir_catalogControl recatalog category:"repos"` re-cataloging the
+scope from the now-present bodies.
+
+**Correction (confirmed on deploy, librarian's `…-CONFIRMED` note):** `recatalog:true`
+**discards the whole scope's cards first** — *including* hand-authored ones (it calls
+`uncatalogScope` → `cleared: N`; the tool schema says so: "DISCARD that scope's existing cards
+first"). Earlier guidance here that it "keeps hand-authored cards" was **wrong**. The right rule
+with repo docs: once bodies are present, **let `recatalog` redo from the bodies — don't
+pre-hand-author** (the body-fed cards, conf 0.7, beat terse hand facets anyway). The standing
+footgun — `recatalog` silently clearing genuinely-authored cards (e.g. metadata-only book
+holdings where the cataloger can only abstain/fabricate) — is noted for a possible future
+safeguard (preserve `reviewer`-stamped cards, or require an explicit `includeAuthored`), not yet
+built.
 
 **Then the `paths:` read itself was broken** (the librarian's re-ingest came back all-bodyless):
 `app.readRepoDoc` fed the string from `vfs.readFile` (no-encoding → `file.text()`) into

@@ -6,6 +6,16 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Doc/wording fix: `recatalog` discards authored cards — 2026-06-22
+
+- Corrected guidance (caught by the librarian on deploy): `weir_catalogControl recatalog`
+  **discards the whole scope's cards first, including hand-authored / human-reviewed ones**
+  (`uncatalogScope` → `cleared: N`). Earlier docs claimed it "keeps hand-authored cards" — wrong.
+  Sharpened the `recatalog` tool description with the ⚠ (don't recatalog a scope of authored
+  metadata-only holdings — the cataloger abstains on thin metadata, so you'd lose the authored
+  cards) and fixed `docs/design/repos-as-source.md`. Footgun (silently clearing authored cards)
+  noted for a possible future safeguard. No behavior change.
+
 ### Re-vendor @gcu/librarian — engine-level retrieval-precision fixes — 2026-06-22
 
 - **`vendor/librarian.js` re-vendored** from `auditable@e9bb47b` with the two engine fixes

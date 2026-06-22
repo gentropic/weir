@@ -1654,7 +1654,7 @@ const TOOLS = [
       feed: { type: 'string', description: 'start scope: a source by id OR display name (e.g. "Saved Links")' },
       category: { type: 'string', description: 'start scope: a folder name ("" = ungrouped)' },
       type: { type: 'string', description: 'start scope: item type (article|video|paper|…)' },
-      recatalog: { type: 'boolean', description: 'with action:start + a scope: DISCARD that scope\'s existing cards first, then re-catalog from scratch (re-do a batch cataloged under an old rule)' },
+      recatalog: { type: 'boolean', description: 'with action:start + a scope: DISCARD that scope\'s existing cards first, then re-catalog from scratch (re-do a batch cataloged under an old rule). ⚠ This discards ALL cards in scope — INCLUDING hand-authored / human-reviewed ones (it can\'t tell them apart); they get re-derived by the cataloger, which ABSTAINS on thin/metadata-only items. Safe when the items have real body text to re-read; don\'t recatalog a scope of authored metadata-only holdings (you\'d lose the authored cards).' },
     } },
     annotations: { title: 'Control cataloging', destructiveHint: true },
   },
