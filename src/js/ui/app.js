@@ -1650,7 +1650,7 @@ export class App {
     }).join('')
       + (isWrappedUrl(it.url) ? '<span class="tag unresolved" title="Shortened/share link — resolving to its real URL in the background">⧉ unresolved</span>' : '');
     const saved = it.saved ? '<span class="flag">★</span>' : '';
-    const cn = this.catalog ? this._callNumber(it) : null;
+    const cn = (this.catalog || it.type === 'book') ? this._callNumber(it) : null;   // books are the shelf — show their call number in any view, not only the catalog browser
     const callno = cn ? `<span class="callno" data-callno="${escapeHtml(renderCoded(cn))}" title="${escapeHtml(renderReadable(cn))} — click to copy the call number">${escapeHtml(renderCoded(cn))}</span>` : '';
     const ddc = (this.catalog && it.structured && it.structured.ddc) ? `<span class="ddc" title="Dewey — display metadata from your record (not the organizing system)">DDC ${escapeHtml(it.structured.ddc)}</span>` : '';
     // FRBR: this item is one manifestation of a Work that appears in N sources.
