@@ -81,4 +81,13 @@ assert.ok(xl.expanded && xl.expanded.krigagem && xl.expanded.krigagem.includes('
 const noxl = await t2.search({ q: 'krigagem', expand: false });     // literal query — no bridge
 assert.ok(!noxl.items.some((i) => i.id === 'en') && !noxl.expanded, 'expand:false → literal query, EN item not bridged');
 
+// ── ACCENTED query term must stay one token + expand (EVAL2 asymmetry fix) ──
+store.recordSynonym('entity', 'geostatistics', 'geoestatística');   // pref ← accented pt-BR alt
+await store.upsertItems([{ id: 'geo', feed_id: 'stacks', type: 'note', title: 'Geostatistics primer', excerpt: 'variograms and kriging' }]);
+app.searchIndex = new SearchIndex(store).build();
+const t3 = buildWeirTools({ store, app });
+const acc = await t3.search({ q: 'geoestatística' });               // accented pt-BR query
+assert.ok(acc.expanded && acc.expanded['geoestatística'] && acc.expanded['geoestatística'].includes('geostatistics'), 'accented term stays whole + expands to its EN pref (was split on the í before)');
+assert.ok(acc.items.some((i) => i.id === 'geo'), 'accented pt-BR query bridges to the EN geostatistics item');
+
 console.log('rerank smoke ok:', JSON.stringify({ top: r.items[0].id, curated: cur.items.length, flipped: flip.items[0].id, bridged: xl.items.some((i) => i.id === 'en') }));

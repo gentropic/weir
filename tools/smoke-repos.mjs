@@ -127,6 +127,12 @@ assert.ok(ritem && ritem.repo === true && ritem.docs >= 1 && ritem.anchor, '#4 r
   await assert.rejects(buildWeirTools({ store, app: { renderAll() {} } }).ingestRepo({ repo: 'pathtest', paths: ['README.md'] }), /not mounted/, '#5 paths without a mount errors clearly');
 }
 
+// ── bodyless signal: a metadata-only doc (no markdown) is flagged, not silently stored empty ──
+const bl = await t.ingestRepo({ repo: '../auditable', anchor: 'f1', docs: [{ path: 'EMPTY.md', title: 'empty' }, { path: 'docs/full.md', markdown: '# Full\n\nreal body here' }] });
+assert.deepEqual(bl.bodyless, ['EMPTY.md'], 'metadata-only doc flagged in bodyless; the one with markdown is not');
+assert.ok(!store.getItem('repo:auditable:' + hash32('EMPTY.md')).has_content, 'the bodyless doc has no content (would skip cataloging)');
+assert.ok(store.getItem('repo:auditable:' + hash32('docs/full.md')).has_content, 'the doc with markdown has content');
+
 // ── validation ──
 await assert.rejects(t.ingestRepo({}), /repo/, 'needs a repo');
 await assert.rejects(t.ingestRepo({ repo: 'x' }), /docs.*removed.*anchor|pass/, 'needs something to do');

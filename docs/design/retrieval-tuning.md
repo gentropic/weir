@@ -71,6 +71,16 @@ non-title hit). The **librarian re-runs the pinned queries against the deployed 
 - **Cross-lingual** — EN↔pt-BR: a **known gap**, the residual for the deferred dense lane — not a
   regression.
 
+## EVAL2 follow-up — accented-term expansion (2026-06-22)
+
+The librarian validated #3.5 live but found an asymmetry: `geoestatística` (pt-BR) didn't expand
+to `geostatistics` while ASCII terms (`krigagem`) did. Cause was weir-side: the query tokenizer
+in `webmcp.search` was `[^a-z0-9]`, splitting accented terms *at the accent*
+(`geoestatística`→`geoestat`+`stica`) so they never reached `expandTerms`. Fixed: tokenize on
+`\p{L}\p{N}` (NFC), and `expandTerms` NFC-normalizes the synonym ring — accented terms now stay
+whole and bridge to their EN synonyms (which are ASCII and match the index cleanly, even before
+the engine's diacritic-tokenizer fix lands).
+
 ## Eval outcome + #3.5 vocab-synonym expansion (2026-06-22)
 
 The librarian ran the pinned eval against the deployed build (`retrieval-tuning-EVAL.md`):

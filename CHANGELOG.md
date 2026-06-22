@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Retrieval/ingest follow-ups from the librarian's eval — 2026-06-22
+
+- **Unicode-aware query tokenization** (`weir_search`): the query splitter was `[^a-z0-9]`,
+  which split an accented term at the accent (`geoestatística` → `geoestat` + `stica`) so it
+  never reached vocab expansion — breaking the pt-BR→EN synonym bridge for accented terms while
+  ASCII ones (`krigagem`) worked. Now splits on `\p{L}\p{N}` (NFC-normalized), and
+  `store.expandTerms` normalizes the synonym ring to NFC too, so accented terms stay whole and
+  bridge (the EVAL2 asymmetry).
+- **`weir_ingestRepo` reports `bodyless` docs**: a doc handed in with no `markdown` (metadata
+  only) is now flagged in the result instead of stored silently empty — empty-body docs can't be
+  cataloged (no text to read), which is what left 60 repo docs as `skipped:thin-metadata` (the
+  bodies were never ingested). The cure is re-ingesting with `paths:` (mounted) — stable ids
+  update the items in place, populating bodies — then `recatalog`.
+
 ### Retrieval tuning — curation-aware ranking in weir_search (cheap, pre-embeddings) — 2026-06-22
 
 From the librarian's repo-ingest pilot (a broad query swamped by the feed firehose):

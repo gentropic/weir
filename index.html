@@ -13054,15 +13054,18 @@ class Store {
       // (SPEC-repos-as-source-fixes #1) — else a poor first rationale was unfixable.
       feed = await this.updateFeed(feedId, { config, ...(name ? { name } : {}), ...(category ? { category } : {}), ...(rationale != null ? { rationale } : {}) });
     }
+    const bodyless = [];   // docs handed in with no body — flagged so a metadata-only ingest isn't silent
     const raws = docs.map((d) => {
       const path = String(d.path || '').replace(/^\/+/, '');
+      const content = d.markdown != null ? String(d.markdown) : '';
+      if (!content.trim()) bodyless.push(path);
       return {
         id: `${feedId}:${hash32(path)}`,
         feed_id: feedId,
         type: 'doc',
         title: d.title || path.split('/').pop() || path,
         url: d.url || undefined,
-        content: d.markdown != null ? String(d.markdown) : '',
+        content,
         published_at: d.date ? (Date.parse(d.date) || now()) : now(),
         tags: [slug],                       // findable by repo (spec: "tagged by repo")
         structured: { repo: slug, path },   // the doc's path within the repo
@@ -13077,7 +13080,7 @@ class Store {
       if (it && !it.archived) { it.archived = true; it.expires_at = undefined; this._markFeedDirty(feedId); archived++; }
     }
     if (archived) this.emit('items', { inserted: 0, updated: archived, skipped: 0 });
-    return { source: { id: feedId, name: feed.name, kind: 'repo', anchor: config.anchor, category: feed.category }, inserted: res.inserted, updated: res.updated, removed: archived, anchor: config.anchor };
+    return { source: { id: feedId, name: feed.name, kind: 'repo', anchor: config.anchor, category: feed.category }, inserted: res.inserted, updated: res.updated, removed: archived, anchor: config.anchor, ...(bodyless.length ? { bodyless } : {}) };
   }
 
   // Apply routing rules to a brand-new record (mutates tags/read/saved, sets
@@ -14002,14 +14005,15 @@ class Store {
   // synonyms added per term (query-blowup guard). Pure read over the SKOS vocab.
   expandTerms(terms, opts = {}) {
     const cap = opts.cap || 6;
-    const ring = new Map();   // every ring member (lowercased) → the Set of its full ring
+    const norm = (s) => String(s).normalize('NFC').toLowerCase();   // NFC so accented terms match regardless of composition
+    const ring = new Map();   // every ring member (normalized) → the Set of its full ring
     for (const f of Object.keys(this.vocab)) for (const [pref, c] of Object.entries(this.vocab[f] || {})) {
-      const members = [pref, ...((c && c.alt) || [])].map((t) => String(t).toLowerCase());
+      const members = [pref, ...((c && c.alt) || [])].map(norm);
       for (const m of members) { let s = ring.get(m); if (!s) ring.set(m, s = new Set()); for (const x of members) s.add(x); }
     }
     const out = []; const seen = new Set(); const added = {};
     for (const t of terms) {
-      const lt = String(t).toLowerCase();
+      const lt = norm(t);
       if (!seen.has(lt)) { seen.add(lt); out.push(lt); }
       const syns = ring.get(lt); if (!syns) continue;
       const adds = []; for (const s of syns) { if (s !== lt && !seen.has(s) && adds.length < cap) { seen.add(s); out.push(s); adds.push(s); } }
@@ -23302,7 +23306,10 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     const curatedOnly = input.curated === true;                 // hard-scope to the curated tier (#4)
     const rerank = input.rerank !== false;                      // curation-aware ranking on by default (the reference desk)
     const explain = input.explain === true;                     // surface the raw lexical score + weights, to tune
-    let qTerms = q.toLowerCase().split(/[^a-z0-9]+/i).filter((w) => w.length > 1);
+    // Unicode-aware tokenization (NFC) so an accented term (geoestatística) stays ONE token
+    // and reaches vocab expansion — was splitting on the accent into geoestat+stica, which
+    // broke the pt-BR→EN synonym bridge (SPEC-retrieval-tuning EVAL2).
+    let qTerms = q.normalize('NFC').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1);
     // Vocab-synonym query expansion (SPEC-retrieval-tuning #3.5): bridge curated synonyms /
     // cross-lingual pairs (kriging↔krigagem) lexically before any dense lane. On by default.
     let qStr = q, expandedWith;
@@ -24000,7 +24007,7 @@ const TOOLS = [
   },
   {
     name: 'weir_ingestRepo', fn: 'ingestRepo',
-    description: 'Ingest a code repo’s own DOCS as a first-class source (SPEC-repos-as-source) — so the GCU constellation becomes a queryable subgraph in weir. weir never runs git; YOU (with the files + git) decide WHAT to ingest. `repo` = the repo name/path (e.g. "auditable"). `anchor` = the commit SHA these docs are from. TWO ways to supply content: (a) **`paths`** = [path strings, or { path, title?, url? }] — weir reads each NAMED file from the read-only repos folder you mounted in Settings (no full text through this call; the way to ingest at fidelity without a verbatim conduit); (b) **`docs`** = [{ path, title?, markdown, url?, date? }] — you pass the body inline (use for a gitignored/untracked file like CLAUDE.md, or when no folder is mounted). Mix both. README/SPEC/docs/CLAUDE.md — docs, NOT code. First call CREATES the source as a proposal (→ weir_reviewQueue, ratify like a feed); later calls REFRESH it (and can fix the name/category/rationale in place). REFRESH recipe: read the stored anchor from weir_listSources, run `git diff --name-only <anchor> HEAD -- <doc globs>` (+ `--diff-filter=D` for deletions) locally, then call this with only the changed `paths`/`docs` + the new HEAD as `anchor` + deleted paths in `removed`. Idempotent (stable ids; never resets read/saved/tags); `removed` archives (never deletes). Docs become `doc` items — searchable, quotable, relatable; relate your dive-map (a stacks note) to them with weir_relate. Returns { ok, source, inserted, updated, removed, anchor, skipped? }.',
+    description: 'Ingest a code repo’s own DOCS as a first-class source (SPEC-repos-as-source) — so the GCU constellation becomes a queryable subgraph in weir. weir never runs git; YOU (with the files + git) decide WHAT to ingest. `repo` = the repo name/path (e.g. "auditable"). `anchor` = the commit SHA these docs are from. TWO ways to supply content: (a) **`paths`** = [path strings, or { path, title?, url? }] — weir reads each NAMED file from the read-only repos folder you mounted in Settings (no full text through this call; the way to ingest at fidelity without a verbatim conduit); (b) **`docs`** = [{ path, title?, markdown, url?, date? }] — you pass the body inline (use for a gitignored/untracked file like CLAUDE.md, or when no folder is mounted). Mix both. README/SPEC/docs/CLAUDE.md — docs, NOT code. First call CREATES the source as a proposal (→ weir_reviewQueue, ratify like a feed); later calls REFRESH it (and can fix the name/category/rationale in place). REFRESH recipe: read the stored anchor from weir_listSources, run `git diff --name-only <anchor> HEAD -- <doc globs>` (+ `--diff-filter=D` for deletions) locally, then call this with only the changed `paths`/`docs` + the new HEAD as `anchor` + deleted paths in `removed`. Idempotent (stable ids; never resets read/saved/tags); `removed` archives (never deletes). Docs become `doc` items — searchable, quotable, relatable; relate your dive-map (a stacks note) to them with weir_relate. Returns { ok, source, inserted, updated, removed, anchor, skipped?, bodyless? } — `bodyless` lists paths ingested with NO body (metadata-only); those can\'t be cataloged (no text to read), so pass their content via `paths` (mounted) or `docs:[{markdown}]`.',
     inputSchema: {
       type: 'object', properties: {
         repo: { type: 'string', description: 'The repo name or path (e.g. "auditable" or "../auditable") — the source key + mounted-folder dir is its basename' },
@@ -24413,7 +24420,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '1d2b42e';          // short content hash of the bundle (build id)
+const COMMIT = 'eb86680';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

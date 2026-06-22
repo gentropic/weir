@@ -143,4 +143,15 @@ a punch-list (`SPEC-repos-as-source-fixes`), all addressed:
 `tools/smoke-repos.mjs` (wired into `npm run smoke`): first ingest creates the source +
 `doc` items (proposal, never-polled, searchable); refresh re-ingests the delta, advances
 the anchor, and never resets state; `removed` archives without deleting; `weir_listSources`
-surfaces the anchor; a stacks dive-map relates to a repo doc by id.
+surfaces the anchor; a stacks dive-map relates to a repo doc by id; a metadata-only doc is
+flagged `bodyless` (below).
+
+## Bodyless-ingest signal (2026-06-22, from the cataloger-gap report)
+A repo-doc catalog pass left 60 docs at `skipped:thin-metadata` — diagnosed via the dev bridge
+as **no stored body** (`has_content` false; `getContent` empty): they'd been ingested
+metadata-only (no `markdown`/`paths` content), and weir accepted that silently. Fix:
+`ingestRepo` now returns **`bodyless: [paths]`** for any doc handed in without a body, so a
+metadata-only ingest is visible. The cure for the existing items is re-ingesting with `paths:`
+(mount granted) — stable ids (`repo:<slug>:<hash(path)>`) make `upsertItems` *update in place*,
+writing the bodies — then `weir_catalogControl recatalog category:"repos"` (NOT `clear`, which
+would drop hand-authored cards) redoes the skipped ones into body-rich cards.

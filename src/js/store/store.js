@@ -574,15 +574,18 @@ export class Store {
       // (SPEC-repos-as-source-fixes #1) — else a poor first rationale was unfixable.
       feed = await this.updateFeed(feedId, { config, ...(name ? { name } : {}), ...(category ? { category } : {}), ...(rationale != null ? { rationale } : {}) });
     }
+    const bodyless = [];   // docs handed in with no body — flagged so a metadata-only ingest isn't silent
     const raws = docs.map((d) => {
       const path = String(d.path || '').replace(/^\/+/, '');
+      const content = d.markdown != null ? String(d.markdown) : '';
+      if (!content.trim()) bodyless.push(path);
       return {
         id: `${feedId}:${hash32(path)}`,
         feed_id: feedId,
         type: 'doc',
         title: d.title || path.split('/').pop() || path,
         url: d.url || undefined,
-        content: d.markdown != null ? String(d.markdown) : '',
+        content,
         published_at: d.date ? (Date.parse(d.date) || now()) : now(),
         tags: [slug],                       // findable by repo (spec: "tagged by repo")
         structured: { repo: slug, path },   // the doc's path within the repo
@@ -597,7 +600,7 @@ export class Store {
       if (it && !it.archived) { it.archived = true; it.expires_at = undefined; this._markFeedDirty(feedId); archived++; }
     }
     if (archived) this.emit('items', { inserted: 0, updated: archived, skipped: 0 });
-    return { source: { id: feedId, name: feed.name, kind: 'repo', anchor: config.anchor, category: feed.category }, inserted: res.inserted, updated: res.updated, removed: archived, anchor: config.anchor };
+    return { source: { id: feedId, name: feed.name, kind: 'repo', anchor: config.anchor, category: feed.category }, inserted: res.inserted, updated: res.updated, removed: archived, anchor: config.anchor, ...(bodyless.length ? { bodyless } : {}) };
   }
 
   // Apply routing rules to a brand-new record (mutates tags/read/saved, sets
@@ -1522,14 +1525,15 @@ export class Store {
   // synonyms added per term (query-blowup guard). Pure read over the SKOS vocab.
   expandTerms(terms, opts = {}) {
     const cap = opts.cap || 6;
-    const ring = new Map();   // every ring member (lowercased) → the Set of its full ring
+    const norm = (s) => String(s).normalize('NFC').toLowerCase();   // NFC so accented terms match regardless of composition
+    const ring = new Map();   // every ring member (normalized) → the Set of its full ring
     for (const f of Object.keys(this.vocab)) for (const [pref, c] of Object.entries(this.vocab[f] || {})) {
-      const members = [pref, ...((c && c.alt) || [])].map((t) => String(t).toLowerCase());
+      const members = [pref, ...((c && c.alt) || [])].map(norm);
       for (const m of members) { let s = ring.get(m); if (!s) ring.set(m, s = new Set()); for (const x of members) s.add(x); }
     }
     const out = []; const seen = new Set(); const added = {};
     for (const t of terms) {
-      const lt = String(t).toLowerCase();
+      const lt = norm(t);
       if (!seen.has(lt)) { seen.add(lt); out.push(lt); }
       const syns = ring.get(lt); if (!syns) continue;
       const adds = []; for (const s of syns) { if (s !== lt && !seen.has(s) && adds.length < cap) { seen.add(s); out.push(s); adds.push(s); } }
