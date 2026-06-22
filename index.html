@@ -22452,7 +22452,11 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // firehose, no ML — a post-hoc rescore of the lexical top-k by source-class + facet-match.
   // The corpus is ~80% auto-ingested feed/video; for a reference query the curated layer
   // (books, notes, repo docs, saved links) is the signal, the firehose the noise.
-  const CURATION_WEIGHT = { curated: 2.5, neutral: 1.0, firehose: 0.6 };
+  // Default ranking weights (a commit-reviewed constant — the persistent policy). A
+  // weir_search call may pass `weights` to override these PER CALL (ephemeral
+  // experimentation — the librarian sweeps live during its eval, reports the winning set,
+  // which then gets baked here). `facet` is the per-matched-term bonus increment.
+  const DEFAULT_WEIGHTS = { curated: 2.5, neutral: 1.0, firehose: 0.6, facet: 0.2 };
   function curationTier(it) {
     if (!it) return 'neutral';
     if (it.type === 'book' || it.type === 'note' || it.type === 'doc') return 'curated';
@@ -22466,14 +22470,15 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // facet terms — pulls the "the term is in the facets, not the title" recall into ranking).
   // NB recency is deliberately omitted: a reference corpus wants the canonical old source
   // (a 1963 paper) to keep ranking, not be demoted for age.
-  function rankFactor(it, qTerms) {
-    let f = CURATION_WEIGHT[curationTier(it)] || 1;
+  function rankFactor(it, qTerms, w) {
+    const W = w || DEFAULT_WEIGHTS;
+    let f = W[curationTier(it)] != null ? W[curationTier(it)] : 1;
     if (qTerms.length) {
       const terms = new Set();
       const fc = facetsFor(it) || {};
       for (const k of Object.keys(fc)) for (const v of (fc[k] || [])) terms.add(String(v).toLowerCase());
       let hits = 0; for (const t of qTerms) if (terms.has(t)) hits++;
-      if (hits) f *= 1 + 0.2 * Math.min(hits, 5);
+      if (hits) f *= 1 + (W.facet != null ? W.facet : 0.2) * Math.min(hits, 5);
     }
     return f;
   }
@@ -23264,7 +23269,14 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     const noArchive = input.includeArchived === false;
     const curatedOnly = input.curated === true;                 // hard-scope to the curated tier (#4)
     const rerank = input.rerank !== false;                      // curation-aware ranking on by default (the reference desk)
+    const explain = input.explain === true;                     // surface the raw lexical score + weights, to tune
     const qTerms = q.toLowerCase().split(/[^a-z0-9]+/i).filter((w) => w.length > 1);
+    // ephemeral per-call weight override (experimentation; clamped, default stays the constant)
+    let weights;
+    if (input.weights && typeof input.weights === 'object') {
+      const clamp = (v, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(n, 10)) : d; };
+      weights = { curated: clamp(input.weights.curated, DEFAULT_WEIGHTS.curated), neutral: clamp(input.weights.neutral, DEFAULT_WEIGHTS.neutral), firehose: clamp(input.weights.firehose, DEFAULT_WEIGHTS.firehose), facet: clamp(input.weights.facet, DEFAULT_WEIGHTS.facet) };
+    }
     if (idx && idx.ready) {
       const preds = [];
       if (scoped) { const allowed = new Set(store.query(buildQuery(input)).map((r) => r.id)); preds.push((id) => allowed.has(id)); }
@@ -23274,9 +23286,14 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       // A reranker can only reorder what it sees — pull a larger pool, rescore, then slice.
       const poolK = rerank ? Math.min(Math.max(limit * 5, 50), 200) : limit;
       let hits = idx.search(q, { limit: poolK, filter }) || [];
-      if (rerank) hits = hits.map((h) => { const it = store.getItem(h.id); return { ...h, lex: h.score, score: h.score * (it ? rankFactor(it, qTerms) : 1) }; }).sort((a, b) => b.score - a.score);
+      if (rerank) hits = hits.map((h) => { const it = store.getItem(h.id); return { ...h, lex: h.score, score: h.score * (it ? rankFactor(it, qTerms, weights) : 1) }; }).sort((a, b) => b.score - a.score);
       hits = hits.slice(0, limit);
-      return { ranked: true, reranked: rerank || undefined, count: hits.length, items: hits.map((h) => { const it = store.getItem(h.id); if (!it) return null; return { ...projItem(store, it, false), score: +Number(h.score).toFixed(3), ...(rerank ? { tier: curationTier(it) } : {}), archived: it.archived || undefined }; }).filter(Boolean) };
+      return {
+        ranked: true, reranked: rerank || undefined,
+        ...(explain && rerank ? { weights: weights || DEFAULT_WEIGHTS } : {}),
+        count: hits.length,
+        items: hits.map((h) => { const it = store.getItem(h.id); if (!it) return null; return { ...projItem(store, it, false), score: +Number(h.score).toFixed(3), ...(rerank ? { tier: curationTier(it) } : {}), ...(explain && rerank && h.lex != null ? { lex: +Number(h.lex).toFixed(3) } : {}), archived: it.archived || undefined }; }).filter(Boolean),
+      };
     }
     let rows = store.query({ ...buildQuery(input), text: q });
     if (!noArchive && !scoped) { const seen = new Set(rows.map((r) => r.id)); for (const it of store.items.values()) if (it.archived && !seen.has(it.id) && (it.search_text || '').includes(q.toLowerCase())) rows.push(it); }   // fallback: fold archived in
@@ -23836,6 +23853,8 @@ const TOOLS = [
         saved: { type: 'boolean', description: 'Only saved' },
         curated: { type: 'boolean', description: 'Hard-scope to the curated tier only (books/notes/repo docs/saved links) — excludes the feed firehose' },
         rerank: { type: 'boolean', description: 'Curation-aware reranking (default true); pass false for raw BM25 relevance' },
+        weights: { type: 'object', description: 'PER-CALL rerank weight override (ephemeral — for tuning; defaults are curated 2.5 / neutral 1.0 / firehose 0.6 / facet 0.2). Clamped 0–10. Sweep these against the eval queries, then report the winning set to bake as the default.', properties: { curated: { type: 'number' }, neutral: { type: 'number' }, firehose: { type: 'number' }, facet: { type: 'number', description: 'per-matched-facet-term bonus increment' } } },
+        explain: { type: 'boolean', description: 'Surface the raw lexical `lex` score per hit + the `weights` used, so you can SEE why each item ranked where it did while tuning' },
         includeArchived: { type: 'boolean', description: 'Include archived items (default TRUE — the reference desk sees the whole archive; pass false to limit to active)' },
         limit: { type: 'integer', description: 'Max hits (default 20, cap 100)' },
       }, required: ['q'],
@@ -24353,7 +24372,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '94ecccb';          // short content hash of the bundle (build id)
+const COMMIT = 'aaec15e';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

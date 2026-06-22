@@ -17,6 +17,11 @@ From the librarian's repo-ingest pilot (a broad query swamped by the feed fireho
   carries its `tier` (inspectable). `rerank:false` = raw BM25; `curated:true` = hard-scope to
   the curated tier. Reranks the **MCP reference-desk search only** (not the in-app path).
   Recency deliberately omitted (a reference corpus keeps its canonical old sources).
+- **Per-call weight tuning:** `weir_search` accepts an ephemeral `weights:{curated,neutral,
+  firehose,facet}` override (clamped 0–10) + `explain:true` (raw `lex` score + weights used per
+  hit), so the librarian can sweep against the eval queries live in one session and report the
+  winning set to bake as the default — the default itself stays a commit-reviewed constant (an
+  agent-writes-the-default tool is deliberately not offered; that's policy/decides-vs-proposes).
 - Tests: `tools/smoke-rerank.mjs`. Deferred (ROADMAP + design record): #3 graph-expansion
   retrieval and the dense multilingual lane (behind this cheap tier). Live acceptance = the
   librarian's three pinned eval queries. Record: `docs/design/retrieval-tuning.md`.

@@ -35,6 +35,20 @@ metadata reranker), so they shipped as **one post-hoc rescore of the lexical top
   `curated:true` (#4 — hard-scope to the curated tier; the feed firehose excluded). Each hit
   carries its `tier`, so the ranking is inspectable (weir's auditable ethos).
 
+## Tuning — per-call weight override (added 2026-06-22)
+
+The default weights are a **commit-reviewed constant** (the persistent policy). For tuning,
+`weir_search` accepts an **ephemeral per-call** `weights:{curated,neutral,firehose,facet}`
+override (clamped 0–10) + `explain:true` (surface each hit's raw `lex` score + the `weights`
+used). This collapses the eval loop from multi-deploy to one session: the librarian sweeps
+weights against its pinned queries live, finds the set that flips the failing case without
+burying good feed hits, and reports it — then the winner is baked into the constant in one
+change. On-ethos: **unbounded experimentation, zero persistent consequence** until a human
+ratifies the new default into code (mirrors the librarian's "bounded in consequence" posture).
+A persistent default *outside* code — a human-set Settings field the agent proposes values for
+— is the deferred option if weights ever need to live there; an *agent-writes-the-default*
+tool is deliberately **not** offered (it's policy, a decides-vs-proposes line).
+
 ## Scope decisions
 - **MCP-search only.** The rerank lives in `webmcp.search` (the reference desk), not the in-app
   search path — the inbox UI sometimes genuinely wants the feed firehose, and it has its own
