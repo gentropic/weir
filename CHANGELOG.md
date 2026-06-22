@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### `recatalog` safe-by-default — preserves authored cards — 2026-06-22
+
+- **`uncatalogScope`/`recatalog` now PRESERVE hand-authored / human-reviewed cards** (any card
+  with a `reviewer` stamp) — only regenerable cataloger cards are discarded + redone. So a
+  `recatalog` over a scope of authored **book holdings** (metadata-only — the cataloger abstains,
+  nothing to regenerate them) can no longer silently destroy authored curation. Pass
+  **`includeAuthored:true`** to opt into redoing authored cards (e.g. when body text has since
+  arrived and the body-fed cards beat the hand facets). `recatalog` reports `preserved` (count
+  kept). Greenlit by Arthur after the librarian lost 12 authored cards to the old behavior —
+  upholds never-delete + decides-vs-proposes. Test: `tools/smoke-glass.mjs`.
+
 ### Doc/wording fix: `recatalog` discards authored cards — 2026-06-22
 
 - Corrected guidance (caught by the librarian on deploy): `weir_catalogControl recatalog`

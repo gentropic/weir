@@ -1637,22 +1637,29 @@ export class Store {
   // re-queue for cataloging — the engine of a SCOPED RE-CATALOG ("re-do the books",
   // "re-facet the geostatistics domain"). Mirrors catalogScope's candidate set.
   // Items/content/reading state untouched; reversible by re-cataloging. Returns count.
-  async uncatalogScope({ feed_id, category, type } = {}) {
+  async uncatalogScope({ feed_id, category, type, includeAuthored = false } = {}) {
     const inCat = category != null ? new Set(this.listFeeds().filter((f) => (f.category || '') === category).map((f) => f.id)) : null;
-    let n = 0; const feeds = new Set();
+    let discarded = 0, preserved = 0; const feeds = new Set();
     for (const it of this.items.values()) {
       if (!it.glass_id) continue;
       if (feed_id != null && it.feed_id !== feed_id) continue;
       if (inCat && !inCat.has(it.feed_id)) continue;
       if (type != null && it.type !== type) continue;
       const gid = it.glass_id;
-      if (this.cards.has(gid)) { this.cards.delete(gid); this._markCardDirty(gid); }
+      const card = this.cards.get(gid);
+      // Safe-by-default: PRESERVE hand-authored / human-reviewed cards (a `reviewer` stamp).
+      // Re-cataloging would regenerate a normal card, but the cataloger ABSTAINS on
+      // thin/metadata-only items (e.g. book holdings) — so a recatalog would irreversibly lose
+      // authored curation with nothing to replace it (violates never-delete + decides-vs-proposes,
+      // SPEC-repos-as-source EVAL3 follow-up). Pass includeAuthored:true to redo them anyway.
+      if (!includeAuthored && card && card.glass && card.glass.reviewer) { preserved++; continue; }
+      if (card) { this.cards.delete(gid); this._markCardDirty(gid); }
       delete it.glass_id;
-      feeds.add(it.feed_id); n++;
+      feeds.add(it.feed_id); discarded++;
     }
     for (const fid of feeds) this._markFeedDirty(fid);
-    if (n) this.emit('catalog', { uncataloged: n });
-    return n;
+    if (discarded) this.emit('catalog', { uncataloged: discarded });
+    return { discarded, preserved };
   }
 
   // Discard one cataloger card (reject from the review queue): drop the card +

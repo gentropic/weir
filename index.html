@@ -14131,22 +14131,29 @@ class Store {
   // re-queue for cataloging — the engine of a SCOPED RE-CATALOG ("re-do the books",
   // "re-facet the geostatistics domain"). Mirrors catalogScope's candidate set.
   // Items/content/reading state untouched; reversible by re-cataloging. Returns count.
-  async uncatalogScope({ feed_id, category, type } = {}) {
+  async uncatalogScope({ feed_id, category, type, includeAuthored = false } = {}) {
     const inCat = category != null ? new Set(this.listFeeds().filter((f) => (f.category || '') === category).map((f) => f.id)) : null;
-    let n = 0; const feeds = new Set();
+    let discarded = 0, preserved = 0; const feeds = new Set();
     for (const it of this.items.values()) {
       if (!it.glass_id) continue;
       if (feed_id != null && it.feed_id !== feed_id) continue;
       if (inCat && !inCat.has(it.feed_id)) continue;
       if (type != null && it.type !== type) continue;
       const gid = it.glass_id;
-      if (this.cards.has(gid)) { this.cards.delete(gid); this._markCardDirty(gid); }
+      const card = this.cards.get(gid);
+      // Safe-by-default: PRESERVE hand-authored / human-reviewed cards (a `reviewer` stamp).
+      // Re-cataloging would regenerate a normal card, but the cataloger ABSTAINS on
+      // thin/metadata-only items (e.g. book holdings) — so a recatalog would irreversibly lose
+      // authored curation with nothing to replace it (violates never-delete + decides-vs-proposes,
+      // SPEC-repos-as-source EVAL3 follow-up). Pass includeAuthored:true to redo them anyway.
+      if (!includeAuthored && card && card.glass && card.glass.reviewer) { preserved++; continue; }
+      if (card) { this.cards.delete(gid); this._markCardDirty(gid); }
       delete it.glass_id;
-      feeds.add(it.feed_id); n++;
+      feeds.add(it.feed_id); discarded++;
     }
     for (const fid of feeds) this._markFeedDirty(fid);
-    if (n) this.emit('catalog', { uncataloged: n });
-    return n;
+    if (discarded) this.emit('catalog', { uncataloged: discarded });
+    return { discarded, preserved };
   }
 
   // Discard one cataloger card (reject from the review queue): drop the card +
@@ -18888,13 +18895,13 @@ class App {
   // clears those.)
   async recatalogScope(scope = {}) {
     if (this._cataloging) { this._catStatus('a catalog run is already going — stop it first'); return { running: true, already: true }; }
-    const cleared = await this.store.uncatalogScope(scope);
+    const { discarded, preserved } = await this.store.uncatalogScope(scope);
     if (this._cardFacets) for (const id of [...this._cardFacets.keys()]) if (!this.store.getItem(id)?.glass_id) this._cardFacets.delete(id);
     await this.store.flush();
     const r = this.catalogScope(scope);
-    this._catStatus(`re-cataloging ${r.todo || 0} item${(r.todo || 0) === 1 ? '' : 's'} (discarded ${cleared} card${cleared === 1 ? '' : 's'})…`);
+    this._catStatus(`re-cataloging ${r.todo || 0} item${(r.todo || 0) === 1 ? '' : 's'} (discarded ${discarded} card${discarded === 1 ? '' : 's'}${preserved ? `, kept ${preserved} authored` : ''})…`);
     if (this.catalog) this.renderAll();
-    return { cleared, ...r };
+    return { cleared: discarded, preserved, ...r };
   }
 
   stopCatalog() { if (this._cataloging) { this._cataloging.cancel = true; return true; } return false; }
@@ -22951,7 +22958,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       if (input.category !== undefined) scope.category = String(input.category);
       if (input.type) scope.type = String(input.type);
       const scoped = scope.feed_id || scope.category !== undefined || scope.type;
-      if (input.recatalog && scoped && app.recatalogScope) return app.recatalogScope(scope);   // discard the scope's cards first, then re-catalog
+      if (input.recatalog && scoped && app.recatalogScope) return app.recatalogScope({ ...scope, includeAuthored: input.includeAuthored === true });   // discard the scope's cataloger cards (authored cards preserved unless includeAuthored), then re-catalog
       return scoped && app.catalogScope ? app.catalogScope(scope) : app.catalogAll();
     }
     if (action === 'stop') return { stopped: app.stopCatalog() };
@@ -24088,7 +24095,8 @@ const TOOLS = [
       feed: { type: 'string', description: 'start scope: a source by id OR display name (e.g. "Saved Links")' },
       category: { type: 'string', description: 'start scope: a folder name ("" = ungrouped)' },
       type: { type: 'string', description: 'start scope: item type (article|video|paper|…)' },
-      recatalog: { type: 'boolean', description: 'with action:start + a scope: DISCARD that scope\'s existing cards first, then re-catalog from scratch (re-do a batch cataloged under an old rule). ⚠ This discards ALL cards in scope — INCLUDING hand-authored / human-reviewed ones (it can\'t tell them apart); they get re-derived by the cataloger, which ABSTAINS on thin/metadata-only items. Safe when the items have real body text to re-read; don\'t recatalog a scope of authored metadata-only holdings (you\'d lose the authored cards).' },
+      recatalog: { type: 'boolean', description: 'with action:start + a scope: discard that scope\'s cataloger-generated cards and re-catalog from scratch (re-do a batch cataloged under an old rule). SAFE-BY-DEFAULT: hand-authored / human-reviewed cards (a `reviewer` stamp) are PRESERVED — only regenerable cataloger cards are redone — so it can\'t silently destroy authored curation (the cataloger abstains on thin/metadata-only items like book holdings, which would have nothing to regenerate them). Returns `preserved` (count kept).' },
+      includeAuthored: { type: 'boolean', description: 'with recatalog: ALSO redo hand-authored / human-reviewed cards in scope (default false → they\'re preserved). Use only when you want authored cards re-derived — e.g. body text has since arrived and the body-fed cards beat the hand facets.' },
     } },
     annotations: { title: 'Control cataloging', destructiveHint: true },
   },
@@ -24451,7 +24459,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '3297678';          // short content hash of the bundle (build id)
+const COMMIT = '4558525';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

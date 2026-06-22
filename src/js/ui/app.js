@@ -750,13 +750,13 @@ export class App {
   // clears those.)
   async recatalogScope(scope = {}) {
     if (this._cataloging) { this._catStatus('a catalog run is already going — stop it first'); return { running: true, already: true }; }
-    const cleared = await this.store.uncatalogScope(scope);
+    const { discarded, preserved } = await this.store.uncatalogScope(scope);
     if (this._cardFacets) for (const id of [...this._cardFacets.keys()]) if (!this.store.getItem(id)?.glass_id) this._cardFacets.delete(id);
     await this.store.flush();
     const r = this.catalogScope(scope);
-    this._catStatus(`re-cataloging ${r.todo || 0} item${(r.todo || 0) === 1 ? '' : 's'} (discarded ${cleared} card${cleared === 1 ? '' : 's'})…`);
+    this._catStatus(`re-cataloging ${r.todo || 0} item${(r.todo || 0) === 1 ? '' : 's'} (discarded ${discarded} card${discarded === 1 ? '' : 's'}${preserved ? `, kept ${preserved} authored` : ''})…`);
     if (this.catalog) this.renderAll();
-    return { cleared, ...r };
+    return { cleared: discarded, preserved, ...r };
   }
 
   stopCatalog() { if (this._cataloging) { this._cataloging.cancel = true; return true; } return false; }

@@ -161,11 +161,17 @@ scope from the now-present bodies.
 `uncatalogScope` → `cleared: N`; the tool schema says so: "DISCARD that scope's existing cards
 first"). Earlier guidance here that it "keeps hand-authored cards" was **wrong**. The right rule
 with repo docs: once bodies are present, **let `recatalog` redo from the bodies — don't
-pre-hand-author** (the body-fed cards, conf 0.7, beat terse hand facets anyway). The standing
-footgun — `recatalog` silently clearing genuinely-authored cards (e.g. metadata-only book
-holdings where the cataloger can only abstain/fabricate) — is noted for a possible future
-safeguard (preserve `reviewer`-stamped cards, or require an explicit `includeAuthored`), not yet
-built.
+pre-hand-author** (the body-fed cards, conf 0.7, beat terse hand facets anyway).
+
+**Safeguard SHIPPED (greenlit after the lost cards):** `recatalog`/`uncatalogScope` are now
+**safe-by-default** — they PRESERVE any card with a `reviewer` stamp (hand-authored /
+human-reviewed) and only discard regenerable cataloger cards; `recatalog` reports `preserved`.
+This protects the real exposure — metadata-only **book holdings**, where the cataloger abstains
+so there's nothing to regenerate a cleared authored card (never-delete + decides-vs-proposes).
+Pass **`includeAuthored:true`** to opt into redoing authored cards (the librarian's repo-docs
+case: bodies arrived, body-fed cards win). So the repo-docs cure above becomes simply
+`weir_catalogControl recatalog category:"repos" includeAuthored:true` when you *want* the hand
+cards re-derived — otherwise authored work is safe.
 
 **Then the `paths:` read itself was broken** (the librarian's re-ingest came back all-bodyless):
 `app.readRepoDoc` fed the string from `vfs.readFile` (no-encoding → `file.text()`) into

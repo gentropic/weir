@@ -91,10 +91,22 @@ assert.equal(await store.uncatalogItem('v1'), null, 'discarding an uncataloged i
   await s3.buildCatalog({ cataloged: '2026-06-03' });
   assert.equal(await s3.catalogCount(), 3, 'all three cataloged');
   const n = await s3.uncatalogScope({ feed_id: 'books' });
-  assert.equal(n, 2, 'uncatalogScope cleared just the two books');
+  assert.equal(n.discarded, 2, 'uncatalogScope cleared just the two books'); assert.equal(n.preserved, 0, 'none authored → none preserved');
   assert.equal(s3.getItem('bk1').glass_id, undefined, 'book un-stamped (re-queues)');
   assert.ok(s3.getItem('ar1').glass_id, 'out-of-scope paper untouched');
   assert.equal(await s3.catalogCount(), 1, 'only the paper card remains');
+
+  // ── safeguard: recatalog PRESERVES hand-authored/reviewed cards by default (EVAL3 follow-up) ──
+  await s3.buildCatalog({ cataloged: '2026-06-04' });                       // re-card the un-stamped books
+  await s3.markCardReviewed(s3.getItem('bk1').glass_id, { reviewer: 'human' });   // author/confirm bk1
+  const keep = await s3.uncatalogScope({ feed_id: 'books' });               // default: preserve authored
+  assert.equal(keep.preserved, 1, 'the reviewed book card is preserved');
+  assert.equal(keep.discarded, 1, 'only the un-reviewed book card discarded');
+  assert.ok(s3.getItem('bk1').glass_id, 'authored card survives a default recatalog');
+  assert.equal(s3.getItem('bk2').glass_id, undefined, 'the plain cataloger card re-queues');
+  const force = await s3.uncatalogScope({ feed_id: 'books', includeAuthored: true });   // opt in
+  assert.equal(force.discarded, 1, 'includeAuthored:true redoes the authored card too');
+  assert.equal(s3.getItem('bk1').glass_id, undefined, 'authored card discarded only when explicitly asked');
 }
 
 console.log('glass smoke ok:', JSON.stringify({ created: r1.created, cards: await store.catalogCount() }));
