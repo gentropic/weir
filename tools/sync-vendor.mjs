@@ -44,11 +44,22 @@ for (const [src, dest, wrap] of FILES) {
   const p = path.join(aud, src);
   if (!fs.existsSync(p)) { console.warn('skip (missing upstream):', src); continue; }
   let body = fs.readFileSync(p, 'utf8');
+  // Neutralize the bundle's `// ── file.js ──` section comments: weir's build inlines
+  // each module under that exact marker and its duplicate-decl guard SKIPS vendored
+  // regions by tracking it (build.js checkDuplicateDecls). A vendored bundle that uses
+  // the same em-dash marker masquerades as a real chunk → the guard starts policing the
+  // bundle's internals and false-collides (e.g. its STOPWORDS vs weir's health.js). Drop
+  // the box-drawing dashes to '--' so only weir's own markers match. (Comment-only edit.)
+  body = body.replace(/─/g, '-');
   if (wrap) {
-    // Drop the upstream `export { Sym };`, enclose the body in an IIFE, and
-    // re-export only `Sym` — so the flat-concat build introduces just that one
-    // top-level name (its internals stay scoped inside the IIFE).
-    body = body.replace(new RegExp(`^\\s*export\\s*\\{\\s*${wrap}\\s*\\};?\\s*$`, 'm'), '');
+    // Drop the upstream export(s), enclose the body in an IIFE, and re-export only
+    // `Sym` — so the flat-concat build introduces just that one top-level name (its
+    // internals stay scoped inside the IIFE). The bundle's block re-export can be
+    // multiline / trailing-comma / multi-symbol (`export {\n  Librarian,\n};`), and an
+    // inner `export` is illegal once wrapped in a function (breaks standalone ESM import),
+    // so strip ALL block exports + any `export ` decl-prefixes — not just `export { Sym };`.
+    body = body.replace(/export\s*\{[\s\S]*?\}\s*;?/g, '');
+    body = body.replace(/^[ \t]*export\s+(?=(?:async\s+)?(?:function|const|let|class)\b)/gm, '');
     body = `// wrapped at vendor time so its internals don't collide in weir's single-file build.\n`
       + `export const ${wrap} = (function () {\n${body}\nreturn ${wrap};\n})();\n`;
   }

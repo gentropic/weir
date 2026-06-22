@@ -5781,10 +5781,9 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
 // Re-sync: node tools/sync-vendor.mjs
 // wrapped at vendor time so its internals don't collide in weir's single-file build.
 const Librarian = (function () {
-// ⚠ GENERATED FILE — DO NOT EDIT. Source: ext/librarian/src/  Build: node ext/librarian/build.js
-// @gcu/librarian — BM25F text search with fuzzy / synonyms / proximity.
+// ⚠ GENERATED FILE — DO NOT EDIT. Source: src/  Build: @gcu/build src/main.js
 
-// -- tokenize.js --
+// -- src/tokenize.js --
 
 // Tokenizer. Lower-case ASCII split on non-alphanumeric boundaries,
 // stopword filter, optional Unicode passthrough so CJK / accented
@@ -5808,7 +5807,14 @@ const TOKEN_RE = /[a-z0-9']+|[^\x00-\x7f]+/g;
 function tokenize(text, opts = {}) {
   const stop = opts.keepStopwords ? new Set() : STOPWORDS;
   const minLen = opts.minLen != null ? opts.minLen : 2;
-  const lower = String(text || '').toLowerCase();
+  // Diacritic-fold accented Latin to ASCII (NFD → strip combining marks) BEFORE tokenizing.
+  // Otherwise TOKEN_RE splits at the accent (`geoestatística` → `geoestat` + `í` + `stica`) and the
+  // 1-char diacritic run is dropped by minLen, so the accented word never forms a token. Folding
+  // makes it one token (`geoestatistica`) AND lets an unaccented query match an accented doc and
+  // vice-versa. CJK is untouched — after folding, accented Latin is plain ASCII (first TOKEN_RE arm),
+  // genuinely non-Latin scripts still hit the second arm. NB: token shapes change → consumers reindex.
+  const folded = String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const lower = folded.toLowerCase();
   const out = [];
   let m;
   TOKEN_RE.lastIndex = 0;
@@ -5829,7 +5835,7 @@ function tokenizeStrings(text) {
   return tokenize(text).map((t) => t.token);
 }
 
-// -- fuzzy.js --
+// -- src/fuzzy.js --
 
 // Damerau-Levenshtein edit distance, bounded for efficiency: aborts when
 // distance exceeds `max`. Used both for the fuzzy-match step at query
@@ -5890,7 +5896,7 @@ function nearTerms(target, dictionary, max) {
   return hits;
 }
 
-// -- csr.js --
+// -- src/csr.js --
 
 // The unified lean index — a compact, typed-array, CSR-style inverted index
 // that is the SOLE index representation. v1's niceties return as opt-in flags
@@ -5927,7 +5933,6 @@ function nearTerms(target, dictionary, max) {
 //
 // nnz = total posting entries. Built in two passes (count → fill). Cache-
 // friendly (scoring streams contiguous memory) and packs to raw bytes (pack.js).
-
 
 
 // Mirror search.js (v1) exactly — the parity gate guards against drift.
@@ -6125,7 +6130,7 @@ function buildCsrIndex(spec = {}) {
   };
 }
 
-// ── query-time ─────────────────────────────────────────────────────────────
+// -- query-time -------------------------------------------------------------
 
 function _idf(N, df) { return Math.log(1 + (N - df + 0.5) / (df + 0.5)); }
 
@@ -6139,8 +6144,16 @@ function _expand(term, index, fuzzy, prefix) {
   const syns = index.synonyms[term];
   if (syns) for (const s of syns) if (has(s)) expanded.push({ term: s, weight: 1.0 });
   if (fuzzy > 0 && !has(term)) {
-    const near = nearTerms(term, index.vocab.keys(), fuzzy);
-    for (const { term: t, distance } of near) expanded.push({ term: t, weight: 1 - 0.3 * distance });
+    // Gate the fuzzy radius by query-term length — a 1-edit match on a short word flips its
+    // meaning (cat→bat, mina→mira), so don't fuzz short terms. And steepen the down-weight (0.5 @ d1,
+    // 0.2 @ d2) so a fuzzy hit can't outrank a literal/synonym match on a rare term's IDF alone
+    // (the sondagem→soldagem false-friend). Conservative fuzzy = typo fallback; the synonym ring
+    // above is the precise multilingual mechanism.
+    const fz = term.length < 5 ? 0 : term.length < 8 ? Math.min(fuzzy, 1) : fuzzy;
+    if (fz > 0) {
+      const near = nearTerms(term, index.vocab.keys(), fz);
+      for (const { term: t, distance } of near) expanded.push({ term: t, weight: Math.max(0, 0.5 - 0.3 * (distance - 1)) });
+    }
   }
   if (prefix && term.length >= 3 && !has(term)) {
     for (const t of index.vocab.keys()) if (t !== term && t.startsWith(term)) expanded.push({ term: t, weight: 0.8 });
@@ -6358,7 +6371,7 @@ function suggestCsr(index, query, maxEdits = 2) {
   return suggestions.join(' ');
 }
 
-// -- search.js --
+// -- src/search.js --
 
 // Query-time search. The nested-Map v1 scorer is RETIRED; search/suggest are
 // thin wrappers over the unified CSR engine (csr.js), which implements BM25(F)
@@ -6374,7 +6387,7 @@ function suggest(index, query, maxEdits = 2) {
   return suggestCsr(index, query, maxEdits);
 }
 
-// -- serialize.js --
+// -- src/serialize.js --
 
 // JSON serialise / deserialise for the CSR index — the debug + tiny-docpack
 // form. For real persistence use pack()/unpack() (binary, zero-copy reload);
@@ -6446,7 +6459,7 @@ function deserialize(json, opts = {}) {
   };
 }
 
-// -- scan.js --
+// -- src/scan.js --
 
 // The scan path — instant first-keystroke + cold/deep substring fallback.
 //
@@ -6612,7 +6625,7 @@ function scan(b, query, opts = {}) {
   return out.slice(0, limit);
 }
 
-// -- incremental.js --
+// -- src/incremental.js --
 
 // Incremental lifecycle — the segment model in miniature (§4 of the spec): an
 // immutable packed CSR base + a small mutable delta + periodic merge. Makes a
@@ -6841,7 +6854,7 @@ function compact(index) {
   return index;
 }
 
-// -- index.js --
+// -- src/index.js --
 
 // Index construction. The nested-Map v1 representation is RETIRED — the unified
 // typed-array CSR engine (csr.js) is the sole index representation. This module
@@ -6856,7 +6869,6 @@ function compact(index) {
 //                         incremental cousin.
 
 
-
 const buildIndex = buildCsrIndex;
 
 function mergeIndexes(indexes) {
@@ -6866,7 +6878,7 @@ function mergeIndexes(indexes) {
   return mergeCsr(segs, opts);
 }
 
-// -- pack.js --
+// -- src/pack.js --
 
 // Binary persistence — pack(index) -> ArrayBuffer / unpack(buf) -> index.
 //
@@ -7007,16 +7019,9 @@ function unpack(buf, opts = {}) {
   };
 }
 
-// -- api.js --
+// -- src/api.js --
 
 // Public Librarian API. Pure functions; no hidden state.
-
-
-
-
-
-
-
 
 
 const Librarian = {
@@ -7037,6 +7042,15 @@ const Librarian = {
   pack,
   unpack,
 };
+
+// -- src/main.js --
+
+// @gcu/librarian — ES module entry. Build manifest order = concat order: leaf
+// utilities first, then the CSR engine, then modules that build on it, then the
+// public api. index.js (a re-export of the CSR engine) sits after csr.js +
+// incremental.js since it references both.
+
+
 
 return Librarian;
 })();
@@ -24437,7 +24451,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '4099f80';          // short content hash of the bundle (build id)
+const COMMIT = '8912192';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

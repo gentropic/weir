@@ -8,7 +8,11 @@ install. Re-vendor by running **`node tools/sync-vendor.mjs`** (auto-locates
 file** — fix upstream in canon, then re-sync.
 
 Source snapshot: `auditable@bba50e15`, vendored 2026-05-30. `vfs.js` re-vendored from
-`auditable@1d8fed4` (2026-06-09) for `DropboxBackend`.
+`auditable@1d8fed4` (2026-06-09) for `DropboxBackend`. `librarian.js` re-vendored from
+`auditable@e9bb47b` (2026-06-22) for **diacritic-fold tokenization + fuzzy-match gating**
+(retrieval-precision fixes — `geoestatística` now tokenizes whole, `sondagem`↛`soldagem`).
+NB the tokenizer change alters token shapes → consumers reindex; weir's search index is
+in-memory (rebuilt at startup from items), so a deploy + reload reindexes automatically.
 
 | Path | Source in auditable | Version | License | Notes |
 |------|---------------------|---------|---------|-------|

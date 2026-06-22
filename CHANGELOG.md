@@ -6,6 +6,21 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Re-vendor @gcu/librarian — engine-level retrieval-precision fixes — 2026-06-22
+
+- **`vendor/librarian.js` re-vendored** from `auditable@e9bb47b` with the two engine fixes
+  routed upstream from the librarian's eval: **diacritic-fold tokenization** (`geoestatística`
+  → `geoestatistica`, so accented Latin tokenizes whole and matches its unaccented form, both
+  in the index and queries) and **fuzzy-match gating** (short query terms get no fuzzy; fuzzy
+  hits down-weighted 0.5@d1 / 0.2@d2 so a false-friend like `soldagem` can't outrank a literal
+  `sondagem` match). The tokenizer change alters token shapes → a reindex; weir's search index
+  is in-memory (rebuilt at startup from items), so a deploy + reload reindexes automatically.
+- **`tools/sync-vendor.mjs` hardened** for the new bundle: it now neutralizes the bundle's
+  `// ── file.js ──` section markers (they were masquerading as weir's build chunk markers and
+  defeating the duplicate-decl guard's vendored-skip → a false `STOPWORDS` collision), and the
+  export strip handles multiline / trailing-comma / multi-symbol `export { … }` (the wrap was
+  leaving an inner `export` → invalid standalone ESM, breaking node imports). PROVENANCE updated.
+
 ### Retrieval/ingest follow-ups from the librarian's eval — 2026-06-22
 
 - **Unicode-aware query tokenization** (`weir_search`): the query splitter was `[^a-z0-9]`,
