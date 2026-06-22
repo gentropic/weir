@@ -16,6 +16,7 @@ import { stripToText } from './cataloger.js';
 import { facetsOf, FACETS, buildCard } from './glass.js';
 import { listModels } from './llm.js';
 import { getKey } from './llmkeys.js';
+import { formatItem, citeKey, buildBibliography } from './cite.js';
 
 const LS_KEY = 'weir-webmcp';      // localStorage "port:token" (socket transport) — origin-scoped (no cross-origin read)
 // fs-transport machine token. NOTE: this is a CLUSTER-shared secret (the same token
@@ -336,6 +337,46 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       after: hay.slice(end, end + ctx),
       sourceChars: hay.length,
     };
+  }
+
+  // Render a canonical citation for an item, or a batch (SPEC-citation-export) — the
+  // companion to weir_quote (quote VERIFIES a span; cite RENDERS the reference). Single
+  // mode with a `quote` folds verification in: returns { cited:false } and NO reference
+  // if the quote isn't in the source, so a fabricated claim can't get a citation. Batch
+  // (`ids`) returns per-item entries + a deduped bibliography with stable cite-keys.
+  // Pure render over metadata weir already holds — never fabricates (reports `missing`).
+  async function cite(input = {}) {
+    const ids = Array.isArray(input.ids) ? input.ids.map(String) : (input.id != null ? [String(input.id)] : []);
+    if (!ids.length) throw new Error('pass `id` (one item) or `ids` (a batch) — ids from weir_search / weir_queryItems / weir_queryCatalog');
+    const ctxOf = (it) => ({ feed: store.getFeed(it.feed_id), card: it.glass_id ? store.cards.get(it.glass_id) : null });
+
+    // single mode: optional verify-in (id + quote → the cited span + locator, or refuse)
+    if (input.id != null && !Array.isArray(input.ids)) {
+      const it = store.getItem(ids[0]);
+      if (!it) throw new Error(`No item with id "${ids[0]}". Use weir_search/weir_queryItems to find ids.`);
+      let locator = input.locator ? String(input.locator) : undefined;
+      let verified;
+      if (input.quote != null && String(input.quote).trim()) {
+        const v = await quote({ id: it.id, quote: input.quote });
+        if (!v.found) return { id: it.id, cited: false, note: v.note || 'the quote is NOT in this source — do not cite it as grounded.' };
+        locator = v.locator; verified = v.quote;
+      }
+      const out = formatItem(it, { ...ctxOf(it), locator });
+      return { id: it.id, ...out, ...(verified ? { cited: true, quote: verified, locator } : {}) };
+    }
+
+    // batch mode: per-item entries + an assembled bibliography with unique cite-keys
+    const seen = new Set();
+    const entries = []; const missingIds = [];
+    for (const id of ids) {
+      const it = store.getItem(id);
+      if (!it) { missingIds.push(id); continue; }
+      const ctx = ctxOf(it);
+      const key = citeKey(it, { ...ctx, seen });
+      entries.push({ id: it.id, ...formatItem(it, { ...ctx, key }) });
+    }
+    const style = input.style ? String(input.style) : 'footnotes';
+    return { count: entries.length, entries, keys: Object.fromEntries(entries.map((e) => [e.id, e.key])), bibliography: buildBibliography(entries, style), ...(missingIds.length ? { missing: missingIds } : {}) };
   }
 
   // ── mutations (the user opted into wide access for their own local data) ──
@@ -1186,7 +1227,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1642,6 +1683,20 @@ const TOOLS = [
       }, required: ['id', 'quote'],
     },
     annotations: { readOnlyHint: true, idempotentHint: true, title: 'Verify a quote' },
+  },
+  {
+    name: 'weir_cite', fn: 'cite',
+    description: 'Render a canonical, stable citation for an item — the companion to weir_quote (quote VERIFIES a span; cite RENDERS the reference). Pass `id` for one item, or `ids` for a batch. SINGLE mode: pass `quote` to fold verification in — you get `cited:true` + the verified verbatim span + a `glass_id#start-end` locator embedded in the reference, or `cited:false` (and NO reference) if the quote is not in the source, so a fabricated claim cannot get a citation. (Or pass a `locator` you already got from weir_quote to splice it without re-verifying.) Each citation comes in every form: `inline` "(Author year)", `reference` (a full reference-list line with a durable weir handle that survives a dead URL), `footnote` (markdown [^key]: …), `wikilink` ([[handle]] — a LIVE graph backlink once written into a stacks note), and `csl` (CSL-JSON for machine reuse), plus `missing` (essentials absent — cite what is known, never fabricate). BATCH mode (`ids`): returns per-item `entries`, a `keys` map (stable BibTeX-style cite-keys), and an assembled `bibliography` (markdown footnotes by default; `style:"numbered"|"plain"`). Read-only; pure render over metadata weir already holds.',
+    inputSchema: {
+      type: 'object', properties: {
+        id: { type: 'string', description: 'One item id / glass_id to cite' },
+        ids: { type: 'array', items: { type: 'string' }, description: 'Batch: item ids → entries + a deduped bibliography with cite-keys' },
+        quote: { type: 'string', description: 'Single mode: a candidate quote to VERIFY + embed (refuses with cited:false if not in the source)' },
+        locator: { type: 'string', description: 'Single mode: a weir_quote locator (glass_id#start-end) to splice in without re-verifying' },
+        style: { type: 'string', description: 'Batch bibliography format: footnotes (default) | numbered | plain' },
+      },
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true, title: 'Cite an item' },
   },
   {
     name: 'weir_stacksList', fn: 'stacksList',

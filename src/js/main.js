@@ -21,6 +21,7 @@ import './affinity.js';                  // → channelIdOf, affinityScore (befo
 import './glass.js';                     // → buildCard, nextGlassId (glass catalog; before store)
 import './callnumber.js';                // → callNumber, renderCoded/Readable, sortKey (glass shelf address)
 import './shelflist.js';                 // → buildShelfHtml (books shelf-list HTML; shared by the in-app export + tools/shelf-list.mjs)
+import './cite.js';                      // → citeFields, citeKey, formatItem, buildBibliography (citation rendering; uses slugify)
 import './biblio.js';                    // → detectBiblio, fetchBiblio (authoritative paper/book metadata; before cataloger; uses decodeEntities from xml.js)
 import './llm.js';                       // → chat, PROVIDERS, inputMultiplier (before store + cataloger)
 import './cataloger.js';                 // → catalogStoreItem (glass cataloger service; uses llm + glass)

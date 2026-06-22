@@ -6,6 +6,23 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Citation export — weir_cite, the grounded-writing primitive — 2026-06-22
+
+- **`weir_cite`** (GLASS §17.1) — the companion to `weir_quote` (quote *verifies* a span;
+  cite *renders* the reference). One item or a batch → every form: `inline`, a `reference`
+  line with a durable weir handle (survives a dead URL), a markdown `footnote`, a
+  `[[handle]]` wikilink (a **live graph backlink** once written into a stacks note), and
+  `csl` (CSL-JSON). **Verify-in:** with a `quote` it folds `weir_quote` in and returns
+  `cited:false` with *no reference* if the quote isn't in the source — a fabricated claim
+  can't get a citation. **Batch:** stable BibTeX-style cite-keys (disambiguated) + an
+  assembled `bibliography` (footnotes default; `numbered`/`plain`). Reports `missing`
+  fields, never fabricates. Pure deterministic module `src/js/cite.js` (zero-dep, no
+  network).
+- `store.wikiLinksOf` now resolves a `[[ref]]` by glass_id + item id too (not just
+  uid/title/basename), so a cited `[[handle]]` is a live backlink for any item — "cite =
+  relate" across the whole corpus, not just notes.
+- Tests: `tools/smoke-cite.mjs`. Full record: `docs/design/citation-export.md`.
+
 ### Repos as a first-class source — the GCU constellation as a queryable subgraph — 2026-06-22
 
 - **`weir_ingestRepo`** (GLASS §17.6). A code repo's own docs (README / SPEC / `docs/**`

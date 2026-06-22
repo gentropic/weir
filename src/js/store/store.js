@@ -1347,18 +1347,22 @@ export class Store {
     if (!it) return { links: [], backlinks: [] };
     const norm = (s) => String(s == null ? '' : s).trim().toLowerCase();
     // build the resolver maps once (uid wins, then title, then basename)
-    const byUid = new Map(), byTitle = new Map(), byBase = new Map();
+    const byUid = new Map(), byTitle = new Map(), byBase = new Map(), byGlass = new Map();
     for (const x of this.items.values()) {
       if (x.uid) byUid.set(norm(x.uid), x);
+      if (x.glass_id) byGlass.set(norm(x.glass_id), x);
       if (x.title && !byTitle.has(norm(x.title))) byTitle.set(norm(x.title), x);
       if (x.path) { const b = x.path.split('/').pop(); byBase.set(norm(b), x); byBase.set(norm(b.replace(/\.[^.]+$/, '')), x); }
     }
-    const resolve = (ref) => byUid.get(norm(ref)) || byTitle.get(norm(ref)) || byBase.get(norm(ref)) || null;
+    // resolve a [[ref]] by uid → glass_id → item id → exact title → file basename. The
+    // glass_id/id arms let a weir_cite [[handle]] resolve to a live backlink for ANY item
+    // (not just notes), so citing into a stacks note IS relating (SPEC-citation-export).
+    const resolve = (ref) => byUid.get(norm(ref)) || byGlass.get(norm(ref)) || this.items.get(String(ref)) || byTitle.get(norm(ref)) || byBase.get(norm(ref)) || null;
     const links = (it.links || []).map((ref) => { const t = resolve(ref); return t ? { ref, id: t.id, title: t.title } : { ref }; });
     if (it.target) { const t = this.items.get(String(it.target)); links.push({ ref: it.target, id: it.target, title: t ? t.title : undefined, via: 'annotates' }); }
     // the identifiers THIS item answers to, for inbound matching
     const base = (it.path || '').split('/').pop();
-    const selfKeys = new Set([norm(it.uid), norm(it.title), norm(base), norm(base.replace(/\.[^.]+$/, ''))].filter(Boolean));
+    const selfKeys = new Set([norm(it.uid), norm(it.glass_id), norm(it.id), norm(it.title), norm(base), norm(base.replace(/\.[^.]+$/, ''))].filter(Boolean));
     const backlinks = [];
     for (const x of this.items.values()) {
       if (x.id === it.id) continue;

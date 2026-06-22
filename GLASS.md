@@ -661,6 +661,15 @@ and a human can check. The verbs:
 - `weir_quote` — **citation verification** (strict-grounding's self-check): confirm a
   candidate quote is in a source, return a stable `glass_id#start–end` locator +
   context, or report no-match so the agent refuses to assert it.
+- `weir_cite` — **citation rendering** (quote's companion: quote *verifies*, cite
+  *renders* the reference). One item or a batch → every form: `inline`, a `reference`
+  line with a durable weir handle, a markdown `footnote`, a `[[handle]]` wikilink (a live
+  graph backlink once written into a stacks note), and `csl` (CSL-JSON). With a `quote`
+  it folds verification in (`cited:false` + no reference if the quote isn't there, so a
+  fabrication can't get a citation); a batch returns stable BibTeX-style cite-keys + an
+  assembled bibliography. Pure render over held metadata — reports `missing`, never
+  fabricates. Deterministic module `cite.js`; full record
+  [docs/design/citation-export.md](docs/design/citation-export.md).
 Search + the faceted query **see the whole archive by default** (never-delete means the
 standing archive is the corpus; `includeArchived:false` limits to active) — the inbox UI
 stays archived-free via its own view filter. All read-only. No generation inside weir, no
