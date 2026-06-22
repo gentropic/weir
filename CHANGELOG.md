@@ -22,9 +22,16 @@ From the librarian's repo-ingest pilot (a broad query swamped by the feed fireho
   hit), so the librarian can sweep against the eval queries live in one session and report the
   winning set to bake as the default — the default itself stays a commit-reviewed constant (an
   agent-writes-the-default tool is deliberately not offered; that's policy/decides-vs-proposes).
+- **Vocab-synonym query expansion** (`weir_search` `expand`, default on) — from the
+  librarian's eval (cheap tier validated; this was the one cheap next-knob it found). A query
+  term that is a controlled-vocabulary prefLabel/altLabel is expanded with its concept's
+  synonym ring (prefLabel + altLabels, any facet) before BM25, so the seeded cross-lingual
+  pairs (kriging↔krigagem) bridge **lexically** — much of the EN↔pt-BR win with no embeddings,
+  and the vocab-seeding finally shows up in retrieval. Ring only (no broader/narrower), capped,
+  `expanded:{term→[syns]}` surfaced, `expand:false` for the literal query. `store.expandTerms`.
 - Tests: `tools/smoke-rerank.mjs`. Deferred (ROADMAP + design record): #3 graph-expansion
-  retrieval and the dense multilingual lane (behind this cheap tier). Live acceptance = the
-  librarian's three pinned eval queries. Record: `docs/design/retrieval-tuning.md`.
+  retrieval and the dense multilingual lane (now only the residual untranslated-paraphrase gap).
+  Record: `docs/design/retrieval-tuning.md`.
 
 ### weir_listMine — the agent's footprint as a provenance lens — 2026-06-22
 

@@ -891,7 +891,14 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     const curatedOnly = input.curated === true;                 // hard-scope to the curated tier (#4)
     const rerank = input.rerank !== false;                      // curation-aware ranking on by default (the reference desk)
     const explain = input.explain === true;                     // surface the raw lexical score + weights, to tune
-    const qTerms = q.toLowerCase().split(/[^a-z0-9]+/i).filter((w) => w.length > 1);
+    let qTerms = q.toLowerCase().split(/[^a-z0-9]+/i).filter((w) => w.length > 1);
+    // Vocab-synonym query expansion (SPEC-retrieval-tuning #3.5): bridge curated synonyms /
+    // cross-lingual pairs (kriging↔krigagem) lexically before any dense lane. On by default.
+    let qStr = q, expandedWith;
+    if (input.expand !== false) {
+      const e = store.expandTerms(qTerms);
+      if (Object.keys(e.added).length) { qTerms = e.terms; qStr = e.terms.join(' '); expandedWith = e.added; }
+    }
     // ephemeral per-call weight override (experimentation; clamped, default stays the constant)
     let weights;
     if (input.weights && typeof input.weights === 'object') {
@@ -906,11 +913,12 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       const filter = preds.length ? (id) => preds.every((p) => p(id)) : undefined;
       // A reranker can only reorder what it sees — pull a larger pool, rescore, then slice.
       const poolK = rerank ? Math.min(Math.max(limit * 5, 50), 200) : limit;
-      let hits = idx.search(q, { limit: poolK, filter }) || [];
+      let hits = idx.search(qStr, { limit: poolK, filter }) || [];
       if (rerank) hits = hits.map((h) => { const it = store.getItem(h.id); return { ...h, lex: h.score, score: h.score * (it ? rankFactor(it, qTerms, weights) : 1) }; }).sort((a, b) => b.score - a.score);
       hits = hits.slice(0, limit);
       return {
         ranked: true, reranked: rerank || undefined,
+        ...(expandedWith ? { expanded: expandedWith } : {}),   // query bridged via vocab synonyms — surfaced for transparency
         ...(explain && rerank ? { weights: weights || DEFAULT_WEIGHTS } : {}),
         count: hits.length,
         items: hits.map((h) => { const it = store.getItem(h.id); if (!it) return null; return { ...projItem(store, it, false), score: +Number(h.score).toFixed(3), ...(rerank ? { tier: curationTier(it) } : {}), ...(explain && rerank && h.lex != null ? { lex: +Number(h.lex).toFixed(3) } : {}), archived: it.archived || undefined }; }).filter(Boolean),
@@ -1462,7 +1470,7 @@ const TOOLS = [
   },
   {
     name: 'weir_search', fn: 'search',
-    description: 'RANKED full-text search (the librarian BM25 index) — relevance-ordered, better than weir_queryItems\'s substring `q` for "most relevant about X" on a large corpus. CURATION-AWARE by default: results are reranked so the curated minority (books, notes, repo `doc` items, saved links) outranks the auto-ingested feed/video firehose, with a bonus when the query matches an item\'s facet terms — for a reference query the curated layer is the signal (pass rerank:false for raw BM25, or curated:true to hard-scope to the curated tier only). Each hit carries its `tier` (curated|neutral|firehose) when reranked. SEES THE ARCHIVE by default (the standing corpus, never-delete) — hits carry `archived:true` when archived; pass includeArchived:false to limit to active. Optional scope filters (feed/type/category/view/unread/saved) narrow it like queryItems. Returns { ranked, reranked?, count, items:[…,score,tier?,archived?] } (ranked:false = index not ready, fell back to substring). Use queryItems to LIST a whole feed/folder; use search to FIND by relevance; use weir_queryCatalog to search WITHIN a facet set.',
+    description: 'RANKED full-text search (the librarian BM25 index) — relevance-ordered, better than weir_queryItems\'s substring `q` for "most relevant about X" on a large corpus. CURATION-AWARE by default: results are reranked so the curated minority (books, notes, repo `doc` items, saved links) outranks the auto-ingested feed/video firehose, with a bonus when the query matches an item\'s facet terms — for a reference query the curated layer is the signal (pass rerank:false for raw BM25, or curated:true to hard-scope to the curated tier only). Each hit carries its `tier` (curated|neutral|firehose) when reranked. VOCAB-SYNONYM EXPANSION is also on by default: a query term that is a controlled-vocabulary prefLabel/altLabel also matches its synonyms (the seeded cross-lingual pairs like kriging↔krigagem bridge lexically, no embeddings) — the response carries `expanded:{term→[synonyms]}` when it fires; pass expand:false for the literal query. SEES THE ARCHIVE by default (the standing corpus, never-delete) — hits carry `archived:true` when archived; pass includeArchived:false to limit to active. Optional scope filters (feed/type/category/view/unread/saved) narrow it like queryItems. Returns { ranked, reranked?, count, items:[…,score,tier?,archived?] } (ranked:false = index not ready, fell back to substring). Use queryItems to LIST a whole feed/folder; use search to FIND by relevance; use weir_queryCatalog to search WITHIN a facet set.',
     inputSchema: {
       type: 'object', properties: {
         q: { type: 'string', description: 'The search query' },
@@ -1474,6 +1482,7 @@ const TOOLS = [
         saved: { type: 'boolean', description: 'Only saved' },
         curated: { type: 'boolean', description: 'Hard-scope to the curated tier only (books/notes/repo docs/saved links) — excludes the feed firehose' },
         rerank: { type: 'boolean', description: 'Curation-aware reranking (default true); pass false for raw BM25 relevance' },
+        expand: { type: 'boolean', description: 'Vocab-synonym query expansion (default true): a query term that is a controlled-vocabulary prefLabel/altLabel also matches its synonyms — bridges curated + cross-lingual pairs (kriging↔krigagem) lexically. Pass false for the literal query. When it fires, the response carries `expanded:{term→[synonyms]}`.' },
         weights: { type: 'object', description: 'PER-CALL rerank weight override (ephemeral — for tuning; defaults are curated 2.5 / neutral 1.0 / firehose 0.6 / facet 0.2). Clamped 0–10. Sweep these against the eval queries, then report the winning set to bake as the default.', properties: { curated: { type: 'number' }, neutral: { type: 'number' }, firehose: { type: 'number' }, facet: { type: 'number', description: 'per-matched-facet-term bonus increment' } } },
         explain: { type: 'boolean', description: 'Surface the raw lexical `lex` score per hit + the `weights` used, so you can SEE why each item ranked where it did while tuning' },
         includeArchived: { type: 'boolean', description: 'Include archived items (default TRUE — the reference desk sees the whole archive; pass false to limit to active)' },

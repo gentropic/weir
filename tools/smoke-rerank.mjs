@@ -61,4 +61,16 @@ assert.equal(clamped.weights.firehose, 0, 'negative weight clamped to 0');
 const off = await t.search({ q: Q, weights: { curated: 999 }, rerank: false });
 assert.ok(!off.reranked && off.items.every((i) => i.tier === undefined), 'weights ignored when rerank:false');
 
-console.log('rerank smoke ok:', JSON.stringify({ top: r.items[0].id, curated: cur.items.length, flipped: flip.items[0].id }));
+// ── vocab-synonym query expansion (#3.5): a pt-BR term bridges to its EN synonym ──
+// seed the cross-lingual pair, add an EN-only item, query in pt-BR → the EN item surfaces.
+store.recordSynonym('entity', 'kriging', 'krigagem');   // seed the EN↔pt-BR pair (kriging ← krigagem alt)
+await store.upsertItems([{ id: 'en', feed_id: 'stacks', type: 'note', title: 'On kriging', excerpt: 'best linear unbiased estimator' }]);
+app.searchIndex = new SearchIndex(store).build();   // rebuild so the EN note is indexed
+const t2 = buildWeirTools({ store, app });
+const xl = await t2.search({ q: 'krigagem' });                       // pt-BR query, no literal match in the EN note
+assert.ok(xl.items.some((i) => i.id === 'en'), 'pt-BR query bridges to the EN item via the vocab synonym');
+assert.ok(xl.expanded && xl.expanded.krigagem && xl.expanded.krigagem.includes('kriging'), 'response surfaces the expansion (krigagem→kriging)');
+const noxl = await t2.search({ q: 'krigagem', expand: false });     // literal query — no bridge
+assert.ok(!noxl.items.some((i) => i.id === 'en') && !noxl.expanded, 'expand:false → literal query, EN item not bridged');
+
+console.log('rerank smoke ok:', JSON.stringify({ top: r.items[0].id, curated: cur.items.length, flipped: flip.items[0].id, bridged: xl.items.some((i) => i.id === 'en') }));

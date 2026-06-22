@@ -71,6 +71,30 @@ non-title hit). The **librarian re-runs the pinned queries against the deployed 
 - **Cross-lingual** — EN↔pt-BR: a **known gap**, the residual for the deferred dense lane — not a
   regression.
 
+## Eval outcome + #3.5 vocab-synonym expansion (2026-06-22)
+
+The librarian ran the pinned eval against the deployed build (`retrieval-tuning-EVAL.md`):
+**cheap tier validated** — ① broad/curated FIXED (the Hopper dive-map went from buried-#3 to
+**#1 curated**; the op-ed + shapefile dropped out of the top 12), ② specific improved (BMA map
+#1 + its repo doc #2), ③ cross-lingual still the expected gap. No weight tuning was requested
+(2.5/0.6 held). It surfaced one cheap next-knob, now **shipped**:
+
+- **Vocab-synonym query expansion (`store.expandTerms` + `weir_search` `expand`, default on).**
+  The seeded `weir_vocab` alt pairs (kriging↔krigagem, mining↔mineração) did **not** bridge
+  `weir_search` — a pt-BR query stayed inside pt-BR content. Now a query term that is a
+  concept's prefLabel or altLabel (any facet) is expanded with the rest of that concept's
+  **synonym ring** (prefLabel + altLabels) before BM25 — so the seeded pairs pay off
+  *lexically*, delivering much of the EN↔pt-BR win **with no embeddings**, and finally making
+  the vocab-seeding visible in retrieval. Ring only (not broader/narrower → no over-broadening);
+  capped per term; `expanded:{term→[syns]}` surfaced for transparency; `expand:false` for the
+  literal query. This is the librarian's "#3.5" — cheaper than, and ahead of, the dense lane,
+  which now narrows to the true residual (untranslated paraphrase, terms not in the vocab).
+
+Also flagged by the eval, **not yet done** (low priority): repo `doc` items rank below Saved
+Links in the broad query because they're *uncataloged* (no facet-match bonus) — fixable with a
+small repo-doc/notes sub-boost (testable via the per-call `weights` override) or by cataloging
+the ingested docs (opt-in). The target fix holds regardless.
+
 ## Deferred
 - **#3 graph-expansion retrieval ("synthesis-first, sources-by-edge").** Return a synthesis note
   (a dive-map) as the entry hit, then expand along `related`/`same-topic` edges to the primary

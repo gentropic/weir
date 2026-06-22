@@ -1512,6 +1512,31 @@ export class Store {
   // ── controlled vocabulary / thesaurus (SKOS-shaped, GLASS §7) ──
   getVocab(facet) { return this.vocab[facet] || {}; }
   getConcept(facet, term) { return (this.vocab[facet] || {})[String(term).toLowerCase().trim()] || null; }
+
+  // Expand query terms with their controlled-vocabulary SYNONYMS — the cheap cross-lingual /
+  // synonym bridge before embeddings (SPEC-retrieval-tuning #3.5). For each term that is a
+  // concept's prefLabel OR an altLabel (in any facet), add the rest of that concept's ring
+  // (prefLabel + altLabels) — so a seeded pair like kriging↔krigagem pays off LEXICALLY in
+  // weir_search. Synonym RING ONLY — not broader/narrower (those would over-broaden). Returns
+  // { terms:[expanded, unique, lowercased], added:{ term → [synonyms added] } }. `cap` bounds
+  // synonyms added per term (query-blowup guard). Pure read over the SKOS vocab.
+  expandTerms(terms, opts = {}) {
+    const cap = opts.cap || 6;
+    const ring = new Map();   // every ring member (lowercased) → the Set of its full ring
+    for (const f of Object.keys(this.vocab)) for (const [pref, c] of Object.entries(this.vocab[f] || {})) {
+      const members = [pref, ...((c && c.alt) || [])].map((t) => String(t).toLowerCase());
+      for (const m of members) { let s = ring.get(m); if (!s) ring.set(m, s = new Set()); for (const x of members) s.add(x); }
+    }
+    const out = []; const seen = new Set(); const added = {};
+    for (const t of terms) {
+      const lt = String(t).toLowerCase();
+      if (!seen.has(lt)) { seen.add(lt); out.push(lt); }
+      const syns = ring.get(lt); if (!syns) continue;
+      const adds = []; for (const s of syns) { if (s !== lt && !seen.has(s) && adds.length < cap) { seen.add(s); out.push(s); adds.push(s); } }
+      if (adds.length) added[lt] = adds;
+    }
+    return { terms: out, added };
+  }
   _ensureConcept(facet, term) {
     const v = this.vocab[facet] || (this.vocab[facet] = {});
     return v[term] || (v[term] = { alt: [], broader: [], narrower: [], related: [] });

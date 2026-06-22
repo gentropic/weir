@@ -654,8 +654,13 @@ and a human can check. The verbs:
   items, saved links) over the auto-ingested feed/video firehose, with a facet-match bonus —
   for a reference query the curated layer is the signal, the firehose the noise (the corpus is
   ~80% firehose). Each hit carries its `tier`; `rerank:false` = raw BM25, `curated:true` =
-  hard-scope to the curated tier. The cheap lexical/graph tier *before* embeddings (the dense
-  multilingual lane is deferred behind it). Full record:
+  hard-scope to the curated tier. Also **vocab-synonym query expansion** (on by default): a
+  query term that is a controlled-vocabulary prefLabel/altLabel (§7) also matches its synonyms,
+  so the seeded cross-lingual pairs (kriging↔krigagem) bridge *lexically* — much of the
+  EN↔pt-BR win with no embeddings (`expanded:{term→[syns]}` surfaced; `expand:false` for the
+  literal query). The cheap lexical tier *before* embeddings (the dense multilingual lane is
+  deferred behind it, now only for the residual paraphrase/untranslated gap). Per-call `weights`
+  override + `explain` tune the rerank. Full record:
   [docs/design/retrieval-tuning.md](docs/design/retrieval-tuning.md). `weir_queryItems` — list/filter.
 - `weir_queryCatalog` — **faceted intersection** (the Ranganathan move, §2): a
   facet→term(s) map, union within a facet, intersect across facets; terms resolve
