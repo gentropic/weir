@@ -546,6 +546,58 @@ export class Store {
     return res;
   }
 
+  // Ingest a repo's docs as a first-class source (SPEC-repos-as-source). A repo is a
+  // synthetic, non-polled feed (adapter:'repo', like 'stacks'/'saved') whose items are
+  // its docs. weir does NOT read the repo or run git — the AGENT (which has the files +
+  // git) hands docs in and supplies the commit `anchor`; refresh = the agent diffs
+  // anchor→HEAD locally and re-ingests the delta. First call CREATES the source as an
+  // agent proposal (→ review queue, ratifiable like an added feed); later calls UPDATE
+  // it + advance the anchor. Docs upsert by STABLE id (repo:<slug>:<pathhash>) via
+  // upsertItems (dedup + never-reset read/saved/tags). `removed` paths are archived
+  // (never-delete). Returns { source, inserted, updated, removed, anchor }.
+  async ingestRepo({ repo, name, anchor, docs = [], removed = [], category, source, added_by, rationale } = {}) {
+    const slug = slugify(String(repo || '').replace(/^.*[\\/]/, '') || 'repo');   // basename → slug
+    const feedId = `repo:${slug}`;
+    let feed = this.feeds.get(feedId);
+    const config = { ...(feed && feed.config), kind: 'repo', repo: String(repo || slug) };
+    if (anchor != null) config.anchor = String(anchor);
+    if (!feed) {
+      feed = await this.putFeed({
+        id: feedId, name: name || `${slug} (repo)`, adapter: 'repo', url: '',
+        category: category || 'repos', next_poll_at: 8.64e15,
+        retention: { unread_days: 'forever', read_days: 'forever' },
+        source: source || undefined, added_by: added_by || undefined, rationale: rationale || undefined,
+        config,
+      });
+    } else {
+      feed = await this.updateFeed(feedId, { config, ...(name ? { name } : {}), ...(category ? { category } : {}) });
+    }
+    const raws = docs.map((d) => {
+      const path = String(d.path || '').replace(/^\/+/, '');
+      return {
+        id: `${feedId}:${hash32(path)}`,
+        feed_id: feedId,
+        type: 'doc',
+        title: d.title || path.split('/').pop() || path,
+        url: d.url || undefined,
+        content: d.markdown != null ? String(d.markdown) : '',
+        published_at: d.date ? (Date.parse(d.date) || now()) : now(),
+        tags: [slug],                       // findable by repo (spec: "tagged by repo")
+        structured: { repo: slug, path },   // the doc's path within the repo
+      };
+    });
+    const res = raws.length ? await this.upsertItems(raws) : { inserted: 0, updated: 0, skipped: 0 };
+    // removed docs: archive, never delete (a file gone from the repo is still in the standing archive)
+    let archived = 0;
+    for (const p of removed) {
+      const id = `${feedId}:${hash32(String(p).replace(/^\/+/, ''))}`;
+      const it = this.items.get(id);
+      if (it && !it.archived) { it.archived = true; it.expires_at = undefined; this._markFeedDirty(feedId); archived++; }
+    }
+    if (archived) this.emit('items', { inserted: 0, updated: archived, skipped: 0 });
+    return { source: { id: feedId, name: feed.name, kind: 'repo', anchor: config.anchor, category: feed.category }, inserted: res.inserted, updated: res.updated, removed: archived, anchor: config.anchor };
+  }
+
   // Apply routing rules to a brand-new record (mutates tags/read/saved, sets
   // route/expiry, collects notifications). Re-derives expires_at since a rule
   // may have changed `saved` or asked for a retain override.
@@ -1262,6 +1314,59 @@ export class Store {
       for (const e of ((c.glass || {}).related) || []) if (e.target === gid) backlinks.push({ ...resolve(g), type: e.type, source: e.source, by: e.by });
     }
     return { outgoing, backlinks };
+  }
+
+  // Give an item a catalog card so it can be a knowledge-graph node, even though it
+  // was never explicitly cataloged (SPEC-stacks-first-class Part A). The graph is
+  // edges-on-cards (relateCards/relatedOf), so a note/book/item with no glass_id
+  // can't be an edge endpoint — this mints a deterministic Stage-0 card (no LLM)
+  // and stamps the item, so any item becomes relatable. Idempotent: returns the
+  // existing glass_id if already carded. Marked glass.via:'relate' for audit, and
+  // needs_review so a later real catalog pass can enrich it — that pass REUSES this
+  // card (catalogStoreItem keys on item.glass_id), so the edges are preserved.
+  async ensureCard(itemId) {
+    const it = this.items.get(String(itemId));
+    if (!it) throw new Error(`no such item: ${itemId}`);
+    if (it.glass_id && this.cards.get(it.glass_id)) return it.glass_id;
+    const card = buildCard(it, this.feeds.get(it.feed_id));
+    card.glass.via = 'relate';   // a stub minted to host an edge, not an explicit catalog
+    return this.writeCard(card);
+  }
+
+  // Resolve the [[wiki]] / annotation links to and from an item — the soft link
+  // layer over stacks notes (SPEC-stacks-first-class Part A). This is NOT the
+  // ratified graph (that's relatedOf); it surfaces the prose cross-references the
+  // librarian already writes by convention so they're navigable for free.
+  //   • out: this item's [[ref]] targets (it.links) resolved to items where possible,
+  //     plus its annotation `target` (a note → the item it annotates).
+  //   • backlinks: items whose [[ref]] resolves to THIS item, or that annotate it.
+  // A ref resolves by stacks uid, then exact title (ci), then file basename (ci, with
+  // or without extension). Unresolved out-links stay as dangling markers (ref only).
+  wikiLinksOf(itemId) {
+    const it = this.items.get(String(itemId));
+    if (!it) return { links: [], backlinks: [] };
+    const norm = (s) => String(s == null ? '' : s).trim().toLowerCase();
+    // build the resolver maps once (uid wins, then title, then basename)
+    const byUid = new Map(), byTitle = new Map(), byBase = new Map();
+    for (const x of this.items.values()) {
+      if (x.uid) byUid.set(norm(x.uid), x);
+      if (x.title && !byTitle.has(norm(x.title))) byTitle.set(norm(x.title), x);
+      if (x.path) { const b = x.path.split('/').pop(); byBase.set(norm(b), x); byBase.set(norm(b.replace(/\.[^.]+$/, '')), x); }
+    }
+    const resolve = (ref) => byUid.get(norm(ref)) || byTitle.get(norm(ref)) || byBase.get(norm(ref)) || null;
+    const links = (it.links || []).map((ref) => { const t = resolve(ref); return t ? { ref, id: t.id, title: t.title } : { ref }; });
+    if (it.target) { const t = this.items.get(String(it.target)); links.push({ ref: it.target, id: it.target, title: t ? t.title : undefined, via: 'annotates' }); }
+    // the identifiers THIS item answers to, for inbound matching
+    const base = (it.path || '').split('/').pop();
+    const selfKeys = new Set([norm(it.uid), norm(it.title), norm(base), norm(base.replace(/\.[^.]+$/, ''))].filter(Boolean));
+    const backlinks = [];
+    for (const x of this.items.values()) {
+      if (x.id === it.id) continue;
+      if (x.target != null && String(x.target) === String(it.id)) { backlinks.push({ id: x.id, title: x.title, ref: it.id, via: 'annotates' }); continue; }
+      if (!(x.links && x.links.length)) continue;
+      for (const ref of x.links) if (selfKeys.has(norm(ref))) { backlinks.push({ id: x.id, title: x.title, ref }); break; }
+    }
+    return { links, backlinks };
   }
 
   // One-shot provenance normalization (SPEC-librarian §2). The external agent's writes

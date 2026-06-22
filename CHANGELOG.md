@@ -6,6 +6,53 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Repos as a first-class source — the GCU constellation as a queryable subgraph — 2026-06-22
+
+- **`weir_ingestRepo`** (GLASS §17.6). A code repo's own docs (README / SPEC / `docs/**`
+  / `CLAUDE.md` — **docs, not code**) ingest as a synthetic, non-polled source
+  (`adapter:'repo'`, like `stacks`/`saved`), so `weir_search` hits a repo's actual docs
+  *and* the librarian's dive-map, related. **weir never reads the repo or runs git** —
+  the agent (with the files + git) hands docs in with a commit `anchor`; weir stores them
+  as `doc` items (stable id `repo:<slug>:<pathhash>`, idempotent via `upsertItems`, never
+  resets state). First call creates the source as a ratifiable proposal; `kind:'repo'` is
+  the provenance flag ("the project's words" — no new `source` tier). **Refresh = the
+  dive-ledger, agent-side:** read the stored anchor (`weir_listSources` surfaces it), `git
+  diff <anchor> HEAD` locally, re-ingest the delta (`removed` paths archived, never
+  deleted). The dive-map stays a stacks note related into the doc-items (`source:agent`).
+- New **`doc`** item type (`ITEM_TYPES` + retention-forever + UI pill/accent). Health
+  computation now skips never-polled synthetic sources (no fetch-health noise on
+  repo/stacks/saved/books).
+- This rewrites the librarian's `SPEC-repos-as-source` framing ("bridge reads the repo,
+  `weir_repoll` diffs") to the correct side of the browser boundary ("agent diffs,
+  `weir_ingestRepo` stores"). Tests: `tools/smoke-repos.mjs`. Full record:
+  `docs/design/repos-as-source.md`. Built on stacks-first-class (notes-as-graph-citizens).
+
+### Stacks as first-class corpus — notes in the knowledge graph + partial edit — 2026-06-22
+
+- **Notes are graph citizens** (GLASS §17.5, STACKS §6). `weir_relate` /
+  `weir_relatedTo` now accept a stacks **path** or note id on either end. Relating an
+  *uncataloged* note auto-mints a deterministic Stage-0 **stub card**
+  (`store.ensureCard`, marked `glass.via:'relate'`, no LLM call) so it can host edges —
+  the whole edges-on-cards pipeline (proposals, review queue, ratify) works unchanged,
+  and a later full catalog reuses that card's `glass_id`, so edges never orphan.
+- **Soft wiki-link layer.** `weir_relatedTo` returns a `wikilinks` block alongside the
+  ratified graph: the note's `[[name]]`/`[[uid]]` cross-references resolved to items (by
+  uid → title → basename) + inbound wiki-backlinks + W3C-annotation links
+  (`store.wikiLinksOf`). Unresolved refs stay dangling markers, not errors. Turns the
+  librarian's prose cross-references into a navigable graph for free. `weir_relatedTo`
+  no longer throws on an uncataloged/unknown ref (returns an empty graph + a note).
+- **`weir_stacksEdit`** — partial edit: exact-string `find`/`replace` (unique unless
+  `replaceAll`) or `append` a trailing block, mirroring the agent `Edit` ergonomics, so
+  a one-line change no longer rewrites the whole note. Explicit not-found / not-unique
+  errors; identity (uid/created) and `source:agent` stamp preserved.
+- **Foldering signal.** `weir_stacksWrite` reports its destination — a bare write (no
+  folder) is flagged `routedToInbox:true` with a note, so the `inbox/` default is never
+  silent. (Notes were already searchable via `weir_search` and quotable/citable via
+  `weir_quote` — those needed nothing.)
+- Tests: `tools/smoke-stacks-graph.mjs`. Full record:
+  `docs/design/stacks-first-class.md`. Graduated from the librarian's
+  `SPEC-stacks-first-class` (prerequisite for the still-staged `SPEC-repos-as-source`).
+
 ### Glass: the webmcp agent surface — reference desk, provenance & a unified review queue — 2026-06-21
 
 - **Reference desk (read).** Two new read-only retrieval tools complete the

@@ -280,6 +280,31 @@ export class StacksStore {
     return rec;
   }
 
+  // Partial edit of a note body — exact-string find/replace (unique unless replaceAll)
+  // or append a trailing block — mirroring the agent Edit tool, so a one-line change
+  // doesn't mean rewriting the whole note (STACKS.md / SPEC-stacks-first-class Part C).
+  // Preserves uid/created/title/tags/source (rides on saveNote). Errors are explicit
+  // (not-found / not-unique), never silent.
+  async editNote(item, { find, replace, replaceAll, append } = {}) {
+    if (!item || item.type !== 'note') throw new Error('editNote edits a note (not a file)');
+    const body = await this.readNote(item);
+    let next;
+    if (append != null && String(append) !== '') {
+      if (find != null) throw new Error('pass either { find, replace } or { append }, not both');
+      next = body.replace(/\s+$/, '') + '\n\n' + String(append).replace(/^\n+/, '');
+    } else {
+      if (find == null || String(find) === '') throw new Error('provide `find` (the exact text to replace) or `append`');
+      const f = String(find);
+      const first = body.indexOf(f);
+      if (first < 0) throw new Error(`\`find\` text not found in ${item.path}`);
+      const second = body.indexOf(f, first + f.length);
+      if (second >= 0 && !replaceAll) throw new Error(`\`find\` is not unique in ${item.path} (appears 2+ times) — pass replaceAll:true or include more surrounding text`);
+      const r = replace == null ? '' : String(replace);
+      next = replaceAll ? body.split(f).join(r) : body.slice(0, first) + r + body.slice(first + f.length);
+    }
+    return this.saveNote(item, next);
+  }
+
   // Drop a binary file into the stacks (bytes = Uint8Array/ArrayBuffer).
   async addFile({ folder, name, bytes, mime, tags = [], source, created } = {}) {
     const uid = this._uid();

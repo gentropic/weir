@@ -117,18 +117,38 @@ draft-in-chat-and-paste loop covers it, one general `weir_rules` tool if ever ne
 - Filing UI: move an entry to another folder; create folders; the routing-rules editor
   (reusing the feed-rules editor).
 
-## 6. MCP adapters — Claude curates the stacks **[designed]**
+## 6. MCP adapters — Claude curates the stacks **[implemented]**
 
 So "write a spec, send it, I help file/link it" works end-to-end:
 
 - `weir_stacksList(path?)` — the tree (or a subtree): folders + entries with tags.
 - `weir_stacksRead(path, {content?})` — a note's body / a file's metadata.
 - `weir_stacksWrite({path, markdown, tags?, folder?})` — create/update a note (I can
-  draft a note straight into your stacks).
+  draft a note straight into your stacks). A **bare** write (no folder) routes to
+  `inbox/` and **says so** (`routedToInbox:true` + a note) — the inbox default is
+  triage, never a silent destination for permanent docs.
+- `weir_stacksEdit(path, {find, replace, replaceAll?} | {append})` — **partial edit**:
+  exact-string find/replace (unique unless `replaceAll`) or append a trailing block,
+  mirroring the agent `Edit` tool — a one-line change no longer rewrites the whole note.
+  Errors are explicit (not-found / not-unique).
 - `weir_stacksMove(path, toFolder)` — file/refile an entry.
 - `weir_stacksTag(path, {add?, remove?})` — tag it.
+- `weir_stacksTrash(path)` — drop to `.trash/` (never-delete; recoverable).
 
 (All reuse the existing tag/route/store machinery; they're stacks-pathed wrappers.)
+
+**Notes are graph citizens.** `weir_relate` / `weir_relatedTo` accept a stacks
+**path** (or note id) on either end. Relating an *uncataloged* note auto-mints a
+Stage-0 **stub card** (`glass.via:'relate'`, no LLM) so it can host edges — the whole
+edges-on-cards pipeline (proposals, review queue, ratify) works unchanged, and a later
+full catalog **reuses that card's `glass_id`**, so edges never orphan. On top of the
+ratified graph, `weir_relatedTo` surfaces a soft **`wikilinks`** layer: the note's
+`[[name]]` / `[[uid]]` cross-references resolved to items (by uid → title → basename),
+plus inbound wiki-backlinks and W3C-annotation links — the librarian's prose
+cross-references, navigable for free, without ratification. Notes are already searchable
+(`weir_search` indexes the stacks feed) and quotable/citable (`weir_quote` reads note
+bodies), so a grounded answer can cite a stacks note the same way it cites an item. See
+`docs/design/stacks-first-class.md`.
 
 ## 7. Inflows **[designed]**
 

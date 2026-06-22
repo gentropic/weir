@@ -29,7 +29,7 @@ import { catalogStoreItem } from '../cataloger.js';
 import { hasBridge, bridgeVersion } from '../../../vendor/bridge-client.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
-const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue']);
+const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue', 'doc']);
 const RENDER_CAP = 300;
 const RAIL_CAP = 60;
 // Default folder order in the rail (active-first; dead-heavy topics like geo sink).
@@ -506,6 +506,7 @@ export class App {
     const staleDays = this.store.getSettings().feed_stale_days || 120;
     this._health.clear();
     for (const f of this.store.listFeeds()) {
+      if ((f.next_poll_at || 0) >= 8.64e15) continue;   // synthetic, never-polled sources (stacks/saved/books/repo) have no fetch health
       const ids = this.store.byFeed.get(f.id) || new Set();
       const items = [];
       for (const id of ids) { const r = this.store.items.get(id); if (r) items.push(r); }
@@ -3366,7 +3367,7 @@ export class App {
   // count shows unread (falling back to total), like the built-in views.
   renderViews() {
     const el = document.getElementById('smart-views'); if (!el) return;
-    const ICONS = { video: '▶', article: '☰', paper: '✦', release: '⬡', track: '♪', search: '⌕' };
+    const ICONS = { video: '▶', article: '☰', paper: '✦', release: '⬡', track: '♪', doc: '🖹', search: '⌕' };
     const rows = [];
     for (const v of this.store.getViews()) {
       if (v.query && v.query.catalog) {                  // saved facet drill-down (catalog query)
@@ -4126,7 +4127,7 @@ export class App {
 }
 
 // item-type → accent token, for the annotation-target pill in a note pane.
-const NOTE_ACCENT = { article: '--sw-indigo', video: '--sw-red', release: '--sw-green', paper: '--sw-amber', event: '--sw-orange', track: '--sw-teal', note: '--sw-teal' };
+const NOTE_ACCENT = { article: '--sw-indigo', video: '--sw-red', release: '--sw-green', paper: '--sw-amber', event: '--sw-orange', track: '--sw-teal', note: '--sw-teal', doc: '--sw-indigo' };
 
 // ── NotePane — the graduated note editor, ONE instance per rails tab. Replaces the
 // singleton #stacks-editor-overlay modal: each pane owns its DOM + CM6 + state, so

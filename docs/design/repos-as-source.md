@@ -1,0 +1,111 @@
+# SPEC — Repos as a first-class source (dives into the corpus)
+
+> **Status: IMPLEMENTED (2026-06-22).** Design record — kept for the rationale +
+> the architecture correction + deferred work; the authoritative summary is GLASS.md
+> §17.6. Originally a **librarian** draft (`claude:librarian`, `source:agent`) for the
+> **dev agent** (`claude:dev`); direction + granularity ratified by Arthur 2026-06-22,
+> reviewed with weir-dev. Built on `SPEC-stacks-first-class` (notes had to be graph
+> citizens first). The librarian proposes; the dev decides.
+
+---
+
+## Why
+
+The librarian dives sibling repos (auditable, BMA, hopper, capsule/cradle/numen, press,
+…) and writes maps — but the repos and maps weren't corpus items: they couldn't be
+`weir_search`ed, `weir_relate`d, or *cited* the way items are. They lived as `research/`
+files + stacks notes, *beside* the catalog. This makes a **repo a first-class source**
+whose items are its own docs + the librarian's dive-map, commit-anchored and in the
+knowledge graph — so the constellation becomes a **queryable subgraph in weir**
+(`weir_search "totality security boundary"` → hopper's actual docs *and* the hopper map,
+related).
+
+## The architecture correction (the heart of the review)
+
+The draft assigned the load-bearing mechanic to weir: *"Bridge reads the local repo dir…
+`weir_repoll` extended to diff-and-reingest at the anchor."* That doesn't survive contact
+with weir's runtime:
+
+- **bridge = fetch**, a CORS broker. It cannot read a local directory. "Bridge reads the
+  repo dir" is a category error.
+- weir *can* read a folder, but only via an **FSA mount** (`fsmount.js`, same as the store
+  + Courier folders) — that yields file *bytes*, never **`git`**. There is no process, no
+  `git diff`, no commit SHA in a browser tab. The dive-ledger is un-implementable *inside*
+  weir.
+
+But it doesn't need to be — **the agent already has git and the files.** So the
+responsibility flips: **the agent reads + diffs; weir stores + catalogs.** This lands on
+an existing seam — `weir_addLink` → `importLinks` already does "agent hands weir
+structured items, weir stores + stamps provenance" — and on the synthetic-feed precedent
+(`stacks`, `saved`, `books` are all non-polled feeds). No new I/O surface; the
+browser-as-runtime ethos holds.
+
+The two design forks were settled with Arthur: **(1)** repo docs live as a **synthetic
+per-repo source (feed)**, not stacks notes — keeping the project's words grouped + separate
+from the user's personal stacks; **(2)** provenance reuses **`human` + a repo flag**
+(`feed.config.kind === 'repo'`), not a new `source:repo` tier — no change to the closed
+provenance vocabulary.
+
+## What shipped
+
+### `store.ingestRepo({ repo, name?, anchor?, docs, removed?, category?, … })`
+- Creates/updates a synthetic source: `id: repo:<slug>` (slug = repo basename),
+  `adapter:'repo'`, `next_poll_at: 8.64e15` (poller skips it), `retention: forever`,
+  `config: { kind:'repo', repo, anchor }`. First creation stamps `source:'agent'` +
+  identity, so it lands in `weir_reviewQueue` as a ratifiable feed proposal
+  (decides-vs-proposes).
+- Upserts each doc as a **`doc` item** (new `ITEM_TYPES` entry), stable id
+  `repo:<slug>:<hash32(path)>`, body as lazy per-feed content, tagged with the repo slug,
+  `structured:{repo,path}`. Rides `upsertItems` → dedup + **never resets read/saved/tags**;
+  re-ingest is idempotent.
+- `removed[]` paths are **archived, never deleted** (a file gone from the repo stays in the
+  standing archive).
+- Advances + persists the `anchor`. Returns `{ source, inserted, updated, removed, anchor }`.
+
+### `weir_ingestRepo` (the agent's verb)
+The MCP wrapper. The agent calls it; **weir never touches git**. Refresh recipe documented
+in the tool description: read the stored anchor from `weir_listSources` (now surfaced on
+repo sources via `projFeed`), run `git diff --name-only <anchor> HEAD -- <globs>` (+
+`--diff-filter=D`) locally, call `weir_ingestRepo` with only the changed docs + the new
+HEAD + deleted paths in `removed`. "re-dive" and "re-poll" unify — on the agent's side,
+the only side that can diff. `weir_repoll` is deliberately **not** extended (it's
+fetch-only; a repo source isn't fetchable).
+
+### Free from prior work
+Doc-items are items, so they're already `weir_search`able, `weir_quote`able, and — since
+`SPEC-stacks-first-class` — `weir_relate`able by id (auto-carded on relate). The dive-map
+stays a **stacks note** related into the doc-items (`source:agent`); that relation is the
+synthesis layer, cleanly distinct from the project's words. `recomputeHealth` now skips
+never-polled sources (`next_poll_at >= 8.64e15`), so repo/stacks/saved/books sources don't
+show fetch-health noise.
+
+## Granularity (settled, unchanged from the draft)
+- **Docs + the dive-map, NOT code.** weir is a library, not a code-search engine. The
+  agent owns the glob set (`README*`, `SPEC-*.md`, `docs/**/*.md`, `ROADMAP`/`DECISIONS`,
+  `CLAUDE.md`); weir stores whatever's handed in — so "docs not code" and the gitignored
+  `CLAUDE.md` (local read by the agent) need *zero* weir support.
+- Repo docs are "the project's words" (`kind:'repo'`); the dive-map relation is
+  `source:agent`. Kept distinct on the cards.
+
+## Decisions / notes
+- **Auto-catalog is opt-in**, not automatic (stacks ethos — a repo's docs aren't feed slop
+  to auto-classify). The agent triggers `weir_catalogItem` if wanted.
+- **Source key = repo basename.** Two repos with the same basename in different orgs would
+  collide on `repo:<slug>`; pass a distinct `name`/repo path if that ever bites. (Noted,
+  not handled — no GCU collision today.)
+- **Re-added-after-removed**: `upsertItems` skips archived ids (resurrection guard), so a
+  doc deleted-then-re-added stays archived until explicitly unarchived. Acceptable; flagged.
+
+## Deferred
+- **`url` permalinks per doc** to a GitHub blob at the anchor — supported (the agent can
+  pass `url`), not required; nice for click-through citations.
+- **Non-markdown docs** (e.g. a roadmap `.csv`) — supported as text if the agent hands them
+  in; no special handling.
+- A repo source's **own in-app browse affordance** beyond `listSources` grouping — the
+  source shows in the tree under `repos/`; richer UI is a later nicety.
+
+## Tests
+`tools/smoke-repos.mjs` (wired into `npm run smoke`): first ingest creates the source +
+`doc` items (proposal, never-polled, searchable); refresh re-ingests the delta, advances
+the anchor, and never resets state; `removed` archives without deleting; `weir_listSources`
+surfaces the anchor; a stacks dive-map relates to a repo doc by id.

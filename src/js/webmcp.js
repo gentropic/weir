@@ -513,7 +513,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     }
     if (kind === 'relation') {
       if (input.from == null || input.to == null) throw new Error('a relation proposal needs `from` and `to` (item ids or glass_ids) — see weir_reviewQueue({ kind: "relation" })');
-      const from = toGlassId(input.from), to = toGlassId(input.to);
+      const from = await toGlassId(input.from), to = await toGlassId(input.to);
       const type = input.type ? String(input.type) : undefined;
       if (action === 'ratify') { const ok = store.ratifyEdge(from, to, type); await store.flush(); return { kind, action, from: String(input.from), to: String(input.to), ratified: ok }; }
       const removed = store.unrelateCards(from, to, type ? { type } : {}); await store.flush();
@@ -632,40 +632,67 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   }
 
   // ── the knowledge graph: typed `related` edges between items (GLASS §10) ──
-  // Resolve an item id OR glass_id to a card's glass_id (errors if uncataloged);
-  // map a glass_id back to its item id for projection.
-  function toGlassId(idOrGlass) {
-    const s = String(idOrGlass || '');
-    if (s && store.cards.get(s)) return s;            // already a glass_id
-    const it = store.getItem(s);
-    if (it && it.glass_id) return it.glass_id;
-    throw new Error(`"${idOrGlass}" has no catalog card yet — catalog it first (or pass a glass_id).`);
+  // Resolve an item ref — a glass_id, an item id, OR a stacks path (e.g. "gcu/README.md")
+  // — to { item, glassId }. Lets notes/items join the graph by path or id, not only
+  // glass_id (SPEC-stacks-first-class Part A).
+  function resolveItemRef(ref) {
+    const s = String(ref == null ? '' : ref);
+    const card = s && store.cards.get(s);
+    if (card) { const itId = card.glass && card.glass.document_ref; return { item: itId ? store.getItem(itId) : null, glassId: s }; }
+    let it = store.getItem(s);
+    if (!it) it = findStackByPath(s);   // human-friendly stacks path
+    return { item: it || null, glassId: (it && it.glass_id) || null };
+  }
+  // Resolve a ref to a card's glass_id. With { create }, mint a Stage-0 card for an
+  // uncataloged item (store.ensureCard) so it can be an edge endpoint — that's how a
+  // note relates without a manual catalog step. Errors if uncataloged and !create.
+  async function toGlassId(ref, opts = {}) {
+    const { item, glassId } = resolveItemRef(ref);
+    if (glassId && store.cards.get(glassId)) return glassId;
+    if (item) { if (opts.create) return await store.ensureCard(item.id); throw new Error(`"${ref}" has no catalog card yet — relate it (auto-cards it) or catalog it first.`); }
+    throw new Error(`"${ref}" — no such item, glass_id, or stacks path.`);
   }
   const itemRefOf = (gid) => { const c = store.cards.get(gid); return (c && c.glass && c.glass.document_ref) || gid; };
 
-  // Read the graph around an item: ratified edges (outgoing + backlinks) + on-demand
-  // facet-overlap SUGGESTIONS to ratify (each with the shared terms = the "why").
+  // Read the graph around an item (or note, or stacks path): ratified edges (outgoing +
+  // backlinks) + on-demand facet-overlap SUGGESTIONS — PLUS the soft [[wiki]]/annotation
+  // link layer (the librarian's prose cross-references, navigable without ratification).
+  // An uncataloged note has no ratified edges yet but still shows its wikilinks.
   async function relatedTo(input = {}) {
-    const gid = toGlassId(input.id);
-    const r = store.relatedOf(gid);
-    const proj = (e) => ({ id: itemRefOf(e.glass_id), title: e.title, type: e.type, source: e.source });
-    const out = { id: String(input.id), outgoing: r.outgoing.map(proj), backlinks: r.backlinks.map(proj) };
-    if (input.suggest !== false) {
-      const limit = Math.min(Math.max(1, Number(input.limit) || 8), 25);
-      out.suggested = store.proposeRelated(gid, { limit }).map((p) => ({ id: itemRefOf(p.glass_id), title: p.title, score: p.score, shared: p.shared }));
+    const { item, glassId } = resolveItemRef(input.id);
+    const out = { id: String(input.id) };
+    if (glassId && store.cards.get(glassId)) {
+      const r = store.relatedOf(glassId);
+      const proj = (e) => ({ id: itemRefOf(e.glass_id), title: e.title, type: e.type, source: e.source });
+      out.outgoing = r.outgoing.map(proj);
+      out.backlinks = r.backlinks.map(proj);
+      if (input.suggest !== false) {
+        const limit = Math.min(Math.max(1, Number(input.limit) || 8), 25);
+        out.suggested = store.proposeRelated(glassId, { limit }).map((p) => ({ id: itemRefOf(p.glass_id), title: p.title, score: p.score, shared: p.shared }));
+      }
+    } else {
+      out.outgoing = []; out.backlinks = [];
+      out.note = item ? 'not in the catalog graph yet (no card) — weir_relate auto-cards it, or weir_catalogItem to enrich.' : `"${input.id}" — no such item/card/stacks path.`;
     }
+    if (item) { const wl = store.wikiLinksOf(item.id); if (wl.links.length || wl.backlinks.length) out.wikilinks = wl; }
     return out;
   }
 
-  // Ratify (or remove) a typed edge between two items — the decides-vs-proposes gate
-  // (GLASS §2.1): a suggestion is only an edge once declared here. type ∈ RELATION_TYPES.
+  // Ratify (or remove) a typed edge between two items/notes — the decides-vs-proposes
+  // gate (GLASS §2.1): a suggestion is only an edge once declared here. type ∈
+  // RELATION_TYPES. Endpoints may be item ids, glass_ids, or stacks paths; an
+  // uncataloged endpoint is auto-carded (Stage-0) so notes can relate freely.
   async function relate(input = {}, client) {
-    const from = toGlassId(input.from), to = toGlassId(input.to);
     if (input.remove) {
+      let from, to;   // resolve without creating — nothing to remove if uncataloged
+      try { from = await toGlassId(input.from); to = await toGlassId(input.to); }
+      catch { return { removed: 0, from: String(input.from), to: String(input.to) }; }
       const removed = store.unrelateCards(from, to, input.type ? { type: String(input.type) } : {});
       await store.flush();
       return { removed, from: String(input.from), to: String(input.to) };
     }
+    const from = await toGlassId(input.from, { create: true });
+    const to = await toGlassId(input.to, { create: true });
     const p = agentProv(client);
     const edge = store.relateCards(from, to, { type: input.type || 'related', source: p.source, by: p.by, rationale: input.rationale ? String(input.rationale) : undefined });
     await store.flush();
@@ -735,7 +762,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
   // Default → a COMPACT overview (folder summaries + health tally + just the troubled
   // feeds), so a 400+ feed corpus doesn't blow the result budget. Pass a `category` to
   // get the full per-feed list for one folder (bounded by folder size).
-  const projFeed = (f, stats) => ({ id: f.id, name: f.name, url: f.url || undefined, adapter: f.adapter, category: f.category || '(ungrouped)', inbox: stats.byFeed[f.id] || 0, ...feedHealth(f) });
+  const projFeed = (f, stats) => ({ id: f.id, name: f.name, url: f.url || undefined, adapter: f.adapter, category: f.category || '(ungrouped)', inbox: stats.byFeed[f.id] || 0, ...(f.config && f.config.kind === 'repo' ? { kind: 'repo', anchor: f.config.anchor } : {}), ...feedHealth(f) });
   async function listSources(input = {}) {
     const stats = store.counts();
     const feeds = store.listFeeds();
@@ -981,6 +1008,10 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     const tags = [].concat(input.tags || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean);
     const path = input.path ? String(input.path).replace(/^\/+/, '') : null;
     const existing = path ? findStackByPath(path) : null;
+    // Did the caller name a destination? (explicit folder, or a path WITH a folder.)
+    // If not, the note falls to inbox/ by default — which we report, so the bare-path
+    // default is never silent (SPEC-stacks-first-class Part B).
+    const explicitDest = input.folder != null || !!(path && path.includes('/'));
     let rec;
     if (existing && existing.type === 'note') {
       rec = await stacks.saveNote(existing, String(input.markdown), { title: input.title, tags: tags.length ? tags : undefined });
@@ -992,7 +1023,13 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     await store.flush();
     if (app.renderStacks) app.renderStacks();
     if (app.stackFilter && app.renderStream) app.renderStream();
-    return { ok: true, ...projStack(rec) };
+    const dest = stkFolderOf(rec.path);
+    const o = { ok: true, ...projStack(rec), folder: dest || '(root)' };
+    if (!existing && !explicitDest && dest === 'inbox') {
+      o.routedToInbox = true;
+      o.note = 'no folder given — filed to inbox/ (triage). Pass `folder` (or a path that includes a folder) to file it directly; weir_stacksMove relocates an existing note.';
+    }
+    return o;
   }
 
   async function stacksMove(input = {}) {
@@ -1033,6 +1070,22 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (app.renderStacks) app.renderStacks();
     if (app.stackFilter && app.renderStream) app.renderStream();
     return { ok: true, ...r };
+  }
+
+  // Partial edit of a note (find/replace, or append) — so a one-line change doesn't
+  // rewrite the whole note. Exact-string match, unique unless replaceAll; explicit
+  // errors (not-found / not-unique). Returns the updated note + its (capped) body.
+  async function stacksEdit(input = {}) {
+    const stacks = requireStacks();
+    const item = findStackByPath(input.path);
+    if (!item) throw new Error(`No stacks entry at "${input.path}". Use weir_stacksList to see paths.`);
+    if (item.type !== 'note') throw new Error('weir_stacksEdit edits notes only (this entry is a file).');
+    const rec = await stacks.editNote(item, { find: input.find, replace: input.replace, replaceAll: input.replaceAll, append: input.append });
+    await store.flush();
+    if (app.renderStacks) app.renderStacks();
+    if (app.stackFilter && app.renderStream) app.renderStream();
+    const body = await stacks.readNote(rec);
+    return { ok: true, ...projStack(rec), markdown: body.length > 16000 ? body.slice(0, 16000) + '…' : body };
   }
 
   // Add owned/physical books to the holdings (the "Books" library). title + author,
@@ -1093,6 +1146,36 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { inserted: res.inserted, updated: res.updated, links: norm.length };
   }
 
+  // Ingest a repo's docs as a first-class source (SPEC-repos-as-source). weir does NOT
+  // read the repo or run git — YOU (the agent, with the files + git) hand the docs in and
+  // supply the commit `anchor`. First call creates the source (an agent proposal →
+  // weir_reviewQueue); later calls refresh it. Refresh recipe: read the stored anchor
+  // (weir_listSources surfaces it on the repo source), run `git diff --name-only
+  // <anchor> HEAD -- <doc globs>` locally, then call this with only the CHANGED docs +
+  // the new HEAD as `anchor` (+ `removed` for deleted paths). Idempotent (stable ids,
+  // never resets read/saved/tags). Docs become `doc` items, searchable + relatable +
+  // citable like any item; relate your dive-map (a stacks note) to them with weir_relate.
+  async function ingestRepo(input = {}, client) {
+    if (!app) throw new Error('ingestRepo is only available in the running app');
+    if (input.repo == null || String(input.repo).trim() === '') throw new Error('provide `repo` (the repo name or path, e.g. "auditable" or "../auditable")');
+    const docs = Array.isArray(input.docs) ? input.docs : [];
+    const removed = Array.isArray(input.removed) ? input.removed : [];
+    if (!docs.length && !removed.length && input.anchor == null) throw new Error('pass `docs` (doc bodies to ingest), `removed` (paths to archive), and/or `anchor`');
+    for (const d of docs) if (!d || !d.path) throw new Error('each doc needs a `path` (its path within the repo)');
+    const p = agentProv(client);
+    const r = await store.ingestRepo({
+      repo: String(input.repo),
+      name: input.name ? String(input.name) : undefined,
+      anchor: input.anchor != null ? String(input.anchor) : undefined,
+      docs, removed,
+      category: input.category ? String(input.category) : undefined,
+      source: p.source, added_by: p.by, rationale: input.rationale ? String(input.rationale) : undefined,
+    });
+    await store.flush();
+    if (app.renderAll) app.renderAll();
+    return { ok: true, ...r };
+  }
+
   // One-shot provenance normalization (SPEC-librarian §2): rewrite the agent's
   // historically-split stamps — tags 'llm', edges 'claude' — to the unified 'agent'
   // tier across the whole corpus. Idempotent; returns counts. A capability, not a
@@ -1103,7 +1186,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksMove, stacksTag, stacksTrash };
+  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1112,7 +1195,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
 const TOOLS = [
   {
     name: 'weir_queryItems', fn: 'queryItems',
-    description: 'Search/list weir feed items, newest first. Filters: q (substring over title/excerpt/text), feed (a source by id OR name, e.g. "Saved Links"), category (folder name; "" = ungrouped), type (article|video|release|paper|status|track|podcast|commit|issue|note), view (inbox|saved|archived), unread (bool), saved (bool), limit (default 30, max 100). PROVENANCE filters (the agent footprint): addedBy = items the agent ADDED (true = any agent, or an identity string like "claude:librarian"); taggedBy = items the agent TAGGED. Filters combine. Paginated: returns { count, total, hasMore, items, nextCursor }; page by passing nextCursor back with the SAME filters. Items are compact (id, title, url, feed, published, tags, added_by, excerpt). Use weir_listSources first to see feed/folder names.',
+    description: 'Search/list weir feed items, newest first. Filters: q (substring over title/excerpt/text), feed (a source by id OR name, e.g. "Saved Links"), category (folder name; "" = ungrouped), type (article|video|release|paper|status|track|podcast|commit|issue|note|doc), view (inbox|saved|archived), unread (bool), saved (bool), limit (default 30, max 100). PROVENANCE filters (the agent footprint): addedBy = items the agent ADDED (true = any agent, or an identity string like "claude:librarian"); taggedBy = items the agent TAGGED. Filters combine. Paginated: returns { count, total, hasMore, items, nextCursor }; page by passing nextCursor back with the SAME filters. Items are compact (id, title, url, feed, published, tags, added_by, excerpt). Use weir_listSources first to see feed/folder names.',
     inputSchema: {
       type: 'object', properties: {
         q: { type: 'string', description: 'Substring search over title/excerpt/text' },
@@ -1357,6 +1440,22 @@ const TOOLS = [
     annotations: { title: 'Save a link' },
   },
   {
+    name: 'weir_ingestRepo', fn: 'ingestRepo',
+    description: 'Ingest a code repo’s own DOCS as a first-class source (SPEC-repos-as-source) — so the GCU constellation becomes a queryable subgraph in weir. weir does NOT read the repo or run git; YOU (with the files + git) hand the docs in. `repo` = the repo name/path (e.g. "auditable"); `docs` = [{ path, title?, markdown, url?, date? }] — its README/SPEC/docs/CLAUDE.md (docs, NOT code). `anchor` = the commit SHA these docs are from. First call CREATES the source as a proposal (→ weir_reviewQueue, ratify like a feed); later calls REFRESH it. REFRESH recipe: read the stored anchor from weir_listSources, run `git diff --name-only <anchor> HEAD -- <doc globs>` (+ `--diff-filter=D` for deletions) locally, then call this with ONLY the changed docs + the new HEAD as `anchor` + deleted paths in `removed`. Idempotent (stable ids; never resets read/saved/tags); `removed` archives (never deletes). Docs become `doc` items — searchable, quotable, and relatable like any item; relate your dive-map (a stacks note) to them with weir_relate. Returns { ok, source, inserted, updated, removed, anchor }.',
+    inputSchema: {
+      type: 'object', properties: {
+        repo: { type: 'string', description: 'The repo name or path (e.g. "auditable" or "../auditable") — the source key is its basename' },
+        name: { type: 'string', description: 'Display name for the source (default: "<repo> (repo)")' },
+        anchor: { type: 'string', description: 'The commit SHA these docs are from — the dive-ledger anchor; advanced on each refresh' },
+        docs: { type: 'array', description: 'Docs to ingest/update: [{ path, title?, markdown, url?, date? }] (docs only, not code)', items: { type: 'object', properties: { path: { type: 'string' }, title: { type: 'string' }, markdown: { type: 'string' }, url: { type: 'string' }, date: { type: 'string' } }, required: ['path'] } },
+        removed: { type: 'array', items: { type: 'string' }, description: 'Doc paths deleted since the anchor — archived (never deleted)' },
+        category: { type: 'string', description: 'Folder to group the source under (default "repos")' },
+        rationale: { type: 'string', description: 'Why you are adding this source — shown in the review queue at ratify time' },
+      }, required: ['repo'],
+    },
+    annotations: { title: 'Ingest a repo as a source' },
+  },
+  {
     name: 'weir_catalogItem', fn: 'catalogItem',
     description: 'Catalog one item with the configured LLM right now (fills its glass facets + description) — best for items with real body text. Returns glass_id, facets, description. On a metadata-only item (too little text to read, e.g. a book with no body/abstract) it ABSTAINS rather than fabricate: returns ok:false + skipped + a note, leaving it needs_review — author it yourself via weir_reviewItem({ id, description, facets }). Needs the cataloger configured and reachable (Lemonade via the bridge).',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Item id (from weir_queryItems)' } }, required: ['id'] },
@@ -1483,10 +1582,10 @@ const TOOLS = [
   },
   {
     name: 'weir_relatedTo', fn: 'relatedTo',
-    description: 'The knowledge graph around an item (GLASS §10): its ratified `related` edges — outgoing + backlinks — PLUS on-demand SUGGESTIONS (set suggest:false to skip) from facet co-occurrence, each carrying the shared facet terms (the "why") and a score. Pass an item id (from weir_queryItems) or a glass_id; the item must be cataloged. Suggestions are NOT edges until ratified via weir_relate.',
+    description: 'The knowledge graph around an item OR stacks note (GLASS §10): its ratified `related` edges — outgoing + backlinks — PLUS on-demand SUGGESTIONS (set suggest:false to skip) from facet co-occurrence, each carrying the shared facet terms (the "why") and a score, PLUS the soft `wikilinks` layer (resolved [[name]] cross-references + who annotates this, navigable without ratification). Pass an item id (from weir_queryItems), a glass_id, or a stacks PATH (e.g. "gcu/README.md"). An uncataloged note has no ratified edges yet but still shows its wikilinks. Suggestions/wikilinks are NOT edges until ratified via weir_relate.',
     inputSchema: {
       type: 'object', properties: {
-        id: { type: 'string', description: 'Item id or glass_id' },
+        id: { type: 'string', description: 'Item id, glass_id, or stacks path' },
         suggest: { type: 'boolean', description: 'Include facet-overlap suggestions (default true)' },
         limit: { type: 'integer', description: 'Max suggestions (default 8, cap 25)' },
       }, required: ['id'],
@@ -1495,11 +1594,11 @@ const TOOLS = [
   },
   {
     name: 'weir_relate', fn: 'relate',
-    description: 'Propose a typed `related` edge between two items — decides-vs-proposes (GLASS §2.1): a facet-overlap suggestion becomes a real edge ONLY when declared here. `from`/`to` are item ids (or glass_ids); both must be cataloged. `type` ∈ related | same-topic | extends | contradicts | responds-to | same-work (default "related"). Pass `rationale` (why these relate) — it shows in weir_reviewQueue as a `relation` proposal until the user ratifies. Pass remove:true to delete the edge (optionally just one type). Stored on the from-item, stamped source:agent + your identity; reversible (weir never deletes the items).',
+    description: 'Propose a typed `related` edge between two items or stacks notes — decides-vs-proposes (GLASS §2.1): a facet-overlap suggestion becomes a real edge ONLY when declared here. `from`/`to` are item ids, glass_ids, OR stacks paths (e.g. "gcu/README.md"); an uncataloged endpoint (e.g. a fresh note) is auto-carded at Stage-0 so it can join the graph — no manual catalog step needed. `type` ∈ related | same-topic | extends | contradicts | responds-to | same-work (default "related"). Pass `rationale` (why these relate) — it shows in weir_reviewQueue as a `relation` proposal until the user ratifies. Pass remove:true to delete the edge (optionally just one type). Stored on the from-item, stamped source:agent + your identity; reversible (weir never deletes the items).',
     inputSchema: {
       type: 'object', properties: {
-        from: { type: 'string', description: 'Source item id / glass_id' },
-        to: { type: 'string', description: 'Target item id / glass_id' },
+        from: { type: 'string', description: 'Source item id / glass_id / stacks path' },
+        to: { type: 'string', description: 'Target item id / glass_id / stacks path' },
         type: { type: 'string', description: 'related | same-topic | extends | contradicts | responds-to | same-work' },
         rationale: { type: 'string', description: 'Why these relate — shown in the review queue at ratify time' },
         remove: { type: 'boolean', description: 'Remove the edge instead of creating it' },
@@ -1558,7 +1657,7 @@ const TOOLS = [
   },
   {
     name: 'weir_stacksWrite', fn: 'stacksWrite',
-    description: 'Create OR update a stacks NOTE — "draft a note straight into the stacks". If `path` names an existing note, its body is updated (uid/created preserved); otherwise a new note is created. Address it with `path` (e.g. "specs/weir/idea.md") OR `folder`+`name`; bare folder defaults to inbox. `markdown` is the body (required); `title` and `tags` optional (tags stamped as yours-via-Claude). Link other holdings with [[uid]]. Returns { ok, id, path, uid, title, tags }. Files are dropped via Telegram or the app, not here.',
+    description: 'Create OR update a stacks NOTE — "draft a note straight into the stacks". If `path` names an existing note, its body is updated (uid/created preserved); otherwise a new note is created. Address it with `path` (e.g. "specs/weir/idea.md") OR `folder`+`name`. If you give NO folder (bare name / bare path), the note is filed to inbox/ as triage and the result says so (routedToInbox:true) — pass `folder` (or a path that includes a folder) to file it directly. `markdown` is the body (required); `title` and `tags` optional (tags stamped as yours-via-Claude). Link other notes/holdings with [[uid]] or [[name]] (resolved by weir_relatedTo). For a one-line change, prefer weir_stacksEdit (find/replace/append) over rewriting the whole note here. Returns { ok, id, path, uid, title, tags, folder, routedToInbox? }. Files are dropped via Telegram or the app, not here.',
     inputSchema: {
       type: 'object', properties: {
         path: { type: 'string', description: 'Target path, e.g. "specs/weir/idea.md" (folder + filename)' },
@@ -1570,6 +1669,20 @@ const TOOLS = [
       }, required: ['markdown'],
     },
     annotations: { title: 'Write a stacks note' },
+  },
+  {
+    name: 'weir_stacksEdit', fn: 'stacksEdit',
+    description: 'Partial edit of a stacks NOTE — change one part without rewriting the whole note (the way the agent Edit tool works). Address it by `path`. Either replace text: `find` (the exact string to locate) + `replace` (its replacement; omit/empty to delete the text) — `find` must be UNIQUE unless you pass replaceAll:true. OR append: `append` (a block added to the end of the note). Exact-string match; errors are explicit (find-not-found / find-not-unique), never silent. Identity (uid/created) and source-stamp are preserved. Notes only (not files). Returns { ok, id, path, uid, title, tags, markdown }.',
+    inputSchema: {
+      type: 'object', properties: {
+        path: { type: 'string', description: 'Entry path, e.g. "gcu/README.md"' },
+        find: { type: 'string', description: 'Exact text to locate (must be unique unless replaceAll)' },
+        replace: { type: 'string', description: 'Replacement for `find` (omit or empty string to delete it)' },
+        replaceAll: { type: 'boolean', description: 'Replace every occurrence of `find` (default false → must be unique)' },
+        append: { type: 'string', description: 'A block to append to the end of the note (alternative to find/replace)' },
+      }, required: ['path'],
+    },
+    annotations: { title: 'Edit a stacks note' },
   },
   {
     name: 'weir_stacksMove', fn: 'stacksMove',

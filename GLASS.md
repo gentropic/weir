@@ -700,6 +700,39 @@ authored card is trusted on its stamp, not re-queued. Workflow/namespaced tags
 (`gcu`/`owned`/`brief:*`…) never leak into the `entity` facet. Full record:
 [docs/design/librarian-authored-cards.md](docs/design/librarian-authored-cards.md).
 
+**17.5 Stacks as first-class corpus.** Stacks notes (the librarian's dive-maps, briefs,
+the constellation map) are full graph citizens, not second-class prose. `weir_relate` /
+`weir_relatedTo` accept a stacks **path** or note id on either end; relating an
+uncataloged note auto-mints a Stage-0 **stub card** (`glass.via:'relate'`, no LLM) so the
+edges-on-cards machinery (§10) — proposals, the review queue, ratification — works
+unchanged, and a later full catalog reuses that `glass_id` so edges never orphan. On top
+of the ratified graph, `weir_relatedTo` returns a soft **`wikilinks`** layer (resolved
+`[[name]]`/`[[uid]]` cross-references + inbound wiki-backlinks + W3C-annotation links),
+turning the librarian's prose cross-references into a navigable graph for free. Notes are
+already searchable (`weir_search`), quotable and citable (`weir_quote` reads note bodies).
+`weir_stacksEdit` adds partial find/replace + append (the agent `Edit` ergonomics), and
+`weir_stacksWrite` reports its destination so the `inbox/` default is never silent. Full
+record: [docs/design/stacks-first-class.md](docs/design/stacks-first-class.md).
+
+**17.6 Repos as a first-class source.** A code repo's own docs (README / SPEC / `docs/**`
+/ `CLAUDE.md` — **docs, not code**) ingest as a synthetic, non-polled source
+(`adapter:'repo'`, like `stacks`/`saved`), so the GCU constellation becomes a queryable
+subgraph: `weir_search "totality security boundary"` hits hopper's actual docs *and* the
+librarian's dive-map, related. **weir never reads the repo or runs `git`** — the browser
+has no filesystem-of-record and no process. The **agent** (which has the files + git)
+hands docs in via **`weir_ingestRepo({repo, anchor, docs, removed?})`**; weir stores them
+as `doc` items (stable id `repo:<slug>:<pathhash>`, idempotent via `upsertItems` — never
+resets read/saved/tags), keyed to a commit **`anchor`** held in the source's `config`.
+First call creates the source as an agent **proposal** (→ the review queue, ratified like
+a feed, §17.3); the source's `kind:'repo'` is the provenance marker ("the project's
+words" — no new `source` tier). **Refresh = the dive-ledger, agent-side:** read the
+stored anchor (`weir_listSources` surfaces it), `git diff --name-only <anchor> HEAD --
+<globs>` locally, re-ingest only the delta with the new anchor (`removed` paths archived,
+never deleted). The librarian's dive-map stays a **stacks note** (§17.5) related into the
+repo's doc-items (`source:agent`) — the synthesis layer, cleanly distinct from the
+project's words. Full record:
+[docs/design/repos-as-source.md](docs/design/repos-as-source.md).
+
 ---
 
 The neo-dadaist throughline holds: zero-dependency, single-file, browser-as-runtime,

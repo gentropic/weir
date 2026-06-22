@@ -427,7 +427,10 @@ assert.equal(kg.outgoing[0].type, 'same-topic');
 assert.ok(!kg.suggested.find((s) => s.id === 'v1'), 'ratified edge drops out of suggestions');
 assert.equal((await tools.relatedTo({ id: 'v1' })).backlinks[0].id, 'a1', 'v1 is back-linked from a1');
 assert.equal((await tools.relate({ from: 'a1', to: 'v1', remove: true })).removed, 1, 'edge removed');
-await assert.rejects(() => tools.relatedTo({ id: 'no-such-item' }), /no catalog card/, 'uncataloged item errors clearly');
+// an unknown ref no longer throws — it returns an empty graph + an explanatory note
+const orphan = await tools.relatedTo({ id: 'no-such-item' });
+assert.match(orphan.note || '', /no such item/, 'unknown ref → note (not throw), empty graph');
+assert.deepEqual(orphan.outgoing, [], 'unknown ref has no edges');
 
 // ── provenance surfaced in the read tools (the agent footprint is now inspectable) ──
 store.getItem('a1').added_by = 'claude:test';   // simulate an agent-added item

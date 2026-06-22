@@ -6,6 +6,7 @@ export const SCHEMA_VERSION = 1;
 export const ITEM_TYPES = [
   'article', 'video', 'release', 'paper', 'status', 'track', 'podcast', 'commit', 'issue', 'book',
   'note', 'file',   // stacks entries (STACKS.md): authored notes + dropped files
+  'doc',            // a repo's own doc ingested as a source (SPEC-repos-as-source): README/SPEC/docs
   'event',          // derived events from exotic/gauge sources (USGS quakes, …) — ROADMAP: weir-as-gauge
 ];
 
@@ -22,6 +23,7 @@ export const RETENTION = {
   podcast: { unread: 90, read: 90 },
   commit:  { unread: 30, read: 14 },
   issue:   { unread: 90, read: 30 },
+  doc:     { unread: 'forever', read: 'forever' },  // a repo's docs persist with the source
 };
 
 export const DEFAULT_SETTINGS = {
