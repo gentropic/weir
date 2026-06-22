@@ -95,6 +95,35 @@ Links in the broad query because they're *uncataloged* (no facet-match bonus) �
 small repo-doc/notes sub-boost (testable via the per-call `weights` override) or by cataloging
 the ingested docs (opt-in). The target fix holds regardless.
 
+### EVAL3 precision findings (2026-06-22) — saved-tier fix shipped; two routed upstream
+
+A deeper eval (`retrieval-tuning-EVAL3-precision.md`) surfaced two precision issues. The
+diagnosis corrected the note's framing:
+
+- **Curated-tier junk → FIXED (weir-side).** Shopping bookmarks (a soldering kit, a
+  picture-frame shop, an S Pen page — all *Saved Links*) were riding the full curated ×2.5 and
+  topping geology queries. Fix: Saved Links get their **own softer tier** (`saved` ×1.4) —
+  above the firehose, well below authored/owned content (books/notes/repo docs ×2.5). The
+  `curated:true` *scope* still includes them (`isCuratedScope`); only the *weight* drops. This
+  also **defuses the visible symptom of the fuzzy finding below** — the kit topped at 70.7
+  *because* it was boosted ×2.5; at ×1.4 it falls below the real BMA drillhole docs (52.8). The
+  librarian/Arthur triaging genuine commerce bookmarks is the complementary curation step (his
+  links, his call).
+- **"Stemmer collision" → actually FUZZY matching (routed upstream).** `sondagem` (drilling)
+  matching `soldagem` (welding) is **not** a stemmer — there's no stemmer; it's
+  Damerau-Levenshtein typo tolerance (`fuzzy:1`), and the two words are edit-distance 1.
+  `nearTerms` has no length/ratio gate and doesn't down-weight fuzzy vs exact. Root fix is in
+  the **vendored `@gcu/librarian` engine** (auditable), not weir.
+- **Diacritic split (routed upstream).** The engine tokenizer `/[a-z0-9']+|[^\x00-\x7f]+/`
+  splits accented Latin *at the accent* (`geoestatística` → `geoestat` + `í` + `stica`), so
+  accented pt-BR words never form a clean token — this, not a general alt-as-query gap, is why
+  `geoestatística`↛`geostatistics`. Fix = fold accented Latin to ASCII in `tokenize` (+ a
+  reindex). Engine-level (auditable).
+
+Both engine findings were **routed back to the librarian** (`_inbox`) to carry to the
+`@gcu/librarian`/auditable side — they touch the shared search primitive + need a reindex, so
+they're not weir-local edits.
+
 ## Deferred
 - **#3 graph-expansion retrieval ("synthesis-first, sources-by-edge").** Return a synthesis note
   (a dive-map) as the entry hit, then expand along `related`/`same-topic` edges to the primary

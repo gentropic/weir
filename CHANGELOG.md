@@ -29,6 +29,12 @@ From the librarian's repo-ingest pilot (a broad query swamped by the feed fireho
   pairs (kriging↔krigagem) bridge **lexically** — much of the EN↔pt-BR win with no embeddings,
   and the vocab-seeding finally shows up in retrieval. Ring only (no broader/narrower), capped,
   `expanded:{term→[syns]}` surfaced, `expand:false` for the literal query. `store.expandTerms`.
+- **Saved-Links softer tier** (EVAL3 #2): Saved Links rank in their own `saved` tier (×1.4) —
+  above the feed firehose, below authored/owned content (books/notes/repo docs ×2.5) — so
+  commerce bookmarks stop riding the full curated boost and topping reference queries. The
+  `curated:true` scope still includes them; only the weight drops. (Two engine-level findings
+  from the same eval — fuzzy `sondagem`≈`soldagem` collision, accented-Latin tokenizer split —
+  are `@gcu/librarian`/auditable matters, routed to the librarian, not weir-local.)
 - Tests: `tools/smoke-rerank.mjs`. Deferred (ROADMAP + design record): #3 graph-expansion
   retrieval and the dense multilingual lane (now only the residual untranslated-paraphrase gap).
   Record: `docs/design/retrieval-tuning.md`.

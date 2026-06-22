@@ -10,10 +10,12 @@ import { buildWeirTools } from '../src/js/webmcp.js';
 const store = new Store(await VFS.create()); await store._hydrate();
 await store.putFeed({ id: 'f', name: 'Feed', adapter: 'feed', url: 'http://f/x' });           // firehose source
 await store.putFeed({ id: 'stacks', name: 'Stacks', adapter: 'stacks', url: '', next_poll_at: 8.64e15 });   // curated source
+await store.putFeed({ id: 'saved', name: 'Saved Links', adapter: 'saved', url: '', next_poll_at: 8.64e15 }); // saved (softer) tier
 const Q = 'single-file offline browser owned rented';
 await store.upsertItems([
   { id: 'fh', feed_id: 'f', type: 'article', title: Q, excerpt: 'an op-ed about ownership' },   // firehose, strong lexical
   { id: 'stacks:n', feed_id: 'stacks', type: 'note', title: Q, excerpt: 'the GCU posture' },     // curated, same lexical
+  { id: 'sv', feed_id: 'saved', type: 'article', title: Q, excerpt: 'a saved bookmark' },         // saved tier, same lexical
   // facet-match pair (same firehose tier): both match "kriging" lexically; one also has it as a tag (→ entity facet)
   { id: 'fac', feed_id: 'f', type: 'article', title: 'study one', excerpt: 'geostatistics kriging estimation', tags: ['kriging'] },
   { id: 'nofac', feed_id: 'f', type: 'article', title: 'study two', excerpt: 'geostatistics kriging estimation' },
@@ -29,6 +31,11 @@ assert.ok(note && fh, 'both items found');
 assert.ok(r.items.indexOf(note) < r.items.indexOf(fh), 'curated note ranks ABOVE the firehose item');
 assert.equal(note.tier, 'curated', 'curated tier surfaced'); assert.equal(fh.tier, 'firehose', 'firehose tier surfaced');
 assert.ok(note.score > fh.score, 'curated score is higher post-rerank');
+// saved-links tier (EVAL3 #2): softer than authored, above the firehose
+const sv = r.items.find((i) => i.id === 'sv');
+assert.equal(sv.tier, 'saved', 'saved links get their own tier');
+assert.ok(r.items.indexOf(note) < r.items.indexOf(sv) && r.items.indexOf(sv) < r.items.indexOf(fh), 'ordering: authored > saved > firehose');
+assert.ok(note.score > sv.score && sv.score > fh.score, 'saved scores between authored and firehose');
 
 // ── rerank:false → raw BM25 (no tier, no curation reorder) ──
 const raw = await t.search({ q: Q, rerank: false });
@@ -38,6 +45,7 @@ assert.ok(raw.items.every((i) => i.tier === undefined), 'no tier annotation when
 // ── curated:true → hard-scope to the curated tier (firehose excluded) ──
 const cur = await t.search({ q: Q, curated: true });
 assert.ok(cur.items.some((i) => i.id === 'stacks:n'), 'curated scope keeps the note');
+assert.ok(cur.items.some((i) => i.id === 'sv'), 'curated scope still includes saved links (softer weight, same scope)');
 assert.ok(!cur.items.some((i) => i.id === 'fh'), 'curated scope drops the firehose article');
 
 // ── facet-match bonus: at equal tier + lexical, the item whose facet has the term ranks higher ──
@@ -49,7 +57,7 @@ assert.ok(fac.score > nofac.score, 'facet-match (kriging in the entity facet via
 // ── per-call weight override + explain (ephemeral tuning) ──
 // crank firehose ABOVE curated and the firehose item should now outrank the note
 const flip = await t.search({ q: Q, weights: { curated: 1, firehose: 5 }, explain: true });
-assert.deepEqual(flip.weights, { curated: 1, neutral: 1.0, firehose: 5, facet: 0.2 }, 'explain echoes the (clamped) weights used');
+assert.deepEqual(flip.weights, { curated: 1, saved: 1.4, neutral: 1.0, firehose: 5, facet: 0.2 }, 'explain echoes the (clamped) weights used');
 const fn = flip.items.find((i) => i.id === 'fh'), nn = flip.items.find((i) => i.id === 'stacks:n');
 assert.ok(flip.items.indexOf(fn) < flip.items.indexOf(nn), 'override flips the order (firehose boosted over curated)');
 assert.ok(typeof fn.lex === 'number' && fn.score >= fn.lex, 'explain surfaces the raw lexical score');
