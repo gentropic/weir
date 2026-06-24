@@ -115,6 +115,24 @@ function syncShouldScan({ rev, lastRev, cycle = 0, forceEvery = 10, force = fals
   return !!force || rev !== lastRev || (cycle % forceEvery === 0);
 }
 
+// Dropbox's per-file content_hash: SHA-256 of each 4 MB block, then SHA-256 of the concatenated
+// block digests, hex. Lets incremental pull recognize a remote file we ALREADY have byte-for-byte
+// (our own upload echoed back through the change feed) and skip re-downloading it. A wrong hash
+// only ever fails to skip (→ harmless re-download), never wrongly skips a real change.
+async function syncDropboxContentHash(bytes) {
+  const BLOCK = 4 * 1024 * 1024;
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const digests = [];
+  for (let off = 0; off < u8.length; off += BLOCK) {
+    digests.push(new Uint8Array(await crypto.subtle.digest('SHA-256', u8.subarray(off, Math.min(off + BLOCK, u8.length)))));
+  }
+  const concat = new Uint8Array(digests.length * 32);
+  digests.forEach((d, i) => concat.set(d, i * 32));
+  const out = new Uint8Array(await crypto.subtle.digest('SHA-256', concat));
+  let hex = ''; for (const b of out) hex += b.toString(16).padStart(2, '0');
+  return hex;
+}
+
 // retry with backoff — Dropbox throttles a burst with 429s (surfaced as EIO by the backend).
 // Dropbox throttles WRITES hard (too_many_write_operations / 429) on a big first push, and the
 // backend surfaces it only as an error message (no Retry-After), so detect it and back off
@@ -206,7 +224,7 @@ class SyncEngine {
   }
 
   async _incrementalPull(man, be) {
-    let cursor = man.cursor, pulled = 0, removed = 0, more = true; const paths = [];
+    let cursor = man.cursor, pulled = 0, removed = 0, echoed = 0, more = true; const paths = [];
     while (more) {
       const res = await be.changes(cursor);
       for (const e of res.entries || []) {
@@ -215,6 +233,15 @@ class SyncEngine {
         const tag = e['.tag'];
         if (tag === 'deleted') { try { await this.local.unlink(p); } catch { /* gone */ } delete man.files[p]; removed++; if (paths.length < 100) paths.push(p); continue; }
         if (tag !== 'file') continue;   // folder
+        // Dropbox's change feed echoes our OWN uploads back. If the remote content_hash matches the
+        // local file we already have, it's an echo (or already in sync) — record it synced and skip
+        // the re-download / re-write / store reload entirely.
+        if (e.content_hash) {
+          try {
+            const have = await this.local.readFile(p, 'bytes');
+            if (await syncDropboxContentHash(have) === e.content_hash) { try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ } echoed++; continue; }
+          } catch { /* local missing/unreadable → fall through and download */ }
+        }
         const data = await syncRetry(() => this.remote.readFile(p, 'bytes'));
         await syncEnsureParent(this.local, p);
         await this.local.writeFile(p, data);
@@ -226,7 +253,7 @@ class SyncEngine {
       this._progress('pull', pulled + removed);
     }
     if ((pulled || removed) && this.store && typeof this.store.reload === 'function') await this.store.reload();
-    return { pulled, removed, mode: 'incremental', paths };
+    return { pulled, removed, echoed, mode: 'incremental', paths };
   }
 
   // First sync against a change-feed backend: download only files we haven't synced yet (so a
@@ -266,4 +293,4 @@ class SyncEngine {
   }
 }
 
-export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, syncIsRateLimit, syncShouldScan, syncSummarize, syncKindLine, SYNC_EXCLUDE };
+export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, syncIsRateLimit, syncShouldScan, syncSummarize, syncKindLine, syncDropboxContentHash, SYNC_EXCLUDE };

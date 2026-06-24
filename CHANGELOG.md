@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — stop the hub re-downloading its own uploads (change-feed echo) — 2026-06-23
+
+- Dropbox's change feed (`files/list_folder/continue`) reports a folder's changes **including the
+  app's own API uploads** — so right after the hub pushed N files, the next incremental pull listed
+  those same N as "changed" and **re-downloaded them** (a one-cycle echo: wasteful API calls + FS
+  writes + a store reload, and the confusing "downloading" on a device that only *owns* the corpus).
+- Incremental pull now computes the file's **Dropbox `content_hash`** (`syncDropboxContentHash` —
+  SHA-256 of 4 MB blocks, then SHA-256 of the concatenated digests) and **skips any change-feed
+  entry whose hash matches the local file** — i.e. our own echo, or anything already byte-identical.
+  A genuinely-changed remote file still downloads; a wrong hash only ever fails to skip (harmless
+  re-download), never wrongly skips a real change. The `[sync]` console line reports `N echoes
+  skipped`. Test: `tools/smoke-sync.mjs` (echo entry not re-fetched; hash verified vs node crypto).
+
 ### Sync — role sticks on connect + stop re-scanning the FS every idle cycle — 2026-06-23
 
 - **Role no longer resets to `hub` after connecting.** `sync_role` was only persisted in the

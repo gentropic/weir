@@ -272,7 +272,8 @@ async function boot() {
       // samples to the console for inspection; a compact summary to the settings line.
       const up = syncSummarize(pushed.paths || []), down = syncSummarize(pulled.paths || []);
       app._lastSync = { at: Date.now(), up: pushed.pushed || 0, down: (pulled.pulled || 0) + (pulled.removed || 0), upKinds: syncKindLine(up), downKinds: syncKindLine(down), mode: pulled.mode };
-      if (app._lastSync.up || app._lastSync.down) console.log(`[sync] ↑ ${app._lastSync.up} (${app._lastSync.upKinds || '—'})  ↓ ${app._lastSync.down} (${app._lastSync.downKinds || '—'})`, { uploaded: pushed.paths, downloaded: pulled.paths, mode: pulled.mode });
+      const echoed = pulled.echoed || 0;
+      if (app._lastSync.up || app._lastSync.down || echoed) console.log(`[sync] ↑ ${app._lastSync.up} (${app._lastSync.upKinds || '—'})  ↓ ${app._lastSync.down} (${app._lastSync.downKinds || '—'})${echoed ? `  · ${echoed} echo${echoed === 1 ? '' : 'es'} skipped` : ''}`, { uploaded: pushed.paths, downloaded: pulled.paths, mode: pulled.mode });
       app.renderStream?.(); app.renderCounts?.();
       app.renderSyncStatus?.('idle');
       return { pushed, pulled };

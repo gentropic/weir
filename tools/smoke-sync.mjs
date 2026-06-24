@@ -3,7 +3,8 @@
 // device-local excludes, are idempotent, and round-trip content. Run: node tools/smoke-sync.mjs
 import assert from 'node:assert';
 import { VFS } from '../vendor/vfs.js';
-import { SyncEngine, syncCollectPaths, syncRetry, syncShouldScan, syncSummarize } from '../src/js/sync.js';
+import { createHash } from 'node:crypto';
+import { SyncEngine, syncCollectPaths, syncRetry, syncShouldScan, syncSummarize, syncDropboxContentHash } from '../src/js/sync.js';
 import { Store } from '../src/js/store/store.js';
 
 const mk = () => VFS.create({ type: 'memory' });
@@ -105,28 +106,44 @@ assert.equal(bs2.pulled || 0, 0, 'no deltas → incremental pulls nothing');
 const inLocal = await mk();
 await write(inLocal, MANIFEST, JSON.stringify({ cursor: 'c0', files: {} }));   // pre-seed a cursor
 await write(inLocal, '/feeds/old.json', '{"id":"old"}');                         // the delta will delete this
+await write(inLocal, '/items/echo.ndjson', '{"id":"echo"}');                     // our own upload, about to be echoed back
+const echoHash = await syncDropboxContentHash(new TextEncoder().encode('{"id":"echo"}'));
 const mockBe = {
   _root: '/weir',
   latestCursor: async () => 'cLatest',
   changes: async () => ({
     entries: [
       { '.tag': 'file', path_display: '/weir/items/new.ndjson', name: 'new.ndjson' },
+      { '.tag': 'file', path_display: '/weir/items/echo.ndjson', name: 'echo.ndjson', content_hash: echoHash },   // echo: matches local → must be skipped
       { '.tag': 'deleted', path_display: '/weir/feeds/old.json', name: 'old.json' },
     ], cursor: 'c1', has_more: false,
   }),
 };
+const fetched = [];
 const mockRemote = {
   resolve: () => ({ backend: mockBe }),
-  readFile: async (p) => { if (p === '/items/new.ndjson') return new TextEncoder().encode('{"id":"n1"}'); throw new Error('ENOENT ' + p); },
+  readFile: async (p) => { fetched.push(p); if (p === '/items/new.ndjson') return new TextEncoder().encode('{"id":"n1"}'); if (p === '/items/echo.ndjson') return new TextEncoder().encode('{"id":"echo"}'); throw new Error('ENOENT ' + p); },
 };
 const inEng = new SyncEngine({ local: inLocal, remote: mockRemote });
 const inc = await inEng.pull();
 assert.equal(inc.mode, 'incremental', 'cursor + change feed → incremental');
-assert.equal(inc.pulled, 1, 'incremental fetched the added file');
+assert.equal(inc.pulled, 1, 'incremental fetched only the genuinely-new file (echo skipped)');
 assert.equal(inc.removed, 1, 'incremental removed the deleted file');
+assert.equal(inc.echoed, 1, 'the content-hash-matching echo was recognized + skipped');
+assert.ok(!fetched.includes('/items/echo.ndjson'), 'echo file was NOT re-downloaded (no wasteful fetch)');
+assert.ok(fetched.includes('/items/new.ndjson'), 'genuinely-new file WAS downloaded');
 assert.equal(await read(inLocal, '/items/new.ndjson'), '{"id":"n1"}', 'added file mapped (/weir/… → /…) + written local');
 assert.equal(await read(inLocal, '/feeds/old.json'), null, 'deleted file removed locally');
 assert.equal(JSON.parse(await read(inLocal, MANIFEST)).cursor, 'c1', 'cursor advanced to the delta cursor');
+
+// content_hash algorithm: a <4 MB single-block file = SHA256(SHA256(bytes)), verified independently.
+{
+  const data = new TextEncoder().encode('hello dropbox content hash');
+  const blockDigest = createHash('sha256').update(data).digest();              // raw 32 bytes (one block)
+  const expected = createHash('sha256').update(blockDigest).digest('hex');     // SHA256 of the concatenated block digests
+  assert.equal(await syncDropboxContentHash(data), expected, 'single-block content_hash = SHA256(SHA256(block))');
+  assert.notEqual(await syncDropboxContentHash(new TextEncoder().encode('x')), expected, 'different content → different hash');
+}
 
 // ── rate-limit-aware retry: a Dropbox throttle (too_many_write_operations) backs off SECONDS,
 // escalating, and rides it out; a transient error keeps the quick ramp. Inject a fast sleep that

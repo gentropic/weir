@@ -6,7 +6,7 @@
 // Being a controlled PWA also makes the browser far more willing to grant
 // persistent storage — which is the point here: nothing should be lost.
 
-const CACHE = 'weir-shell-34c1305';
+const CACHE = 'weir-shell-b984313';
 const SHELL = [
   './',
   './index.html',
