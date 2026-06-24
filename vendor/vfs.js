@@ -1433,7 +1433,8 @@ class HandleBackend extends Backend {
     }
   }
 
-  async rmdir(p) {
+  async rmdir(p, opts) {
+    if (opts && opts.recursive) return this._rmDir(p);   // native recursive delete (one call vs an O(subtree) walk)
     const n = path.normalize(p);
     const parentPath = path.dirname(n);
     const name = path.basename(n);
@@ -1484,13 +1485,33 @@ class HandleBackend extends Backend {
     }
   }
 
+  // Recursive directory delete. Native removeEntry({recursive:true}) is ONE call; the old hand-walk was
+  // readdir + a stat + a delete PER child (each a SAF IPC on Android — O(whole subtree)). The handle-cache
+  // (0.4.0) cut resolution IPCs; this removes the per-child ops entirely. Falls back to the manual walk on a
+  // runtime without recursive removeEntry. (Directory rename stays copy-then-delete = non-atomic — platform
+  // floor; this only makes the delete half one call.)
   async _rmDir(p) {
+    const n = path.normalize(p);
+    this._evict(n);   // the subtree's cached handles are invalid either way
+    const parentPath = path.dirname(n);
+    const name = path.basename(n);
+    try {
+      await this._useDir(parentPath, (parent) => parent.removeEntry(name, { recursive: true }));
+      return;
+    } catch (e) {
+      if (e && typeof e.code === 'string') throw e;   // a mapped error (e.g. missing parent) → propagate
+      // otherwise: runtime lacks recursive removeEntry (or it threw) → fall back to the manual walk
+    }
+    await this._rmDirManual(p);
+  }
+
+  async _rmDirManual(p) {
     const entries = await this.readdir(p);
     for (const name of entries) {
       const child = path.join(p, name);
       const info = await this.stat(child);
       if (info.type === 'directory') {
-        await this._rmDir(child);
+        await this._rmDirManual(child);
       } else {
         await this.unlink(child);
       }
@@ -1498,10 +1519,27 @@ class HandleBackend extends Backend {
     await this.rmdir(p);
   }
 
+  // A lazily-resolved byte stream off the file handle — FSA file handles support .stream(). Matches
+  // FetchBackend's { getReader, [asyncIterator] } shape so the `streamable` capability is honest (it used to
+  // return null while `streamable` claimed true — a consumer that checked then called got nothing).
   createReadStream(p) {
-    // Return a thunk — caller must await the file handle resolution
-    // For HandleBackend, return null and let subclass or consumer use readFile
-    return null;
+    const self = this;
+    return {
+      async getReader() {
+        const handle = await self._resolveFile(p);
+        return (await handle.getFile()).stream().getReader();
+      },
+      [Symbol.asyncIterator]() {
+        const streamPromise = self._resolveFile(p).then((h) => h.getFile()).then((f) => f.stream());
+        let reader;
+        return {
+          async next() {
+            if (!reader) reader = (await streamPromise).getReader();
+            return reader.read();
+          },
+        };
+      },
+    };
   }
 
   async createWriter(p) {

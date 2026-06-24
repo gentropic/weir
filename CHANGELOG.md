@@ -6,6 +6,16 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Storage — re-vendor `@gcu/vfs` 0.5.0 (native recursive delete + streamable) — 2026-06-24
+
+- Re-vendored `vfs.js` from `auditable@7b4429a` (0.4.0→0.5.0). `HandleBackend` now uses native
+  **`removeEntry(name, { recursive: true })`** for folder delete/rename — one call instead of an
+  O(subtree) `stat`+delete walk (a real Android win on top of the cache; the in-app "clear a
+  folder…" benefits too), and **`createReadStream`** is implemented off the file handle's `.stream()`
+  so it matches `streamable`. (Auditable's side rightly rejected the `mkdir` idempotence nit I'd
+  flagged — the exists-probe *is* the `EEXIST` source; dropping it would be a contract regression.)
+  Full smoke green on the new bundle. Spec: `auditable/spec_inbox/vfs-handle-followups.md`.
+
 ### Storage — re-vendor `@gcu/vfs` 0.4.0 (FSA directory-handle cache) — 2026-06-24
 
 - Re-vendored `vfs.js` from `auditable@cf3b684` (0.3.0→0.4.0). `HandleBackend` now **caches
