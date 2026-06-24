@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — handle rate-limit-masked-as-CORS (back off on throw; smaller burst) — 2026-06-24
+
+- With the unicode-path fix in, sync **works** (`[sync] ↑ 8 ↓ 1`), but a burst still tripped
+  Dropbox's rate limit — and a **429 on a content endpoint omits the CORS header**, so the browser
+  blocks it and `fetch` **throws** before the backend can read the `429`, meaning its `Retry-After`
+  backoff never engages and weir just hammered the failed files. Now `syncRetry` treats a thrown
+  **"Failed to fetch"** (the masked 429 / a network drop) as a **seconds-long, escalating backoff**
+  (not the sub-second transient ramp), and **push concurrency drops 4 → 2** so we trip the limit
+  less. The backlog drains gradually instead of churning; failures resume next cycle (manifest is
+  checkpointed). Test: `tools/smoke-sync.mjs`.
+
 ### Sync — ROOT FIX: escape `Dropbox-API-Arg` (unicode paths) — `@gcu/vfs` 0.7.1 — 2026-06-24
 
 - **The real cause of the "CORS" upload/download failures.** Dropbox's content endpoints carry the

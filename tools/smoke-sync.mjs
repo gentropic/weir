@@ -161,6 +161,11 @@ assert.equal(JSON.parse(await read(inLocal, MANIFEST)).cursor, 'c1', 'cursor adv
   await syncRetry(async () => { if (m++ < 1) throw new Error('transient network blip'); return 1; }, 6, async (ms) => w2.push(ms));
   assert.ok(w2[0] < 1000, 'a non-throttle error keeps the quick sub-second first backoff');
 
+  // a thrown "Failed to fetch" = a Dropbox 429 masked as CORS (no header → fetch throws) → seconds backoff
+  const w3 = []; let k = 0;
+  await syncRetry(async () => { if (k++ < 1) throw new TypeError('Failed to fetch'); return 1; }, 6, async (ms) => w3.push(ms));
+  assert.ok(w3[0] >= 4000, 'a thrown "Failed to fetch" (masked 429/CORS) backs off seconds, not sub-second');
+
   await assert.rejects(syncRetry(async () => { throw new Error('429 too_many_requests'); }, 3, async () => {}), /too_many/, 'rethrows after exhausting tries');
 }
 

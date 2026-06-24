@@ -30,7 +30,7 @@ function syncReaderWritable(p) { return p.startsWith('/stacks/'); }
 const MANIFEST_PATH = '/sync-state.json';   // the excluded marker: per-file push signatures + the pull cursor
 const CHECKPOINT = 100;      // save the manifest every N transferred files, so an interrupted big sync RESUMES (only the not-yet-recorded files re-transfer)
 const PROGRESS_EVERY = 25;   // emit a progress tick every N files
-const PUSH_CONCURRENCY = 4;  // WRITES are what Dropbox throttles (too_many_write_operations) — push narrower than pull/read
+const PUSH_CONCURRENCY = 2;  // WRITES are what Dropbox throttles; keep the burst small so we trip the limit less (a 429 on a content endpoint is masked as a CORS throw, so the backend's Retry-After can't engage — see syncRetry)
 
 // recursively list every file path under `dir` (directories are descended, not returned).
 async function syncListTree(vfs, dir) {
@@ -143,7 +143,12 @@ async function syncDropboxContentHash(bytes) {
 // backend surfaces it only as an error message (no Retry-After), so detect it and back off
 // SECONDS, escalating — a single run RIDES OUT the throttle instead of aborting. Transient
 // errors keep the quick (sub-second) ramp. `sleep` is injectable for tests.
-const SYNC_RATE_RE = /too_many_(?:requests|write_operations)|rate.?limit|\b429\b|retry.?later/i;
+// Long (seconds, escalating) backoff cases. Includes "failed to fetch": a Dropbox 429 on a content
+// endpoint omits the CORS header, so the browser blocks it and `fetch` THROWS (TypeError "Failed to
+// fetch") before the backend can read the 429 → its Retry-After backoff never engages. So we treat a
+// thrown content request as a probable masked rate-limit and back off here. (A genuine offline error
+// also lands here — backing off + failing gracefully is fine.)
+const SYNC_RATE_RE = /too_many_(?:requests|write_operations)|rate.?limit|\b429\b|retry.?later|failed to fetch|load failed/i;
 function syncIsRateLimit(e) { return !!(e && SYNC_RATE_RE.test(String((e && e.message) || e))); }
 async function syncRetry(fn, tries = 6, sleep = syncSleep) {
   let err;
