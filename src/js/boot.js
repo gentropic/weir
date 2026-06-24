@@ -17,7 +17,7 @@ import { SearchIndex } from './search.js';
 import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
 import { handleDropboxRedirect, connectDropbox, disconnectDropbox, dropboxConnected, getDropboxToken, makeDropboxRemote } from './dropbox.js';
-import { SyncEngine, syncShouldScan } from './sync.js';
+import { SyncEngine, syncShouldScan, syncSummarize, syncKindLine } from './sync.js';
 import { TelegramInflux } from './telegram.js';
 import { StacksStore } from './stacks.js';
 import { Courier, DEFAULT_COURIER } from './courier.js';
@@ -265,9 +265,14 @@ async function boot() {
       // every cycle); a forced scan every 10th cycle is the safety net. Manual sync → force.
       const rev = store._mutations || 0;
       const scan = syncShouldScan({ rev, lastRev: app._lastPushRev, cycle: app._syncCycle++, forceEvery: 10, force: !!opts.force });
-      const pushed = scan ? await eng.push() : { pushed: 0, skipped: 0, scanned: 0, clean: true };
+      const pushed = scan ? await eng.push() : { pushed: 0, skipped: 0, scanned: 0, paths: [], clean: true };
       if (scan) app._lastPushRev = rev;
       const pulled = await eng.pull();       // GCU-sync → local (+ store.reload on changes) — cheap (cursor delta), always run
+      // Activity readout: direction + WHAT kind moved (so it's never a mystery). Full path
+      // samples to the console for inspection; a compact summary to the settings line.
+      const up = syncSummarize(pushed.paths || []), down = syncSummarize(pulled.paths || []);
+      app._lastSync = { at: Date.now(), up: pushed.pushed || 0, down: (pulled.pulled || 0) + (pulled.removed || 0), upKinds: syncKindLine(up), downKinds: syncKindLine(down), mode: pulled.mode };
+      if (app._lastSync.up || app._lastSync.down) console.log(`[sync] ↑ ${app._lastSync.up} (${app._lastSync.upKinds || '—'})  ↓ ${app._lastSync.down} (${app._lastSync.downKinds || '—'})`, { uploaded: pushed.paths, downloaded: pulled.paths, mode: pulled.mode });
       app.renderStream?.(); app.renderCounts?.();
       app.renderSyncStatus?.('idle');
       return { pushed, pulled };

@@ -3542,6 +3542,13 @@ export class App {
       else if (phase === 'pull-first') txt = `first sync — downloading ${n}${of} (one-time)…`;
       else txt = `downloading ${n}${of} update${n === 1 ? '' : 's'}…`;   // 'pull' = incremental
       if (msg) msg.textContent = txt;
+    } else if (state === 'idle') {
+      // settled → show the last run's direction + kinds, so you can see what just synced
+      const msg = document.getElementById('set-sync-msg');
+      const ls = this._lastSync;
+      if (msg) msg.textContent = ls && (ls.up || ls.down)
+        ? `last: ↑${ls.up}${ls.upKinds ? ` (${ls.upKinds})` : ''}  ·  ↓${ls.down}${ls.downKinds ? ` (${ls.downKinds})` : ''}`
+        : (ls ? 'up to date' : '—');
     }
   }
 

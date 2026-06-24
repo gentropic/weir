@@ -88,6 +88,25 @@ async function syncPool(items, concurrency, fn) {
   return done;
 }
 
+// Categorize synced paths into human kinds for the activity readout, so "uploaded 3" reads as
+// "items 2, catalog 1" — you can see WHAT moved, not just a count. Returns { total, byKind }.
+function syncSummarize(paths) {
+  const KIND = (p) => {
+    if (p.startsWith('/items/')) return 'items';
+    if (p.startsWith('/content/')) return 'content';
+    if (p.startsWith('/catalog/')) return 'catalog';
+    if (p.startsWith('/schema/')) return 'vocab';
+    if (p.startsWith('/stacks/')) return 'notes';
+    if (p.startsWith('/feeds/')) return 'feeds';
+    if (p.startsWith('/archived')) return 'archive';
+    return 'other';
+  };
+  const byKind = {};
+  for (const p of paths || []) { const k = KIND(p); byKind[k] = (byKind[k] || 0) + 1; }
+  return { total: (paths || []).length, byKind };
+}
+const syncKindLine = (s) => Object.entries(s.byKind || {}).map(([k, n]) => `${k} ${n}`).join(', ');
+
 // Decide whether a push needs the full local FS re-scan. Skip it when nothing changed locally
 // since the last push (rev unchanged) — avoids walking/statting the whole tree every cycle (the
 // FS-hammer / AV smell). A periodic forced scan (every `forceEvery` cycles) is the safety net for
@@ -160,18 +179,18 @@ class SyncEngine {
       const sig = this._sig(st);
       if (this._changed(man.files[p], sig)) toUpload.push({ p, sig });
     });
-    let pushed = 0;
+    let pushed = 0; const paths = [];
     this._progress('push', 0, toUpload.length);
     await syncPool(toUpload, Math.min(this.concurrency, PUSH_CONCURRENCY), async ({ p, sig }) => {
       const data = await this.local.readFile(p, 'bytes');
       await syncEnsureParent(this.remote, p);
       await syncRetry(() => this.remote.writeFile(p, data));
-      man.files[p] = sig; pushed++;
+      man.files[p] = sig; pushed++; if (paths.length < 100) paths.push(p);   // sample for the activity readout
       if (pushed % CHECKPOINT === 0) await this._saveManifest();
       if (pushed % PROGRESS_EVERY === 0 || pushed === toUpload.length) this._progress('push', pushed, toUpload.length);
     });
     await this._saveManifest();
-    return { pushed, skipped: scanned - toUpload.length, scanned };
+    return { pushed, skipped: scanned - toUpload.length, scanned, paths };
   }
 
   // remote → local. Three modes: incremental (have a cursor + a change feed), bootstrap (have a
@@ -187,27 +206,27 @@ class SyncEngine {
   }
 
   async _incrementalPull(man, be) {
-    let cursor = man.cursor, pulled = 0, removed = 0, more = true;
+    let cursor = man.cursor, pulled = 0, removed = 0, more = true; const paths = [];
     while (more) {
       const res = await be.changes(cursor);
       for (const e of res.entries || []) {
         const p = this._entryToVfsPath(be, e);
         if (!p || p === '/' || syncExcluded(p)) continue;
         const tag = e['.tag'];
-        if (tag === 'deleted') { try { await this.local.unlink(p); } catch { /* gone */ } delete man.files[p]; removed++; continue; }
+        if (tag === 'deleted') { try { await this.local.unlink(p); } catch { /* gone */ } delete man.files[p]; removed++; if (paths.length < 100) paths.push(p); continue; }
         if (tag !== 'file') continue;   // folder
         const data = await syncRetry(() => this.remote.readFile(p, 'bytes'));
         await syncEnsureParent(this.local, p);
         await this.local.writeFile(p, data);
         try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ }
-        pulled++;
+        pulled++; if (paths.length < 100) paths.push(p);
       }
       cursor = res.cursor; more = res.has_more;
       man.cursor = cursor; await this._saveManifest();        // checkpoint per page → resumable across pages
       this._progress('pull', pulled + removed);
     }
     if ((pulled || removed) && this.store && typeof this.store.reload === 'function') await this.store.reload();
-    return { pulled, removed, mode: 'incremental' };
+    return { pulled, removed, mode: 'incremental', paths };
   }
 
   // First sync against a change-feed backend: download only files we haven't synced yet (so a
@@ -230,7 +249,7 @@ class SyncEngine {
     try { man.cursor = await be.latestCursor(); } catch { /* leave null — retries as bootstrap */ }
     await this._saveManifest();
     if (pulled && this.store && typeof this.store.reload === 'function') await this.store.reload();
-    return { pulled, scanned: paths.length, mode: 'bootstrap' };
+    return { pulled, scanned: paths.length, mode: 'bootstrap', paths: paths.slice(0, 100) };
   }
 
   async _fullMirrorPull(man) {
@@ -247,4 +266,4 @@ class SyncEngine {
   }
 }
 
-export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, syncIsRateLimit, syncShouldScan, SYNC_EXCLUDE };
+export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, syncIsRateLimit, syncShouldScan, syncSummarize, syncKindLine, SYNC_EXCLUDE };

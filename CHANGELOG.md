@@ -23,6 +23,11 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
   changes…` / `checking the cloud folder…` / `uploading N/M…` / **`first sync — downloading N/M
   (one-time)…`** (the bootstrap) / `downloading N updates…` (routine incremental) — so a first-time
   bootstrap download reads as the one-time event it is, not an alarming "downloading everything."
+- **Sync activity readout — direction + what kind.** push/pull now report the paths they moved;
+  when settled, the sync line shows e.g. `last: ↑3 (items 2, catalog 1)  ·  ↓2 (notes 2)`, and a
+  `[sync] ↑ … ↓ …` console line carries the full path samples. So you can see *what* synced and
+  *which way* — not just a bare count (the flight-deck principle). `syncSummarize` buckets paths by
+  kind (items/content/catalog/vocab/notes/feeds/archive). Test: `tools/smoke-sync.mjs`.
 
 ### Dropbox sync — survive the write rate-limit on a big first push — 2026-06-23
 

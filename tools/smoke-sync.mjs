@@ -3,7 +3,7 @@
 // device-local excludes, are idempotent, and round-trip content. Run: node tools/smoke-sync.mjs
 import assert from 'node:assert';
 import { VFS } from '../vendor/vfs.js';
-import { SyncEngine, syncCollectPaths, syncRetry, syncShouldScan } from '../src/js/sync.js';
+import { SyncEngine, syncCollectPaths, syncRetry, syncShouldScan, syncSummarize } from '../src/js/sync.js';
 import { Store } from '../src/js/store/store.js';
 
 const mk = () => VFS.create({ type: 'memory' });
@@ -167,6 +167,18 @@ assert.equal(syncShouldScan({ rev: 5, lastRev: 5, cycle: 3, forceEvery: 10, forc
   const m1 = s._mutations;
   await s.flush();
   assert.equal(s._mutations, m1, 'a no-op flush does NOT bump (so idle cycles skip the scan)');
+}
+
+// ── activity readout: categorize synced paths by kind, so the UI can show "items 2, notes 1". ──
+{
+  const s = syncSummarize(['/items/a.ndjson', '/items/b.ndjson', '/content/a.ndjson', '/stacks/inbox/n.md', '/catalog/0f', '/sync-state.json']);
+  assert.equal(s.total, 6, 'counts every path');
+  assert.equal(s.byKind.items, 2, 'items bucket');
+  assert.equal(s.byKind.content, 1, 'content bucket');
+  assert.equal(s.byKind.notes, 1, 'stacks → notes bucket');
+  assert.equal(s.byKind.catalog, 1, 'catalog bucket');
+  assert.equal(s.byKind.other, 1, 'unrecognized path → other');
+  assert.equal(syncSummarize([]).total, 0, 'empty → zero, no throw');
 }
 
 console.log('sync (engine mirror) smoke ok');
