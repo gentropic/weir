@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — re-vendor `@gcu/vfs` 0.3.0 (Dropbox rate-limit citizenship) — 2026-06-24
+
+- Re-vendored `vfs.js` from `auditable@7c9e8cf` (vfs 0.2.0→0.3.0). The `DropboxBackend` now
+  **honors 429/503 + `Retry-After` internally** (centralized in `_send`, with one transparent
+  401→token-refresh retry) — so *every* Dropbox call backs off politely instead of weir guessing
+  the delay, and the first push rides out `too_many_write_operations` rather than aborting.
+- Also lands (available, not yet wired): **`listTree(p)`** (one recursive `list_folder` sweep →
+  whole tree + cursor + `contentHash`, vs ~1,500 per-file `get_metadata` calls) and
+  **`writeFiles(files)`** (upload-session `finish_batch` batch). `VFSError` gained an `extra` bag
+  (`retryAfterMs` on `EBUSY`). The sync-engine rewire to *use* `listTree`/`writeFiles` (fast
+  bootstrap + batch push) + simplify `syncRetry` is the next step. Spec:
+  `auditable/spec_inbox/vfs-dropbox-efficiency-spec.md`.
+
 ### Sync — keep the screen awake during a sync + clearer first-sync progress — 2026-06-24
 
 - A long first (bootstrap) sync on a phone/tablet could stall when the screen auto-locked
