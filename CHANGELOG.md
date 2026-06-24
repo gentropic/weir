@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Storage — re-vendor `@gcu/vfs` 0.6.0 (IndexedDB transaction batching) — 2026-06-24
+
+- Re-vendored `vfs.js` from `auditable@e06a0ee` (0.5.0→0.6.0). **`IDBBackend` now batches into one
+  transaction per compound op** — `writeFile` goes 3 tx→1 (and atomic, closing a parent-check→put
+  TOCTOU), and `writeFiles`/`deleteBatch` bulk in one tx per 1000-file chunk; recursive `rmdir` +
+  atomic directory `rename` use `IDBKeyRange` range ops. This is the **mobile-store twin** of the
+  Dropbox/FSA batching — IndexedDB is exactly what weir runs on the phone, so a ~1,500-file
+  copy-in drops from ~4,500 transactions to far fewer, and every store write is now one atomic tx.
+  Full smoke green on the new bundle. (Next, weir-side: have `pull` write locally via
+  `local.writeFiles` to cash in the bulk path on a reader's first sync.)
+
 ### Storage — re-vendor `@gcu/vfs` 0.5.0 (native recursive delete + streamable) — 2026-06-24
 
 - Re-vendored `vfs.js` from `auditable@7b4429a` (0.4.0→0.5.0). `HandleBackend` now uses native
