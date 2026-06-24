@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Documents — v0 spike: pdf.js vendored as a sibling + text extraction — 2026-06-24
+
+- First slice of SPEC-documents (PDF/EPUB as first-class corpus). **pdf.js (`pdfjs-dist@6.0.227`,
+  Apache-2.0) is vendored as a ~1.7 MB *sibling* under `vendor/pdfjs/` — NOT inlined into
+  `index.html`** (confirmed: the bundle grew ~30 KB, not 1.7 MB). It's **dynamic-imported on first
+  document use** (`src/js/documents.js` → `loadPdfjs`/`extractPdfText`), so it never weighs on
+  base-app startup; the cache-first SW runtime-caches it (offline after first open), no `sw.js`
+  change needed. `extractPdfText(bytes)` returns per-page text + page-offset map (the seed for
+  page-anchored `weir_quote`). Reading order is **naive** for now — the column/de-hyphen/header-strip
+  reconstruction (SPEC §3) is the next slice, as a re-runnable `extract_algo` layer.
+- Console test hook: `await __weir.testPdf()` (pick a PDF → load pdf.js → extract → log pages/chars/ms).
+  No storage/item/ingest UI yet (v0 step 2+). Decision: pdf.js stays a vendored sibling (local,
+  offline, auditable — no CDN), per the PWA's already-multi-file deploy.
+
 ### Storage — re-vendor `@gcu/vfs` 0.7.0 (optimized API through the router) — 2026-06-24
 
 - Re-vendored `vfs.js` from `auditable@2bb73b5` (0.6.0→0.7.0). The 0.3–0.6 backend fast paths

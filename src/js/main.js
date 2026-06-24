@@ -32,6 +32,7 @@ import './stacks.js';                    // → StacksStore (notes/files vault; 
 import './courier.js';                   // → Courier (optional FS-backed collaborator exchange; uses store + stacks + VFS)
 import './sync.js';                      // → SyncEngine (provider-agnostic VFS mirror; the Dropbox cloud-sync engine, SYNC.md)
 import './search.js';                    // → SearchIndex (full-text v2 on Librarian; uses store + Librarian)
+import './documents.js';                 // → extractPdfText (PDF docs; dynamic-imports vendored pdf.js sibling on demand — NOT inlined)
 import './parse/xml.js';                 // → parseXml (before feed)
 import './parse/sanitize.js';            // → sanitizeHtml (before feed)
 import './ui/markdown.js';               // → renderMarkdown (stacks notes; uses sanitizeHtml)

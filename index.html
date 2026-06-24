@@ -16088,6 +16088,53 @@ class SearchIndex {
   }
 }
 
+// ── src/js/documents.js ──
+
+// Documents (PDF) — v0 spike (SPEC-documents). Load pdf.js ON DEMAND from the vendored sibling
+// (vendor/pdfjs/, ~1.7 MB) and extract page text. pdf.js is deliberately NOT inlined into
+// index.html — it's dynamic-imported on first document use, so it never weighs on base-app
+// startup, and the cache-first service worker runtime-caches it (offline after first open).
+//
+// v0 reading order is NAIVE (join the text-layer items) — the column/de-hyphen/header-strip
+// reconstruction (SPEC §3) is the next slice, as a re-runnable `extract_algo` layer on top.
+
+let _pdfjs = null;
+
+// Dynamic-import the vendored pdf.js + point its worker at the vendored sibling. Resolved against
+// document.baseURI so it works under any deploy path (gentropic.org/weir/… or localhost/…).
+async function loadPdfjs() {
+  if (_pdfjs) return _pdfjs;
+  const base = new URL('vendor/pdfjs/', document.baseURI);
+  const lib = await import(/* @vite-ignore */ new URL('pdf.min.mjs', base).href);
+  lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.mjs', base).href;
+  _pdfjs = lib;
+  return lib;
+}
+
+// Extract per-page text from PDF bytes (Uint8Array). Returns
+//   { pageCount, pages:[{ page, text }], text, pageOffsets:[{ page, start }] }
+// pageOffsets map a char offset in `text` back to a page → the seed for page-anchored weir_quote.
+async function extractPdfText(bytes, { onProgress } = {}) {
+  const pdfjs = await loadPdfjs();
+  const doc = await pdfjs.getDocument({ data: bytes }).promise;
+  const pages = []; const pageOffsets = []; let full = '';
+  try {
+    for (let n = 1; n <= doc.numPages; n++) {
+      const page = await doc.getPage(n);
+      const tc = await page.getTextContent();
+      const text = tc.items.map((it) => (it.str || '')).join(' ').replace(/\s+/g, ' ').trim();
+      pageOffsets.push({ page: n, start: full.length });
+      pages.push({ page: n, text });
+      full += (full ? '\n\n' : '') + text;
+      try { page.cleanup(); } catch { /* */ }
+      if (onProgress) onProgress(n, doc.numPages);
+    }
+  } finally {
+    try { await doc.destroy(); } catch { /* */ }
+  }
+  return { pageCount: pages.length, pages, text: full, pageOffsets };
+}
+
 // ── src/js/parse/xml.js ──
 
 // Minimal, tolerant XML parser (SPEC §3 — "bundle a minimal parser, accept
@@ -25371,9 +25418,10 @@ function initWebmcp({ store, app, fetch }) {
 
 
 
+
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '964afc7';          // short content hash of the bundle (build id)
+const COMMIT = 'b2b8674';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -25633,6 +25681,17 @@ async function boot() {
   runner.add({ name: 'sync', intervalMs: 120_000, firstDelayMs: 10_000, enabled: () => store.getSettings().sync_auto && app._syncReady, tick: () => app.syncNow() });
 
   window.__weir = { store, poller, router, drip, retainer, linkResolver, stacks, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
+    // v0 PDF spike (SPEC-documents): pick a PDF → load pdf.js on demand → extract text. Run in the
+    // console: await __weir.testPdf(). Proves the vendored sibling loads + round-trips + timing.
+    testPdf: async () => {
+      const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }] });
+      const f = await h.getFile();
+      const t0 = performance.now();
+      const r = await extractPdfText(new Uint8Array(await f.arrayBuffer()), { onProgress: (n, t) => { if (n % 10 === 0 || n === t) console.log(`  [pdf] page ${n}/${t}`); } });
+      console.log(`[pdf] ${f.name}: ${r.pageCount} pages, ${r.text.length} chars in ${Math.round(performance.now() - t0)} ms`);
+      console.log('[pdf] page 1 preview:', r.pages[0]?.text.slice(0, 400));
+      return r;
+    },
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();
       const provider = o.provider || s.catalog_provider || 'ollama';

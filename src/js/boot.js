@@ -18,6 +18,7 @@ import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
 import { handleDropboxRedirect, connectDropbox, disconnectDropbox, dropboxConnected, getDropboxToken, makeDropboxRemote } from './dropbox.js';
 import { SyncEngine, syncShouldScan, syncSummarize, syncKindLine } from './sync.js';
+import { extractPdfText } from './documents.js';
 import { TelegramInflux } from './telegram.js';
 import { StacksStore } from './stacks.js';
 import { Courier, DEFAULT_COURIER } from './courier.js';
@@ -291,6 +292,17 @@ async function boot() {
   runner.add({ name: 'sync', intervalMs: 120_000, firstDelayMs: 10_000, enabled: () => store.getSettings().sync_auto && app._syncReady, tick: () => app.syncNow() });
 
   window.__weir = { store, poller, router, drip, retainer, linkResolver, stacks, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
+    // v0 PDF spike (SPEC-documents): pick a PDF → load pdf.js on demand → extract text. Run in the
+    // console: await __weir.testPdf(). Proves the vendored sibling loads + round-trips + timing.
+    testPdf: async () => {
+      const [h] = await window.showOpenFilePicker({ types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }] });
+      const f = await h.getFile();
+      const t0 = performance.now();
+      const r = await extractPdfText(new Uint8Array(await f.arrayBuffer()), { onProgress: (n, t) => { if (n % 10 === 0 || n === t) console.log(`  [pdf] page ${n}/${t}`); } });
+      console.log(`[pdf] ${f.name}: ${r.pageCount} pages, ${r.text.length} chars in ${Math.round(performance.now() - t0)} ms`);
+      console.log('[pdf] page 1 preview:', r.pages[0]?.text.slice(0, 400));
+      return r;
+    },
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();
       const provider = o.provider || s.catalog_provider || 'ollama';
