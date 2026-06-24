@@ -57,6 +57,34 @@ for (const c of cases) {
   }
 }
 
+// Tablet master-detail: an empty reading pane shows a placeholder; an opened item's .iexpand
+// becomes a fixed right-hand pane (~56% wide). Inject a fake expanded row — no store data needed.
+{
+  const page = await browser.newPage({ viewport: { width: 900, height: 1280 } });
+  await page.goto(url);
+  await page.waitForTimeout(300);
+  const r = await page.evaluate(() => {
+    const out = {};
+    const ws = document.querySelector('.workspace');
+    out.placeholder = ws ? getComputedStyle(ws, '::after').content : 'NO-WS';
+    const stream = document.getElementById('stream');
+    if (stream) {
+      stream.insertAdjacentHTML('beforeend', '<article class="item expanded"><div class="iexpand">body</div></article>');
+      const ix = stream.querySelector('.item.expanded .iexpand');
+      out.iexpandPos = getComputedStyle(ix).position;
+      out.iexpandWidthPct = Math.round((ix.getBoundingClientRect().width / window.innerWidth) * 100);
+    }
+    return out;
+  });
+  await page.close();
+  try {
+    assert.match(r.placeholder, /Select an item/, `tablet empty-state placeholder (got ${r.placeholder})`);
+    assert.equal(r.iexpandPos, 'fixed', 'tablet expanded .iexpand is a fixed reading pane');
+    assert.ok(r.iexpandWidthPct >= 50 && r.iexpandWidthPct <= 62, `tablet reading pane ~56% wide (got ${r.iexpandWidthPct}%)`);
+    console.log(`  ok  tablet master-detail      → pane fixed @ ${r.iexpandWidthPct}%, placeholder present`);
+  } catch (e) { failed++; console.error(`  FAIL tablet master-detail: ${e.message}`); }
+}
+
 await browser.close();
 if (failed) { console.error(`\ne2e-layout: ${failed} case(s) FAILED`); process.exit(1); }
 console.log('\ne2e-layout: all layout cases pass');

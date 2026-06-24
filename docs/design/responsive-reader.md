@@ -1,6 +1,10 @@
 # Responsive reader surface — design
 
-**Status:** drafting. Phase 0 (foundation) shipped 2026-06-24. Phases 1–2 specced, not built.
+**Status:** drafting. Phase 0 (foundation) shipped 2026-06-24, then generalized into **layout
+modes** (Auto/Workspace/Tablet/Reader, a `[data-layout]` resolver + a Settings→Display chooser +
+rail gear, device-local) and a **tablet master-detail tier** (list-left / reading-pane-right) —
+both shipped 2026-06-24, Playwright-verified (`tools/e2e-layout.mjs`). Phases 1–2 (dedicated reader
+shell, capture/share-target) still specced, not built.
 
 ## Why now
 
@@ -57,8 +61,13 @@ settings, the movable rails workspace, most of Settings (mobile Settings = sync 
    + reading view; reuses the store + `renderItem`. The rails workspace stays desktop-only.
 2. **Capture + Share Target.** In-app quick-add (paste URL) + the `share_target` manifest entry +
    launch handler → the capture proposal flow.
-3. **Later.** Tablet-portrait middle ground (a one-pane-plus-peek), offline-reading polish, note
-   editing ergonomics (below).
+3. **Tablet master-detail — SHIPPED.** Its own `[data-layout="tablet"]` tier: the stream is a
+   list on the **left** (~44%), the opened item reads in a pane on the **right** (~56%). Reuses the
+   inline-expand mechanic — the expanded row's `.iexpand` is lifted into a fixed right pane (cleared
+   from the topbar via `--content-top`); an empty pane shows a "Select an item to read" placeholder.
+   The tablet stops being "a big phone." (Driven by the layout-mode resolver; forceable in Settings.)
+4. **Later.** Offline-reading polish, note editing ergonomics (below), a richer tablet reading
+   toolbar in the pane (back/next, note-alongside).
 
 ## Open questions
 

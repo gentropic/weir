@@ -6,6 +6,16 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Responsive — tablet master-detail tier (list + reading pane) — 2026-06-24
+
+- The `tablet` layout is now its **own** two-pane master-detail, not a big phone: the stream is a
+  **list on the left** (~44%), the opened item reads in a **pane on the right** (~56%). Reuses the
+  existing inline-expand (`expandedId`) — the expanded row's `.iexpand` is lifted out of the list
+  flow into a fixed right pane (it can't be reparented — the row is `position:relative` for its
+  actions — so it's fixed, cleared from the topbar via a JS-set `--content-top`, above the bottom
+  nav). An empty pane shows a "Select an item to read" placeholder (`:has()` + `::after`). No render
+  fork — pure CSS routing of the same content. Playwright-verified in `tools/e2e-layout.mjs`.
+
 ### Responsive — layout modes (Auto/Workspace/Tablet/Reader) + chooser + rail gear — 2026-06-24
 
 - **Layout is now a *mode*, not just an auto-breakpoint.** A resolver in the build's `<head>` sets

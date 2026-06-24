@@ -82,6 +82,11 @@ export class App {
     this.sources = document.getElementById('sources');
     this.searchEl = document.getElementById('search-input');
 
+    // Tablet master-detail: publish the content area's top edge (below the topbar, which may wrap)
+    // as --content-top, so the fixed reading pane + placeholder clear it. Recompute on resize.
+    this._syncContentTop();
+    window.addEventListener('resize', () => { clearTimeout(this._ctTimer); this._ctTimer = setTimeout(() => this._syncContentTop(), 150); });
+
     // Counts update live (cheap, no flicker); the rail+stream rebuild is debounced
     // so a burst of poll inserts doesn't tear the rows out from under the cursor.
     for (const ev of ['items', 'prune']) this.store.on(ev, () => { this.renderCounts(); this.renderReviewStatus(); this._scheduleRender(); this._courierDirty = true; });
@@ -628,6 +633,13 @@ export class App {
       if (!collapsed) html += `<div class="cat-feeds">${list.map((f) => this.sourceRow(f)).join('')}</div>`;
     }
     this.sources.innerHTML = html;
+  }
+
+  // Tablet master-detail: --content-top = the content area's top (below the topbar, which can wrap),
+  // so the fixed right-hand reading pane + its empty-state clear the topbar regardless of its height.
+  _syncContentTop() {
+    const ws = document.querySelector('.workspace');
+    if (ws) document.documentElement.style.setProperty('--content-top', Math.round(ws.getBoundingClientRect().top) + 'px');
   }
 
   setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
