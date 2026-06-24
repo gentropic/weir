@@ -6,6 +6,19 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — ROOT FIX: escape `Dropbox-API-Arg` (unicode paths) — `@gcu/vfs` 0.7.1 — 2026-06-24
+
+- **The real cause of the "CORS" upload/download failures.** Dropbox's content endpoints carry the
+  path in the **`Dropbox-API-Arg` HTTP header**, which must be ASCII — but the backend set it with
+  plain `JSON.stringify`, so any path with **accented/unicode characters** (notes, accented feed
+  names) made a malformed header → the request failed, and the error response (no CORS header)
+  surfaced as a bogus `No 'Access-Control-Allow-Origin'`. It broke **both upload and download** for
+  those paths (ASCII paths always worked — which is why the bulk of the corpus synced and only the
+  unicode-named files failed, looking like flaky CORS). Confirmed live with a 3-way diagnostic
+  (`__weir.dbxDiag`: ascii→200, unicode-raw→threw, unicode-escaped→200).
+- Fixed upstream in **`@gcu/vfs` 0.7.1** (`auditable@4f202b8`): `DropboxBackend._apiArg` escapes
+  non-ASCII as `\uXXXX` (what the Dropbox SDK does). Re-vendored. Sync now works for *all* paths.
+
 ### Sync — fix: push reverts to per-file upload (Dropbox `upload_session` is CORS-blocked) — 2026-06-24
 
 - **Push was broken from the browser.** The batched-push path called the backend's `writeFiles`,

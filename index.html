@@ -1874,6 +1874,12 @@ class Backend {
   async import(basePath, data) {
     // Collect and sort paths so directories come first
     const paths = Object.keys(data).sort();
+    // Fast path: if this backend has a bulk writer, let it do the whole import in few ops (it creates parent
+    // dirs itself — IDB mkdir-p in-tx, Dropbox auto-creates, CommentBackend uses implicit dirs).
+    if (typeof this.writeFiles === 'function') {
+      await this.writeFiles(paths.map((rel) => ({ path: basePath === '/' ? '/' + rel : basePath + '/' + rel, content: data[rel] })));
+      return;
+    }
     const createdDirs = new Set();
     for (const rel of paths) {
       const full = basePath === '/' ? '/' + rel : basePath + '/' + rel;
@@ -2688,80 +2694,59 @@ class CommentBackend extends Backend {
     return new TextDecoder().decode(raw);
   }
 
-  async writeFile(p, content) {
-    const rel = this._toRel(p);
-    // Verify parent directory exists (implicitly — check that we're not writing under a file)
-    const parentRel = this._toRel(path.dirname(path.normalize(p)));
-    if (parentRel) {
-      // Check parent isn't a file
-      if (this._map.has(parentRel)) throw vfsError('ENOTDIR', p);
-    }
-
-    let data, compressed = false, mimeType, size;
-
-    if (content instanceof Uint8Array) {
-      mimeType = path.mime(p);
-      size = content.byteLength;
-      // Try gzip compression in browser
-      if (typeof CompressionStream !== 'undefined') {
-        const cs = new CompressionStream('gzip');
-        const writer = cs.writable.getWriter();
-        writer.write(content);
-        writer.close();
-        const reader = cs.readable.getReader();
-        const chunks = [];
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-        const total = chunks.reduce((s, c) => s + c.byteLength, 0);
-        const result = new Uint8Array(total);
-        let offset = 0;
-        for (const c of chunks) { result.set(c, offset); offset += c.byteLength; }
-        if (result.byteLength < content.byteLength) {
-          data = btoa(String.fromCharCode(...result));
-          compressed = true;
-        } else {
-          data = btoa(String.fromCharCode(...content));
-        }
-      } else {
-        data = btoa(String.fromCharCode(...content));
-      }
+  // gzip+base64 one file → an AUDITABLE-FS map entry. The only async/expensive part of a write; pulled out so
+  // writeFiles can encode many then sync the comment ONCE (writeFile/_syncComment re-serialize the whole map).
+  async _encodeEntry(p, content) {
+    const mimeType = path.mime(p);
+    const bytes = content instanceof Uint8Array ? content : new TextEncoder().encode(content || '');
+    const size = bytes.byteLength;
+    let data, compressed = false;
+    if (typeof CompressionStream !== 'undefined') {
+      const cs = new CompressionStream('gzip');
+      const writer = cs.writable.getWriter(); writer.write(bytes); writer.close();
+      const reader = cs.readable.getReader(); const chunks = [];
+      while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
+      const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+      const gz = new Uint8Array(total); let off = 0;
+      for (const c of chunks) { gz.set(c, off); off += c.byteLength; }
+      if (gz.byteLength < bytes.byteLength) { data = btoa(String.fromCharCode(...gz)); compressed = true; }
+      else data = btoa(String.fromCharCode(...bytes));
     } else {
-      const str = content || '';
-      mimeType = path.mime(p);
-      const bytes = new TextEncoder().encode(str);
-      size = bytes.byteLength;
-      if (typeof CompressionStream !== 'undefined') {
-        const cs = new CompressionStream('gzip');
-        const writer = cs.writable.getWriter();
-        writer.write(bytes);
-        writer.close();
-        const reader = cs.readable.getReader();
-        const chunks = [];
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-        const total = chunks.reduce((s, c) => s + c.byteLength, 0);
-        const result = new Uint8Array(total);
-        let offset = 0;
-        for (const c of chunks) { result.set(c, offset); offset += c.byteLength; }
-        if (result.byteLength < bytes.byteLength) {
-          data = btoa(String.fromCharCode(...result));
-          compressed = true;
-        } else {
-          data = btoa(String.fromCharCode(...bytes));
-        }
-      } else {
-        data = btoa(String.fromCharCode(...bytes));
-      }
+      data = btoa(String.fromCharCode(...bytes));
     }
+    return { type: mimeType, compressed, size, data };
+  }
 
-    this._map.set(rel, { type: mimeType, compressed, size, data });
+  _assertParentDir(p) {
+    // implicit dirs — just guard against writing under a file
+    const parentRel = this._toRel(path.dirname(path.normalize(p)));
+    if (parentRel && this._map.has(parentRel)) throw vfsError('ENOTDIR', p);
+  }
+
+  async writeFile(p, content) {
+    this._assertParentDir(p);
+    this._map.set(this._toRel(p), await this._encodeEntry(p, content));
     this._syncComment();
+  }
+
+  // Bulk write — encode all entries, then re-serialize the comment ONCE (vs once per file → O(N²)).
+  async writeFiles(files) {
+    if (!files || !files.length) return { committed: 0 };
+    for (const f of files) {
+      this._assertParentDir(f.path);
+      this._map.set(this._toRel(f.path), await this._encodeEntry(f.path, f.content));
+    }
+    this._syncComment();
+    return { committed: files.length };
+  }
+
+  // Bulk delete — one comment re-serialization for the whole batch.
+  async deleteBatch(paths) {
+    if (!paths || !paths.length) return { deleted: 0 };
+    let deleted = 0;
+    for (const p of paths) if (this._map.delete(this._toRel(p))) deleted++;
+    this._syncComment();
+    return { deleted };
   }
 
   async stat(p) {
@@ -3759,10 +3744,21 @@ class DropboxBackend extends Backend {
     return text ? JSON.parse(text) : null;
   }
 
-  // Content endpoints (content.dropboxapi.com/2/*) — arg rides the Dropbox-API-Arg header.
+  // Content endpoints (content.dropboxapi.com/2/*) — arg rides the Dropbox-API-Arg HEADER, which
+  // must be a valid HTTP header value (ASCII). Non-ASCII (accented/unicode paths) MUST be escaped
+  // as \uXXXX — exactly what the Dropbox SDK's httpHeaderSafeJson does. Without this, a unicode
+  // path yields a malformed header → the request fails, and since the error response omits the CORS
+  // header it surfaces as a bogus "No Access-Control-Allow-Origin" — breaking upload AND download
+  // for any such path. (RPC args ride the JSON body, which carries unicode fine, so this is content-only.)
+  _apiArg(arg) {
+    const s = JSON.stringify(arg); let o = '';
+    for (let i = 0; i < s.length; i++) { const cc = s.charCodeAt(i); o += cc > 127 ? String.fromCharCode(92) + 'u' + cc.toString(16).padStart(4, '0') : s[i]; }
+    return o;
+  }
+
   async _content(endpoint, arg, p, opts = {}) {
     return this._send(async () => {
-      const headers = { Authorization: await this._authHeader(), 'Dropbox-API-Arg': JSON.stringify(arg) };
+      const headers = { Authorization: await this._authHeader(), 'Dropbox-API-Arg': this._apiArg(arg) };
       if (opts.contentType) headers['Content-Type'] = opts.contentType;
       return fetch(CONTENT + endpoint, { method: 'POST', headers, body: opts.body });
     }, p);
@@ -25417,7 +25413,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '0172e2e';          // short content hash of the bundle (build id)
+const COMMIT = '174b26f';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
