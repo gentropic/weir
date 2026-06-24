@@ -23,6 +23,19 @@ DeX/landscape keep the desktop workspace.
   (share → weir as a ratify-able proposal) — the native complement to the Telegram mini-app idea.
 - Open: bottom-bar vs drawer nav; CM6 vs textarea note-editing on touch; share-target/TG dedupe.
 
+## Sync performance — be a good Dropbox citizen (upstream `@gcu/vfs`)
+
+The multi-device rollout surfaced three spots where the Dropbox backend hammers the API.
+Specced to auditable: [`../auditable/spec_inbox/vfs-dropbox-efficiency-spec.md`](../auditable/spec_inbox/vfs-dropbox-efficiency-spec.md).
+All one-time-per-device costs (day-to-day incremental sync is already efficient).
+
+- **`@gcu/vfs` (auditable builds):** `listTree()` (recursive `list_folder` → whole tree + cursor
+  in ~1 sweep, vs ~1,500 per-file `get_metadata` calls — the "checking the cloud folder" minutes);
+  `writeFiles()` (upload-session `finish_batch` → stop tripping `too_many_write_operations` on the
+  first push); centralized **429/`Retry-After`** honoring in `_rpc`/`_content`.
+- **weir (after re-vendor):** bootstrap uses `listTree()` (+ its cursor); push uses `writeFiles()`;
+  simplify `syncRetry` to defer to the backend's honored backoff.
+
 ## Glass — weir becomes a knowledge base (the big arc)
 
 weir is becoming the home implementation of **`@gcu/glass`** (library-science
