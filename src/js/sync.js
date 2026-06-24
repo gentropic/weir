@@ -25,6 +25,7 @@ function syncExcluded(p) {
 const MANIFEST_PATH = '/sync-state.json';   // the excluded marker: per-file push signatures + the pull cursor
 const CHECKPOINT = 100;      // save the manifest every N transferred files, so an interrupted big sync RESUMES (only the not-yet-recorded files re-transfer)
 const PROGRESS_EVERY = 25;   // emit a progress tick every N files
+const PUSH_CONCURRENCY = 4;  // WRITES are what Dropbox throttles (too_many_write_operations) — push narrower than pull/read
 
 // recursively list every file path under `dir` (directories are descended, not returned).
 async function syncListTree(vfs, dir) {
@@ -88,9 +89,22 @@ async function syncPool(items, concurrency, fn) {
 }
 
 // retry with backoff — Dropbox throttles a burst with 429s (surfaced as EIO by the backend).
-async function syncRetry(fn, tries = 3) {
+// Dropbox throttles WRITES hard (too_many_write_operations / 429) on a big first push, and the
+// backend surfaces it only as an error message (no Retry-After), so detect it and back off
+// SECONDS, escalating — a single run RIDES OUT the throttle instead of aborting. Transient
+// errors keep the quick (sub-second) ramp. `sleep` is injectable for tests.
+const SYNC_RATE_RE = /too_many_(?:requests|write_operations)|rate.?limit|\b429\b|retry.?later/i;
+function syncIsRateLimit(e) { return !!(e && SYNC_RATE_RE.test(String((e && e.message) || e))); }
+async function syncRetry(fn, tries = 6, sleep = syncSleep) {
   let err;
-  for (let a = 0; a < tries; a++) { try { return await fn(); } catch (e) { err = e; if (a < tries - 1) await syncSleep(150 * Math.pow(4, a)); } }
+  for (let a = 0; a < tries; a++) {
+    try { return await fn(); }
+    catch (e) {
+      err = e;
+      if (a >= tries - 1) break;
+      await sleep(syncIsRateLimit(e) ? Math.min(4000 * Math.pow(2, a), 60000) : Math.min(150 * Math.pow(4, a), 5000));
+    }
+  }
   throw err;
 }
 
@@ -140,7 +154,7 @@ class SyncEngine {
     });
     let pushed = 0;
     this._progress('push', 0, toUpload.length);
-    await syncPool(toUpload, this.concurrency, async ({ p, sig }) => {
+    await syncPool(toUpload, Math.min(this.concurrency, PUSH_CONCURRENCY), async ({ p, sig }) => {
       const data = await this.local.readFile(p, 'bytes');
       await syncEnsureParent(this.remote, p);
       await syncRetry(() => this.remote.writeFile(p, data));
@@ -225,4 +239,4 @@ class SyncEngine {
   }
 }
 
-export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, SYNC_EXCLUDE };
+export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, syncIsRateLimit, SYNC_EXCLUDE };

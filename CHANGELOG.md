@@ -6,6 +6,22 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Dropbox sync — survive the write rate-limit on a big first push — 2026-06-23
+
+- The first full push of a large corpus (~1.5k files) tripped Dropbox's
+  `too_many_write_operations` (429): `syncRetry` did only 3 quick tries (max 2.4 s) and
+  ignored the throttle, so the run aborted partway. (It resumed next run via the checkpointed
+  manifest, but never completed in one go — so a fresh reader device had nothing to pull.)
+  Now `syncRetry` is **rate-limit-aware**: a Dropbox throttle backs off **seconds, escalating**
+  (4→8→16→32→60 s, 6 tries) so a run rides it out instead of dying; transient errors keep the
+  quick sub-second ramp. And the **push runs 4-wide, not 8** (`PUSH_CONCURRENCY` — writes are
+  what Dropbox throttles; reads/pull stay wider). Combined with the existing resume, the first
+  push now completes (turn on hub auto-sync to grind it through unattended).
+- Deferred (proper fix, upstream `@gcu/vfs` `DropboxBackend` → re-vendor): surface the 429 +
+  honor the exact `Retry-After` (now swallowed into a generic EIO), and **batch uploads**
+  (`upload_session/finish_batch`) so 1.5k files commit in far fewer write ops. Test:
+  `tools/smoke-sync.mjs`.
+
 ### Connection resilience — honest "bridge offline" status + channel reset — 2026-06-23
 
 - After weir OOM'd, its `numen` bridge process died and `bridge.live` went stale, but weir

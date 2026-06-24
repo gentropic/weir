@@ -3,7 +3,7 @@
 // device-local excludes, are idempotent, and round-trip content. Run: node tools/smoke-sync.mjs
 import assert from 'node:assert';
 import { VFS } from '../vendor/vfs.js';
-import { SyncEngine, syncCollectPaths } from '../src/js/sync.js';
+import { SyncEngine, syncCollectPaths, syncRetry } from '../src/js/sync.js';
 import { Store } from '../src/js/store/store.js';
 
 const mk = () => VFS.create({ type: 'memory' });
@@ -127,5 +127,24 @@ assert.equal(inc.removed, 1, 'incremental removed the deleted file');
 assert.equal(await read(inLocal, '/items/new.ndjson'), '{"id":"n1"}', 'added file mapped (/weir/… → /…) + written local');
 assert.equal(await read(inLocal, '/feeds/old.json'), null, 'deleted file removed locally');
 assert.equal(JSON.parse(await read(inLocal, MANIFEST)).cursor, 'c1', 'cursor advanced to the delta cursor');
+
+// ── rate-limit-aware retry: a Dropbox throttle (too_many_write_operations) backs off SECONDS,
+// escalating, and rides it out; a transient error keeps the quick ramp. Inject a fast sleep that
+// records waits (no real waiting), so the test is instant. (The big-first-push 429 fix.) ──
+{
+  const waits = []; const fast = async (ms) => { waits.push(ms); };
+  let n = 0;
+  const r = await syncRetry(async () => { if (n++ < 2) throw new Error('dropbox: too_many_write_operations (request id …)'); return 'ok'; }, 6, fast);
+  assert.equal(r, 'ok', 'syncRetry rides out a Dropbox throttle and succeeds');
+  assert.equal(n, 3, 'retried until success');
+  assert.ok(waits.length === 2 && waits.every((w) => w >= 4000), 'throttle backoff is seconds-scale, not sub-3s');
+  assert.ok(waits[1] > waits[0], 'backoff escalates');
+
+  const w2 = []; let m = 0;
+  await syncRetry(async () => { if (m++ < 1) throw new Error('transient network blip'); return 1; }, 6, async (ms) => w2.push(ms));
+  assert.ok(w2[0] < 1000, 'a non-throttle error keeps the quick sub-second first backoff');
+
+  await assert.rejects(syncRetry(async () => { throw new Error('429 too_many_requests'); }, 3, async () => {}), /too_many/, 'rethrows after exhausting tries');
+}
 
 console.log('sync (engine mirror) smoke ok');
