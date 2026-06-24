@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Responsive — layout modes (Auto/Workspace/Tablet/Reader) + chooser + rail gear — 2026-06-24
+
+- **Layout is now a *mode*, not just an auto-breakpoint.** A resolver in the build's `<head>` sets
+  `<html data-layout>` from a **device-local** pref (`localStorage 'weir-layout'`) + viewport width,
+  before paint (no flash of the wrong layout); the CSS keys on `[data-layout]` instead of a media
+  query. Auto picks by width (≤700 reader · ≤1024 tablet · else workspace), but you can **override**
+  it — fixes DeX/narrow-window misdetection or just preference. Per-device (phone, tablet, desktop
+  each keep their own; not synced).
+- **Settings → reading → Display:** a layout picker (Auto · Workspace · Tablet · Reader), applied
+  live. **Plus a ⚙ gear on the rail** (a discoverable settings entry, not just the topbar).
+- Foundation step: `tablet` currently shares the reader styles; the **master-detail two-pane tablet
+  tier** (`[data-layout="tablet"]`, list + reading column) is the next step. Replaces the raw
+  `max-width:1024px` breakpoint from earlier today.
+
 ### Responsive — fix tablet-portrait cropping (breakpoint 720 → 1024) — 2026-06-24
 
 - The reader breakpoint was `max-width: 720px`, so a tablet in **portrait** (e.g. Galaxy Tab S10 FE,

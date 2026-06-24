@@ -245,6 +245,23 @@ ${licensesComment()}<html lang="en" data-theme="dark">
 <link rel="manifest" href="./manifest.webmanifest">
 <meta name="theme-color" content="#D4672E">
 <link rel="icon" type="image/svg+xml" href="./icon.svg">
+<script>
+/* Layout resolver — runs before paint (no flash of the wrong layout). Sets <html data-layout>
+   from the device-local 'weir-layout' pref + viewport width; CSS keys on [data-layout].
+   window.weirResolveLayout() is re-called by Settings when the pref changes. */
+(function () {
+  function r() {
+    var m = 'auto'; try { m = localStorage.getItem('weir-layout') || 'auto'; } catch (e) { /* private mode */ }
+    var w = window.innerWidth || 1280, l;
+    if (m === 'auto') l = w <= 700 ? 'reader' : (w <= 1024 ? 'tablet' : 'workspace');
+    else l = m;
+    document.documentElement.dataset.layout = l;
+  }
+  window.weirResolveLayout = r;
+  r();
+  window.addEventListener('resize', function () { clearTimeout(window.__lrt); window.__lrt = setTimeout(r, 150); });
+})();
+</script>
 <style>
 ${css}
 </style>

@@ -222,6 +222,10 @@ export class App {
     });
     document.getElementById('set-sync-auto')?.addEventListener('change', (e) => this.store.setSettings({ sync_auto: !!e.target.checked }));
     document.getElementById('set-keepawake')?.addEventListener('change', (e) => { this.store.setSettings({ keep_awake: !!e.target.checked }); keepAwake('user', !!e.target.checked); });
+    // Layout mode is device-local (localStorage, not the synced store) + applied live by the head
+    // resolver — so phone/tablet/desktop keep their own, and a forced mode overrides auto-by-width.
+    document.getElementById('set-layout')?.addEventListener('change', (e) => { try { localStorage.setItem('weir-layout', e.target.value); } catch { /* private mode */ } window.weirResolveLayout?.(); });
+    document.getElementById('rail-settings')?.addEventListener('click', () => this.openSettings());
     document.getElementById('set-sync-now')?.addEventListener('click', async () => {
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'syncing…';
       try { const r = await this.syncNow?.({ force: true }); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
@@ -3750,6 +3754,7 @@ export class App {
     chk('set-images', s.images_default_allowed);
     chk('set-fullcontent', s.fetch_full_content_default);
     val('set-density', s.density || 'comfortable');
+    { const ls = document.getElementById('set-layout'); if (ls) { try { ls.value = localStorage.getItem('weir-layout') || 'auto'; } catch { ls.value = 'auto'; } } }
     val('set-cat-provider', s.catalog_provider || 'ollama');
     this._renderCatModelSelect([], s.catalog_model || '');
     val('set-cat-baseurl', s.catalog_base_url || '');

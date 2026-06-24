@@ -11,6 +11,7 @@
     <div class="brand">
       <div class="glyph"></div>
       <span class="name">@gcu/<b>weir</b></span>
+      <button id="rail-settings" class="btn-link rail-gear" type="button" title="Settings (layout, sync, cataloger…)">⚙</button>
     </div>
 
     <nav class="rail-section" data-rail-section="views">
@@ -197,6 +198,11 @@
         <label class="set-row">row density<select id="set-density" class="field"><option value="comfortable">comfortable</option><option value="compact">compact</option></select></label>
         <label class="set-row check"><input type="checkbox" id="set-images"> load images by default on new feeds</label>
         <label class="set-row check"><input type="checkbox" id="set-fullcontent"> fetch full content by default</label>
+      </section>
+      <section class="set-group">
+        <h4>Display</h4>
+        <label class="set-row">layout<select id="set-layout" class="field"><option value="auto">auto (by screen size)</option><option value="workspace">workspace — desktop / DeX</option><option value="tablet">tablet — two-pane reader</option><option value="reader">reader — phone</option></select></label>
+        <div class="hint">Auto picks by width: phone → reader, tablet/portrait → tablet, wide → workspace. Override here if auto guesses wrong (DeX, a narrow window) or you just prefer one. <b>Per-device</b> (not synced) — your phone and desktop keep their own.</div>
       </section>
       </div>
       <div class="set-pane" data-pane="feeds" hidden>
