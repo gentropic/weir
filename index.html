@@ -1103,6 +1103,13 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
   .navrow { padding: 11px 10px; }
   .statusbar { padding: 7px 12px; font-size: 10px; overflow-x: auto; }
   .statusbar .left, .statusbar .right { gap: 10px; }
+  /* topbar: clear the floating ≡, let the controls wrap instead of overflowing, and hide the
+     curation-only actions — a reader gets read/tag/search/settings, not add-feed/import/routing/etc.
+     (the real reader toolbar is phase 1). */
+  .topbar { padding-left: 56px; flex-wrap: wrap; row-gap: 8px; }
+  .topbar .actions { flex-wrap: wrap; gap: 8px; flex-shrink: 1; min-width: 0; }
+  #search-input { flex: 1 1 130px; min-width: 110px; }
+  #addfeed, #btn-import, #btn-export, #open-rules, #btn-recover, #btn-flightdeck, #btn-layout, #btn-saveview, .topbar-sep { display: none; }
 }
 </style>
 </head>
@@ -24696,7 +24703,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'da19f86';          // short content hash of the bundle (build id)
+const COMMIT = '7dd7c07';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
