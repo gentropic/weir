@@ -6,6 +6,15 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Responsive — phase 1: mobile bottom tab bar — 2026-06-24
+
+- First phase-1 slice: a thumb-reachable **bottom tab bar** on narrow screens —
+  **Inbox · Saved · Search · Notes** — wired to `setView`/`enterStacks` (+ Search focuses the
+  field). The cramped footer (status bar) is hidden on mobile and replaced by the bar; the
+  top-left ≡ drawer demotes to Sources/Facets. The active tab mirrors the current view. weir now
+  navigates like an app instead of a squeezed desktop. (`#botnav` in the template, `style.css`
+  `@media`, `app.renderBotNav`.) Desktop unchanged.
+
 ### Sync — fast bootstrap (`listTree`) + batched push (`writeFiles`) — 2026-06-24
 
 - The sync engine now *uses* the `@gcu/vfs` 0.3.0 fast paths (feature-detected, with the old paths

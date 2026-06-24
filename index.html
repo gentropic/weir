@@ -1080,7 +1080,7 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
    240px source rail into an off-canvas drawer (a ≡ toggle + scrim), give the stream the full
    width, enlarge tap targets. A stopgap so reading the inbox is usable on a phone — the
    touch-first reader layout (list→detail→note, bottom nav) is phase 1. */
-.rail-toggle, .rail-scrim { display: none; }
+.rail-toggle, .rail-scrim, .botnav { display: none; }
 @media (max-width: 720px) {
   .app { grid-template-columns: 1fr; }
   .resizer { display: none; }
@@ -1128,6 +1128,21 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
   .item.sel .iactions, .item.expanded .iactions { opacity: 1; }
   .iactions { padding-left: 16px; }
   .iactions button { width: 34px; height: 32px; font-size: 15px; }
+  /* bottom tab bar (phase 1) — thumb-reachable primary nav; replaces the cramped footer. */
+  .statusbar { display: none; }
+  .stream { padding-bottom: 64px; }   /* clear the bar so the last item is reachable */
+  .botnav {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 90; height: 54px;
+    background: var(--sw-bg-raised); border-top: 1px solid var(--au-border);
+    padding-bottom: env(safe-area-inset-bottom, 0px);   /* clear the phone's home indicator */
+  }
+  .botnav-tab {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    background: none; border: none; color: var(--au-fg-soft); font: inherit; cursor: pointer; padding: 6px 0;
+  }
+  .botnav-tab .bn-ico { font-size: 18px; line-height: 1; }
+  .botnav-tab .bn-lbl { font-size: 10px; font-family: var(--au-font-mono); letter-spacing: 0.02em; }
+  .botnav-tab.active { color: var(--au-action); }
 }
 </style>
 </head>
@@ -1248,6 +1263,14 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
       </div>
     </div>
   </main>
+
+  <!-- mobile-only: thumb-reachable primary nav (phase 1 reader) -->
+  <nav class="botnav" id="botnav">
+    <button class="botnav-tab" data-nav="inbox" type="button"><span class="bn-ico">⬓</span><span class="bn-lbl">Inbox</span></button>
+    <button class="botnav-tab" data-nav="saved" type="button"><span class="bn-ico">★</span><span class="bn-lbl">Saved</span></button>
+    <button class="botnav-tab" data-nav="search" type="button"><span class="bn-ico">⌕</span><span class="bn-lbl">Search</span></button>
+    <button class="botnav-tab" data-nav="notes" type="button"><span class="bn-ico">✎</span><span class="bn-lbl">Notes</span></button>
+  </nav>
 </div>
 
 <!-- Update toast (PWA) — shown when the service worker sees a new build -->
@@ -18622,6 +18645,15 @@ class App {
       row.addEventListener('click', () => this.setView(row.dataset.view));
       row.addEventListener('contextmenu', (e) => { e.preventDefault(); this.viewMenu(row.dataset.view, e.clientX, e.clientY); });
     });
+    // mobile bottom tab bar (phase 1) — thumb-reachable primary nav
+    document.querySelectorAll('.botnav-tab').forEach((b) => b.addEventListener('click', () => {
+      document.querySelector('.app')?.classList.remove('rail-open');   // close the drawer if it was open
+      const nav = b.dataset.nav;
+      if (nav === 'inbox') this.setView('inbox');
+      else if (nav === 'saved') this.setView('saved');
+      else if (nav === 'notes') this.enterStacks();
+      else if (nav === 'search') { const s = document.getElementById('search-input'); if (s) { s.focus(); s.select?.(); } }
+    }));
     this.sources.addEventListener('click', (e) => {
       const head = e.target.closest('.cat-head');
       if (head) {
@@ -18918,7 +18950,16 @@ class App {
     return this.store.query({ ...opts, text: text || undefined });   // cursor-scan fallback
   }
 
-  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); this.renderCourierBar(); }
+  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); this.renderCourierBar(); this.renderBotNav(); }
+
+  // Mobile bottom tab bar active state (phase 1) — mirrors the rail's view-active logic.
+  renderBotNav() {
+    const set = (nav, on) => { const b = document.querySelector(`.botnav-tab[data-nav="${nav}"]`); if (b) b.classList.toggle('active', on); };
+    const plain = !this.feedFilter && !this.route && !this.smartView && !this.catalog && !this.stackFilter && this.catFilter == null;
+    set('inbox', plain && this.view === 'inbox');
+    set('saved', plain && this.view === 'saved');
+    set('notes', !!this.stackFilter);
+  }
 
   // The rail's Tags section — every tag in use, with its color + item count,
   // click to filter (a transient tag view). The discoverable home for tags; the
@@ -24938,7 +24979,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '7a2d8f0';          // short content hash of the bundle (build id)
+const COMMIT = '2ed7d0f';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

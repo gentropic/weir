@@ -99,6 +99,15 @@ export class App {
       row.addEventListener('click', () => this.setView(row.dataset.view));
       row.addEventListener('contextmenu', (e) => { e.preventDefault(); this.viewMenu(row.dataset.view, e.clientX, e.clientY); });
     });
+    // mobile bottom tab bar (phase 1) — thumb-reachable primary nav
+    document.querySelectorAll('.botnav-tab').forEach((b) => b.addEventListener('click', () => {
+      document.querySelector('.app')?.classList.remove('rail-open');   // close the drawer if it was open
+      const nav = b.dataset.nav;
+      if (nav === 'inbox') this.setView('inbox');
+      else if (nav === 'saved') this.setView('saved');
+      else if (nav === 'notes') this.enterStacks();
+      else if (nav === 'search') { const s = document.getElementById('search-input'); if (s) { s.focus(); s.select?.(); } }
+    }));
     this.sources.addEventListener('click', (e) => {
       const head = e.target.closest('.cat-head');
       if (head) {
@@ -395,7 +404,16 @@ export class App {
     return this.store.query({ ...opts, text: text || undefined });   // cursor-scan fallback
   }
 
-  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); this.renderCourierBar(); }
+  renderAll() { this.renderCounts(); this.renderRail(); this.renderRoutes(); this.renderViews(); this.renderTags(); this.renderStacks(); this.renderTopbar(); this.renderStream(); this.renderReviewStatus(); this.renderCourierBar(); this.renderBotNav(); }
+
+  // Mobile bottom tab bar active state (phase 1) — mirrors the rail's view-active logic.
+  renderBotNav() {
+    const set = (nav, on) => { const b = document.querySelector(`.botnav-tab[data-nav="${nav}"]`); if (b) b.classList.toggle('active', on); };
+    const plain = !this.feedFilter && !this.route && !this.smartView && !this.catalog && !this.stackFilter && this.catFilter == null;
+    set('inbox', plain && this.view === 'inbox');
+    set('saved', plain && this.view === 'saved');
+    set('notes', !!this.stackFilter);
+  }
 
   // The rail's Tags section — every tag in use, with its color + item count,
   // click to filter (a transient tag view). The discoverable home for tags; the

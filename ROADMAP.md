@@ -17,8 +17,11 @@ DeX/landscape keep the desktop workspace.
 - ~~**Phase 0 — foundation.**~~ ✅ Shipped 2026-06-24. A `max-width:720px` breakpoint:
   single-column, source rail → off-canvas drawer (`≡` + scrim), full-width stream, bigger tap
   targets. Reading the inbox is usable on a phone (stopgap).
-- **Phase 1 — reader layout.** A dedicated narrow shell: list → item-detail → note, back nav,
-  a bottom bar (Inbox / Saved / Search / Notes); reuses the store + `renderItem`.
+- **Phase 1 — reader layout** (in progress). A dedicated narrow shell.
+  - ✅ **Bottom tab bar** (Inbox / Saved / Search / Notes) — shipped 2026-06-24 (`#botnav`).
+  - Next: full-screen reading view (list → item-detail, back nav, vs cramped inline-expand);
+    reading typography (comfortable body text on a narrow column); touch item cards; note editing
+    on touch (CM6 vs `textarea` fallback). Reuses the store + `renderItem`.
 - **Phase 2 — capture + Web Share Target.** Quick-add (paste URL) + a PWA `share_target`
   (share → weir as a ratify-able proposal) — the native complement to the Telegram mini-app idea.
 - Open: bottom-bar vs drawer nav; CM6 vs textarea note-editing on touch; share-target/TG dedupe.

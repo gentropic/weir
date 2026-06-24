@@ -608,7 +608,7 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
    240px source rail into an off-canvas drawer (a ≡ toggle + scrim), give the stream the full
    width, enlarge tap targets. A stopgap so reading the inbox is usable on a phone — the
    touch-first reader layout (list→detail→note, bottom nav) is phase 1. */
-.rail-toggle, .rail-scrim { display: none; }
+.rail-toggle, .rail-scrim, .botnav { display: none; }
 @media (max-width: 720px) {
   .app { grid-template-columns: 1fr; }
   .resizer { display: none; }
@@ -656,4 +656,19 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
   .item.sel .iactions, .item.expanded .iactions { opacity: 1; }
   .iactions { padding-left: 16px; }
   .iactions button { width: 34px; height: 32px; font-size: 15px; }
+  /* bottom tab bar (phase 1) — thumb-reachable primary nav; replaces the cramped footer. */
+  .statusbar { display: none; }
+  .stream { padding-bottom: 64px; }   /* clear the bar so the last item is reachable */
+  .botnav {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 90; height: 54px;
+    background: var(--sw-bg-raised); border-top: 1px solid var(--au-border);
+    padding-bottom: env(safe-area-inset-bottom, 0px);   /* clear the phone's home indicator */
+  }
+  .botnav-tab {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    background: none; border: none; color: var(--au-fg-soft); font: inherit; cursor: pointer; padding: 6px 0;
+  }
+  .botnav-tab .bn-ico { font-size: 18px; line-height: 1; }
+  .botnav-tab .bn-lbl { font-size: 10px; font-family: var(--au-font-mono); letter-spacing: 0.02em; }
+  .botnav-tab.active { color: var(--au-action); }
 }
