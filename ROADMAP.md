@@ -29,12 +29,12 @@ The multi-device rollout surfaced three spots where the Dropbox backend hammers 
 Specced to auditable: [`../auditable/spec_inbox/vfs-dropbox-efficiency-spec.md`](../auditable/spec_inbox/vfs-dropbox-efficiency-spec.md).
 All one-time-per-device costs (day-to-day incremental sync is already efficient).
 
-- **`@gcu/vfs` (auditable builds):** `listTree()` (recursive `list_folder` → whole tree + cursor
-  in ~1 sweep, vs ~1,500 per-file `get_metadata` calls — the "checking the cloud folder" minutes);
-  `writeFiles()` (upload-session `finish_batch` → stop tripping `too_many_write_operations` on the
-  first push); centralized **429/`Retry-After`** honoring in `_rpc`/`_content`.
-- **weir (after re-vendor):** bootstrap uses `listTree()` (+ its cursor); push uses `writeFiles()`;
-  simplify `syncRetry` to defer to the backend's honored backoff.
+- ~~**`@gcu/vfs` (auditable builds):** `listTree()`, `writeFiles()`, centralized 429/`Retry-After`.~~
+  ✅ Shipped `@gcu/vfs 0.3.0` (`auditable@7c9e8cf`), re-vendored into weir 2026-06-24.
+- ~~**weir: bootstrap uses `listTree()` (+ its cursor); push uses `writeFiles()`.**~~ ✅ Shipped
+  2026-06-24 (`src/js/sync.js`, feature-detected with the old paths as fallback). `syncRetry` kept
+  as the fallback-path retry + backstop (the backend now owns Dropbox backoff). The bootstrap
+  "checking the cloud folder" is one sweep, and the first push batches.
 
 ## Glass — weir becomes a knowledge base (the big arc)
 
