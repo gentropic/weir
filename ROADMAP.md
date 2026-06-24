@@ -39,6 +39,12 @@ All one-time-per-device costs (day-to-day incremental sync is already efficient)
   2026-06-24 (`src/js/sync.js`, feature-detected with the old paths as fallback). `syncRetry` kept
   as the fallback-path retry + backstop (the backend now owns Dropbox backoff). The bootstrap
   "checking the cloud folder" is one sweep, and the first push batches.
+- **FSA handle cache** — `HandleBackend._resolveDir` re-walks from root (a `getDirectoryHandle`
+  per segment) on every op with no cache, and several ops resolve redundantly; on Android each
+  step is a SAF IPC, so FSA-folder stores drag on DeX (weir *and* Auditable). Specced to auditable:
+  [`../auditable/spec_inbox/vfs-handle-cache-spec.md`](../auditable/spec_inbox/vfs-handle-cache-spec.md)
+  (cache dir handles + trim redundant resolves). weir re-vendors when shipped — mostly helps
+  desktop/DeX FSA + Auditable (weir keeps mobile on IDB).
 
 ## Glass — weir becomes a knowledge base (the big arc)
 
