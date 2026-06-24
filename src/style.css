@@ -602,3 +602,33 @@ body {
 .cm-completionLabel { color: inherit; }
 .cm-completionDetail { color: var(--au-fg-soft); font-style: normal; margin-left: 10px; font-size: 10px; }
 li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
+
+/* ── Phase-0 responsive foundation (docs/design/responsive-reader.md) ──
+   Narrow screens (phone / tablet-portrait): collapse the 2-col grid to one column, turn the
+   240px source rail into an off-canvas drawer (a ≡ toggle + scrim), give the stream the full
+   width, enlarge tap targets. A stopgap so reading the inbox is usable on a phone — the
+   touch-first reader layout (list→detail→note, bottom nav) is phase 1. */
+.rail-toggle, .rail-scrim { display: none; }
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; }
+  .resizer { display: none; }
+  /* source rail → off-canvas drawer */
+  .rail {
+    position: fixed; top: 0; bottom: 0; left: 0; width: min(86vw, 320px); z-index: 120;
+    transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: 2px 0 16px rgba(0, 0, 0, 0.4);
+  }
+  .app.rail-open .rail { transform: translateX(0); }
+  .rail-scrim { display: block; position: fixed; inset: 0; z-index: 110; background: rgba(0, 0, 0, 0.5); opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+  .app.rail-open .rail-scrim { opacity: 1; pointer-events: auto; }
+  /* the ≡ menu button — fixed top-left, floating over the stream */
+  .rail-toggle {
+    display: inline-flex; align-items: center; justify-content: center; position: fixed; top: 8px; left: 8px; z-index: 100;
+    width: 40px; height: 40px; font-size: 22px; line-height: 1; color: var(--au-fg); cursor: pointer;
+    background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg);
+  }
+  .app.rail-open .rail-toggle { left: calc(min(86vw, 320px) + 8px); }
+  /* bigger touch targets + chrome that fits a phone */
+  .navrow { padding: 11px 10px; }
+  .statusbar { padding: 7px 12px; font-size: 10px; overflow-x: auto; }
+  .statusbar .left, .statusbar .right { gap: 10px; }
+}

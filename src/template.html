@@ -2,6 +2,10 @@
      are rendered by src/js/ui/app.js; the status bar is wired by boot.js. -->
 <div class="app">
 
+  <!-- mobile-only: opens the source rail as an off-canvas drawer (phase-0 responsive) -->
+  <button id="rail-toggle" class="rail-toggle" type="button" aria-label="Menu">≡</button>
+  <div id="rail-scrim" class="rail-scrim"></div>
+
   <!-- ── Source rail ── -->
   <aside class="rail">
     <div class="brand">

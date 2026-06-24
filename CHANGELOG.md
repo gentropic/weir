@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Responsive — phase 0: usable on a phone (source rail → drawer) + reader spec — 2026-06-24
+
+- weir had **zero `@media` queries** — a fixed desktop layout, so a phone was useless (the 240 px
+  source rail ate a ~360 px screen; viewport meta was already correct). Phase 0: a
+  `max-width: 720px` breakpoint collapses `.app` to one column, turns the source rail into an
+  **off-canvas drawer** (a `≡` toggle + scrim), gives the stream the full width, hides the resizer,
+  and enlarges tap targets. Reading the inbox + items + save/tag now works on a phone. A stopgap —
+  the touch-first **reader layout** (list→detail→note, bottom nav) is phase 1.
+- **Design spec:** `docs/design/responsive-reader.md` — the reader-surface arc. The roles model
+  (SYNC.md) means narrow screens are `reader` devices, so they get a lean reader surface (not the
+  keyboard-first curation workspace), **width-triggered** (DeX/landscape keep the workspace). Scope =
+  reader + light capture + a PWA **Web Share Target** (the native complement to the Telegram bot).
+  This reconciles the old "no mobile" stance for the reader case.
+
 ### Sync — stop the hub re-downloading its own uploads (change-feed echo) — 2026-06-23
 
 - Dropbox's change feed (`files/list_folder/continue`) reports a folder's changes **including the

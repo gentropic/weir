@@ -6,6 +6,23 @@ what's shipped (adapters, poller, router, retainer, OPML, search, feed archaeolo
 canonical design intent is [SPEC.md](SPEC.md); this file is the **forward plan**.
 Nothing here is committed scope — it's the candidate list, roughly ordered.
 
+## Responsive reader — weir on a phone/tablet (multi-device)
+
+Cloud sync (SYNC.md) made phones/tablets real **`reader`** devices, so weir needs a
+touch surface. Full design: [`docs/design/responsive-reader.md`](docs/design/responsive-reader.md).
+The thesis: narrow screens get a lean, touch-first **reader** (read/save/tag/note/search +
+light capture), *not* a reflow of the keyboard-first curation workspace — width-triggered, so
+DeX/landscape keep the desktop workspace.
+
+- ~~**Phase 0 — foundation.**~~ ✅ Shipped 2026-06-24. A `max-width:720px` breakpoint:
+  single-column, source rail → off-canvas drawer (`≡` + scrim), full-width stream, bigger tap
+  targets. Reading the inbox is usable on a phone (stopgap).
+- **Phase 1 — reader layout.** A dedicated narrow shell: list → item-detail → note, back nav,
+  a bottom bar (Inbox / Saved / Search / Notes); reuses the store + `renderItem`.
+- **Phase 2 — capture + Web Share Target.** Quick-add (paste URL) + a PWA `share_target`
+  (share → weir as a ratify-able proposal) — the native complement to the Telegram mini-app idea.
+- Open: bottom-bar vs drawer nav; CM6 vs textarea note-editing on touch; share-target/TG dedupe.
+
 ## Glass — weir becomes a knowledge base (the big arc)
 
 weir is becoming the home implementation of **`@gcu/glass`** (library-science

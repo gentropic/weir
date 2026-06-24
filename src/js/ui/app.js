@@ -222,6 +222,11 @@ export class App {
       await this.syncReset?.();
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'sync state reset — next sync re-uploads everything';
     });
+    // Mobile: the source rail is an off-canvas drawer (phase-0 responsive, docs/design/responsive-reader.md).
+    { const root = document.querySelector('.app'); const close = () => root?.classList.remove('rail-open');
+      document.getElementById('rail-toggle')?.addEventListener('click', () => root?.classList.toggle('rail-open'));
+      document.getElementById('rail-scrim')?.addEventListener('click', close);
+      document.querySelector('.rail')?.addEventListener('click', (e) => { if (e.target.closest('.navrow, [data-feed], [data-cat]')) close(); }); }
     document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder('default'));
     document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder('default'));
     document.getElementById('set-webmcp-fs2-pick')?.addEventListener('click', () => this.pickWebmcpFolder('dev'));

@@ -1074,6 +1074,36 @@ body {
 .cm-completionLabel { color: inherit; }
 .cm-completionDetail { color: var(--au-fg-soft); font-style: normal; margin-left: 10px; font-size: 10px; }
 li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
+
+/* ── Phase-0 responsive foundation (docs/design/responsive-reader.md) ──
+   Narrow screens (phone / tablet-portrait): collapse the 2-col grid to one column, turn the
+   240px source rail into an off-canvas drawer (a ≡ toggle + scrim), give the stream the full
+   width, enlarge tap targets. A stopgap so reading the inbox is usable on a phone — the
+   touch-first reader layout (list→detail→note, bottom nav) is phase 1. */
+.rail-toggle, .rail-scrim { display: none; }
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; }
+  .resizer { display: none; }
+  /* source rail → off-canvas drawer */
+  .rail {
+    position: fixed; top: 0; bottom: 0; left: 0; width: min(86vw, 320px); z-index: 120;
+    transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: 2px 0 16px rgba(0, 0, 0, 0.4);
+  }
+  .app.rail-open .rail { transform: translateX(0); }
+  .rail-scrim { display: block; position: fixed; inset: 0; z-index: 110; background: rgba(0, 0, 0, 0.5); opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+  .app.rail-open .rail-scrim { opacity: 1; pointer-events: auto; }
+  /* the ≡ menu button — fixed top-left, floating over the stream */
+  .rail-toggle {
+    display: inline-flex; align-items: center; justify-content: center; position: fixed; top: 8px; left: 8px; z-index: 100;
+    width: 40px; height: 40px; font-size: 22px; line-height: 1; color: var(--au-fg); cursor: pointer;
+    background: var(--sw-bg-raised); border: 1px solid var(--au-border); border-radius: var(--au-radius-lg);
+  }
+  .app.rail-open .rail-toggle { left: calc(min(86vw, 320px) + 8px); }
+  /* bigger touch targets + chrome that fits a phone */
+  .navrow { padding: 11px 10px; }
+  .statusbar { padding: 7px 12px; font-size: 10px; overflow-x: auto; }
+  .statusbar .left, .statusbar .right { gap: 10px; }
+}
 </style>
 </head>
 <body>
@@ -1081,6 +1111,10 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
 <!-- weir v0.1 shell — two-pane layout. The rail's Sources list and the stream
      are rendered by src/js/ui/app.js; the status bar is wired by boot.js. -->
 <div class="app">
+
+  <!-- mobile-only: opens the source rail as an off-canvas drawer (phase-0 responsive) -->
+  <button id="rail-toggle" class="rail-toggle" type="button" aria-label="Menu">≡</button>
+  <div id="rail-scrim" class="rail-scrim"></div>
 
   <!-- ── Source rail ── -->
   <aside class="rail">
@@ -18472,6 +18506,11 @@ class App {
       await this.syncReset?.();
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'sync state reset — next sync re-uploads everything';
     });
+    // Mobile: the source rail is an off-canvas drawer (phase-0 responsive, docs/design/responsive-reader.md).
+    { const root = document.querySelector('.app'); const close = () => root?.classList.remove('rail-open');
+      document.getElementById('rail-toggle')?.addEventListener('click', () => root?.classList.toggle('rail-open'));
+      document.getElementById('rail-scrim')?.addEventListener('click', close);
+      document.querySelector('.rail')?.addEventListener('click', (e) => { if (e.target.closest('.navrow, [data-feed], [data-cat]')) close(); }); }
     document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder('default'));
     document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder('default'));
     document.getElementById('set-webmcp-fs2-pick')?.addEventListener('click', () => this.pickWebmcpFolder('dev'));
@@ -24657,7 +24696,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'b984313';          // short content hash of the bundle (build id)
+const COMMIT = 'da19f86';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
