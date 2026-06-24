@@ -609,7 +609,11 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
    width, enlarge tap targets. A stopgap so reading the inbox is usable on a phone — the
    touch-first reader layout (list→detail→note, bottom nav) is phase 1. */
 .rail-toggle, .rail-scrim, .botnav { display: none; }
-@media (max-width: 720px) {
+/* ≤1024 = phones AND tablet PORTRAIT (e.g. Galaxy Tab S10 FE: 1440×2304 → ~720–960 CSS-wide in
+   portrait, ~1152–1536 in landscape). 1024 cleanly splits this device regardless of its DPR —
+   portrait → the reader layout, landscape → the desktop workspace — and is the conventional
+   tablet/desktop line. (A narrow desktop WINDOW <1024 also gets the reader; standard responsive.) */
+@media (max-width: 1024px) {
   .app { grid-template-columns: 1fr; }
   .resizer { display: none; }
   /* source rail → off-canvas drawer */

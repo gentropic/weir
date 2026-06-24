@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Responsive — fix tablet-portrait cropping (breakpoint 720 → 1024) — 2026-06-24
+
+- The reader breakpoint was `max-width: 720px`, so a tablet in **portrait** (e.g. Galaxy Tab S10 FE,
+  1440×2304 → ~800–960 CSS-wide in portrait) fell *above* it and got the desktop two-pane layout —
+  which doesn't fit at that width, so the topbar's button row + panes **cropped** off the right edge.
+  Landscape (~1152–1536) fit, so it looked fine. Raised the breakpoint to **`1024px`**: tablet
+  portrait now gets the touch reader layout (drawer, bottom nav, single column, big reading) and
+  landscape keeps the desktop workspace — a clean split regardless of the device's exact DPR, and
+  the conventional tablet/desktop line. (A narrow desktop window <1024 also gets the reader — standard
+  responsive behavior.)
+
 ### Sync — handle rate-limit-masked-as-CORS (back off on throw; smaller burst) — 2026-06-24
 
 - With the unicode-path fix in, sync **works** (`[sync] ↑ 8 ↓ 1`), but a burst still tripped

@@ -45,7 +45,9 @@ settings, the movable rails workspace, most of Settings (mobile Settings = sync 
 
 ## Phases
 
-0. **Foundation — SHIPPED.** A width breakpoint (`max-width: 720px`): `.app` → single column; the
+0. **Foundation — SHIPPED.** A width breakpoint (**`max-width: 1024px`** — covers phones AND tablet
+   *portrait*, e.g. Galaxy Tab S10 FE ~720–960 CSS-wide in portrait / ~1152–1536 landscape, so
+   portrait→reader, landscape→workspace): `.app` → single column; the
    source rail becomes an **off-canvas drawer** (a `≡` toggle + a scrim, default hidden); the
    stream goes full-width; the resizer is hidden; tap targets enlarged; chrome condensed. Makes
    *reading the inbox + items + save/tag* usable on a phone today, reusing existing components. A
