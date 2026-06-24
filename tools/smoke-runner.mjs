@@ -5,12 +5,15 @@ import { BackgroundRunner } from '../src/js/runner.js';
 
 // A fake window: synchronous, controllable timers so the test is deterministic.
 function fakeWin(label) {
-  const timers = new Map(); let id = 0;
+  const timers = new Map(); const timeouts = new Map(); let id = 0;
   return {
-    label, timers,
+    label, timers, timeouts,
     setInterval(fn) { const i = ++id; timers.set(i, fn); return i; },
     clearInterval(i) { timers.delete(i); },
+    setTimeout(fn) { const i = ++id; timeouts.set(i, fn); return i; },
+    clearTimeout(i) { timeouts.delete(i); },
     fireAll() { for (const fn of [...timers.values()]) fn(); },
+    fireTimeouts() { const fns = [...timeouts.values()]; timeouts.clear(); for (const fn of fns) fn(); },   // one-shots fire once
   };
 }
 // _run is async (it awaits tick), so _busy clears a microtask after a fire — flush
@@ -57,5 +60,21 @@ assert.equal(bRuns, bWas + 1, 'kick runs an enabled task now');
 // remove: dropped task is gone + its timer cleared
 r.remove('a');
 assert.ok(!r.tasks.some((t) => t.name === 'a'), 'removed task is gone');
+
+// firstDelayMs: a one-shot lead-in fires once BEFORE the interval (responsive after a reload),
+// then the interval carries it — and it doesn't re-fire on a driver switch.
+{
+  const w = fakeWin('lead'); const r2 = new BackgroundRunner({ win: w });
+  let runs = 0;
+  r2.add({ name: 'sync', intervalMs: 1000, firstDelayMs: 10, tick: () => { runs++; } });
+  assert.equal(w.timeouts.size, 1, 'lead-in armed a one-shot timeout');
+  assert.equal(runs, 0, 'nothing runs until a timer fires');
+  w.fireTimeouts(); await settle();
+  assert.equal(runs, 1, 'lead-in ticked once before any interval fire');
+  r2.setDriver(fakeWin('lead2'));   // re-arm after the lead-in already fired
+  assert.equal([...r2.tasks][0]._kicked, true, 'lead-in marked fired');
+  r2.win.fireTimeouts && r2.win.fireTimeouts(); await settle();
+  assert.equal(runs, 1, 'lead-in does NOT re-fire on a driver switch (once only)');
+}
 
 console.log('runner smoke ok:', JSON.stringify({ a: aRuns, b: bRuns, cMax }));

@@ -21,6 +21,10 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
   honor the exact `Retry-After` (now swallowed into a generic EIO), and **batch uploads**
   (`upload_session/finish_batch`) so 1.5k files commit in far fewer write ops. Test:
   `tools/smoke-sync.mjs`.
+- **Auto-sync is responsive after a reload:** the background runner gained an opt-in
+  `firstDelayMs` (one-shot lead-in), and the sync loop uses **10 s** — so after a reload it
+  syncs ~10 s in instead of waiting a full 120 s interval (then the interval carries it; the
+  lead-in fires once, not on every flight-deck driver switch). Test: `tools/smoke-runner.mjs`.
 
 ### Connection resilience — honest "bridge offline" status + channel reset — 2026-06-23
 

@@ -16,13 +16,16 @@ export class BackgroundRunner {
     this.tasks = [];
   }
 
-  // task: { name, intervalMs, tick: async()=>{}, enabled?: ()=>boolean }
+  // task: { name, intervalMs, tick: async()=>{}, enabled?: ()=>boolean, firstDelayMs?: number }
+  // firstDelayMs (optional): run ONCE this soon after start, then on the interval — so a loop
+  // can be responsive after a reload (e.g. sync) instead of waiting a full interval first.
   add(task) {
     const t = {
       name: task.name || `task-${this.tasks.length}`,
       intervalMs: Math.max(1000, task.intervalMs || 30_000),
+      firstDelayMs: task.firstDelayMs || null,
       tick: task.tick, enabled: task.enabled || null,
-      _timer: null, _timerWin: null, _busy: false,
+      _timer: null, _kick: null, _timerWin: null, _busy: false, _kicked: false,
     };
     this.tasks.push(t);
     this._arm(t);
@@ -42,12 +45,22 @@ export class BackgroundRunner {
   // Run a task NOW (e.g. right after an import kicks the resolver), busy/enabled-aware.
   kick(name) { const t = this.tasks.find((x) => x.name === name); if (t) this._run(t); }
 
-  _disarm(t) { if (t._timer && t._timerWin) { try { t._timerWin.clearInterval(t._timer); } catch { /* window gone */ } } t._timer = null; t._timerWin = null; }
+  _disarm(t) {
+    if (t._timer && t._timerWin) { try { t._timerWin.clearInterval(t._timer); } catch { /* window gone */ } }
+    if (t._kick && t._timerWin) { try { t._timerWin.clearTimeout(t._kick); } catch { /* window gone */ } }
+    t._timer = null; t._kick = null; t._timerWin = null;
+  }
   _arm(t) {
     this._disarm(t);
     t._timerWin = this.win;
     t._timer = this.win.setInterval(() => this._run(t), t.intervalMs);
     if (t._timer && typeof t._timer.unref === 'function') t._timer.unref();
+    // one-shot lead-in: fire once shortly after (re)arm so a reload is responsive, then the
+    // interval carries it. `_kicked` ensures it fires only once, not on every re-arm (driver switch).
+    if (t.firstDelayMs && !t._kicked) {
+      t._kick = this.win.setTimeout(() => { t._kicked = true; this._run(t); }, t.firstDelayMs);
+      if (t._kick && typeof t._kick.unref === 'function') t._kick.unref();
+    }
   }
   async _run(t) {
     if (t._busy) return;

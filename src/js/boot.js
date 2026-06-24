@@ -273,7 +273,7 @@ async function boot() {
     return true;
   };
   dropboxConnected().then((c) => { app._syncReady = !!c; app.renderSyncStatus?.(c ? 'idle' : 'off'); });
-  runner.add({ name: 'sync', intervalMs: 120_000, enabled: () => store.getSettings().sync_auto && app._syncReady, tick: () => app.syncNow() });
+  runner.add({ name: 'sync', intervalMs: 120_000, firstDelayMs: 10_000, enabled: () => store.getSettings().sync_auto && app._syncReady, tick: () => app.syncNow() });
 
   window.__weir = { store, poller, router, drip, retainer, linkResolver, stacks, app, addFeed: (u) => app.addFeed(u), recover: (id) => app.recoverHistory(id), exportCorpus: (o) => app.exportCorpus(o), buildCatalog: (o) => store.buildCatalog(o), clearCatalog: () => store.clearCatalog(),
     catalogItemLLM: async (id, o = {}) => {
