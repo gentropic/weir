@@ -22,6 +22,11 @@ function syncExcluded(p) {
   if (SYNC_EXCLUDE.has(p)) return true;
   return p.startsWith('/content/') && p.indexOf('/', 9) !== -1;   // nested under /content/ = legacy per-item file
 }
+// What a `reader` may PUSH — only its OWN deltas (notes/annotations under /stacks/), never the
+// corpus (feeds/items/content/catalog/vocab). The hub is the corpus's single writer (SYNC.md §2);
+// gating push here makes "a reader can't clobber the hub" true by construction, not by care.
+// (Read/saved/tags state lives inside item shards = corpus, so it doesn't round-trip up yet.)
+function syncReaderWritable(p) { return p.startsWith('/stacks/'); }
 const MANIFEST_PATH = '/sync-state.json';   // the excluded marker: per-file push signatures + the pull cursor
 const CHECKPOINT = 100;      // save the manifest every N transferred files, so an interrupted big sync RESUMES (only the not-yet-recorded files re-transfer)
 const PROGRESS_EVERY = 25;   // emit a progress tick every N files
@@ -154,12 +159,13 @@ async function syncRetry(fn, tries = 6, sleep = syncSleep) {
 }
 
 class SyncEngine {
-  constructor({ local, remote, store = null, concurrency = 8, onProgress = null }) {
+  constructor({ local, remote, store = null, concurrency = 8, onProgress = null, role = 'hub' }) {
     this.local = local;            // weir's live VFS (store.vfs)
     this.remote = remote;          // the cloud VFS (DropboxBackend), or a memory VFS in tests
     this.store = store;            // optional — for the post-pull re-hydrate
     this.concurrency = concurrency;
     this._onProgress = onProgress; // optional ({phase, done, total}) → UI progress
+    this.role = role;              // 'hub' (owns + pushes the corpus) | 'reader' (pushes only its own deltas)
     this._manifest = null;
   }
 
@@ -197,6 +203,14 @@ class SyncEngine {
       const sig = this._sig(st);
       if (this._changed(man.files[p], sig)) toUpload.push({ p, sig });
     });
+    // Safe-by-construction: a `reader` pushes ONLY its own deltas (notes), never corpus — so even
+    // if it adopted a stale store, it can't overwrite the hub's canon (the roles model, enforced).
+    let heldForRole = 0;
+    if (this.role === 'reader') {
+      const before = toUpload.length;
+      for (let i = toUpload.length - 1; i >= 0; i--) if (!syncReaderWritable(toUpload[i].p)) toUpload.splice(i, 1);
+      heldForRole = before - toUpload.length;
+    }
     let pushed = 0; const paths = [];
     this._progress('push', 0, toUpload.length);
     const be = this._remoteBackend();
@@ -223,7 +237,7 @@ class SyncEngine {
       });
     }
     await this._saveManifest();
-    return { pushed, skipped: scanned - toUpload.length, scanned, paths };
+    return { pushed, skipped: scanned - toUpload.length, scanned, heldForRole, paths };
   }
 
   // remote → local. Three modes: incremental (have a cursor + a change feed), bootstrap (have a
@@ -318,4 +332,4 @@ class SyncEngine {
   }
 }
 
-export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, syncIsRateLimit, syncShouldScan, syncSummarize, syncKindLine, syncDropboxContentHash, SYNC_EXCLUDE };
+export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, syncIsRateLimit, syncShouldScan, syncSummarize, syncKindLine, syncDropboxContentHash, syncReaderWritable, SYNC_EXCLUDE };

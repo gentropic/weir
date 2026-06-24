@@ -235,4 +235,27 @@ assert.equal(syncShouldScan({ rev: 5, lastRev: 5, cycle: 3, forceEvery: 10, forc
   assert.deepEqual(batched, ['/feeds/y.json', '/items/x.ndjson'], 'writeFiles received the changed files in one batch (manifest excluded)');
 }
 
+// ── reader role: push uploads ONLY its own deltas (notes), never corpus — safe by construction ──
+{
+  const local = await mk();
+  await write(local, '/items/x.ndjson', '{"id":"x"}');       // corpus — a reader must NOT push this
+  await write(local, '/feeds/f.json', '{"id":"f"}');          // corpus
+  await write(local, '/stacks/inbox/note.md', '# my note');   // reader delta — OK to push
+  await write(local, MANIFEST, JSON.stringify({ files: {} }));
+  const pushedPaths = [];
+  const be = { writeFiles: async (files) => { files.forEach((f) => pushedPaths.push(f.path)); return { committed: files.length }; } };
+  const r = await new SyncEngine({ local, remote: { resolve: () => ({ backend: be }) }, role: 'reader' }).push();
+  assert.deepEqual(pushedPaths.sort(), ['/stacks/inbox/note.md'], 'reader pushed only its note, not the corpus files');
+  assert.equal(r.heldForRole, 2, 'reader held back the 2 corpus files (cannot clobber the hub)');
+  // a hub pushes everything
+  const local2 = await mk();
+  await write(local2, '/items/x.ndjson', '{"id":"x"}');
+  await write(local2, '/stacks/inbox/n.md', '# n');
+  await write(local2, MANIFEST, JSON.stringify({ files: {} }));
+  const hubPaths = [];
+  const r2 = await new SyncEngine({ local: local2, remote: { resolve: () => ({ backend: { writeFiles: async (f) => { f.forEach((x) => hubPaths.push(x.path)); return {}; } } }) }, role: 'hub' }).push();
+  assert.equal(r2.heldForRole, 0, 'hub holds nothing back');
+  assert.equal(hubPaths.length, 2, 'hub pushes corpus + notes');
+}
+
 console.log('sync (engine mirror) smoke ok');

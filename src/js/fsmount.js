@@ -71,6 +71,16 @@ export async function folderHasStore(handle) {
 // A short label for the folder (its name), for the UI.
 export function handleName(handle) { return (handle && handle.name) || 'folder'; }
 
+// Erase every entry in a directory handle (recursive) — for wiping a stale weir store from
+// inside weir, since Android file managers are clunky. Returns the count removed.
+export async function clearFolder(handle) {
+  const names = [];
+  for await (const [name] of handle.entries()) names.push(name);
+  let removed = 0;
+  for (const name of names) { try { await handle.removeEntry(name, { recursive: true }); removed++; } catch { /* skip locked/in-use */ } }
+  return removed;
+}
+
 // Read one repo-relative doc from a mounted (read-only) repos-parent VFS:
 // `<repoDir>/<path>` as UTF-8 TEXT, ≤ maxBytes. Blocks `..` traversal so a path can't
 // escape the repo dir. Returns the text, or null if the file isn't there. Pure (takes a

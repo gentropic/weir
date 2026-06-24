@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — reader can't clobber the hub (safe by construction) + clear-a-folder — 2026-06-24
+
+- **A `reader` now pushes ONLY its own deltas (notes, `/stacks/`), never corpus.** The roles model
+  ("the hub is the corpus's single writer", SYNC.md §2) is now *enforced* in `SyncEngine`
+  (`role` from `sync_role`, `syncReaderWritable`) instead of relying on care — so even if a reader
+  **adopts a stale store**, its push can't overwrite the hub's canon (the corpus files are held
+  back; `pull` then reconciles the reader's view from the hub). Read/saved/tags state lives inside
+  item shards (corpus), so it doesn't round-trip up yet — a future delta-file is the proper fix.
+  Test: `tools/smoke-sync.mjs` (reader pushes the note, holds back the 2 corpus files; hub pushes all).
+- **Settings → storage → "clear a folder…"** — erase a chosen folder's contents from inside weir
+  (recursive), so a stale weir store can be **wiped + mounted fresh** (copy-in) instead of adopted.
+  Handy on Android where file managers are clunky. Strong, folder-named confirm; touches only the
+  folder you pick, never the live store. (`fsmount.clearFolder`, `app.clearStoreFolder`.)
+
 ### Responsive — phase 1: reading typography — 2026-06-24
 
 - Comfortable article/note reading on a phone. On the `≤720px` breakpoint the body (`.icontent`)

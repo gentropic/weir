@@ -20,7 +20,7 @@ import { parseFeed } from '../adapters/feed.js';
 import { monogram } from '../favicon.js';
 import { assessFeed } from '../health.js';
 import { Store } from '../store/store.js';
-import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle, loadHandle, readMountedDoc } from '../fsmount.js';
+import { pickDirectory, folderHasStore, handlePermission, handleName, saveHandle, clearHandle, loadHandle, readMountedDoc, clearFolder } from '../fsmount.js';
 import { VFS } from '../../../vendor/vfs.js';   // read-only repos mount (SPEC-repos-as-source-fixes #5)
 import { facetsOf, FACETS } from '../glass.js';
 import { WORLD_PATH, WORLD_VIEWBOX } from '../../../vendor/worldmap.js';
@@ -3865,7 +3865,7 @@ export class App {
       acts.innerHTML = '<button class="btn-link" data-mount="reconnect">reconnect…</button> &nbsp; <button class="btn-link" data-mount="forget">forget</button>';
     } else {
       loc.textContent = 'browser (IndexedDB)';
-      acts.innerHTML = fsaOk ? '<button class="btn-link" data-mount="mount">mount to a folder…</button>' : '<span class="hint">needs Edge/Chrome</span>';
+      acts.innerHTML = fsaOk ? '<button class="btn-link" data-mount="mount">mount to a folder…</button> &nbsp; <button class="btn-link" data-mount="clear" title="Erase a folder’s contents (e.g. an old/stale weir store) so you can mount it fresh instead of adopting it — handy on Android where file managers are clunky">clear a folder…</button>' : '<span class="hint">needs Edge/Chrome</span>';
     }
   }
 
@@ -3873,9 +3873,26 @@ export class App {
     const b = e.target.closest('[data-mount]'); if (!b) return;
     const a = b.dataset.mount;
     if (a === 'mount') this.mountToFolder();
+    else if (a === 'clear') this.clearStoreFolder();
     else if (a === 'reconnect') this.reconnectFolder();
     else if (a === 'unmount') this.unmountFolder();
     else if (a === 'forget') this.forgetFolder();
+  }
+
+  // Erase a folder's contents from inside weir (Android file managers are clunky) — so a stale
+  // weir store can be wiped and then mounted FRESH (copy-in) instead of adopted. Touches only the
+  // folder you pick; never the live store.
+  async clearStoreFolder() {
+    const msg = document.getElementById('settings-msg');
+    let handle;
+    try { handle = await pickDirectory('weir-clear'); }
+    catch (e) { if (e && e.name === 'AbortError') return; if (msg) msg.textContent = e.message; return; }
+    const name = handleName(handle);
+    const hasStore = await folderHasStore(handle).catch(() => false);
+    if (!confirm(`Erase EVERYTHING in “${name}”${hasStore ? ' (it contains a weir store)' : ''}?\n\nThis permanently deletes the folder's contents — use it to wipe an old/stale store before mounting it fresh. Make sure this is NOT weir's current live folder.`)) { if (msg) msg.textContent = ''; return; }
+    if (msg) msg.textContent = `clearing “${name}”…`;
+    try { const n = await clearFolder(handle); if (msg) msg.textContent = `cleared “${name}” — ${n} entr${n === 1 ? 'y' : 'ies'} removed. Now “mount to a folder…” it for a fresh copy.`; }
+    catch (e) { if (msg) msg.textContent = `clear failed: ${e.message}`; }
   }
 
   async mountToFolder() {

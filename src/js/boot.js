@@ -252,7 +252,7 @@ async function boot() {
   async function ensureSyncEngine() {
     if (syncEngine) return syncEngine;
     if (!(await dropboxConnected())) return null;
-    syncEngine = new SyncEngine({ local: store.vfs, remote: await makeDropboxRemote(), store, onProgress: (p) => app.renderSyncStatus('syncing', p) });
+    syncEngine = new SyncEngine({ local: store.vfs, remote: await makeDropboxRemote(), store, onProgress: (p) => app.renderSyncStatus('syncing', p), role: store.getSettings().sync_role || 'hub' });
     return syncEngine;
   }
   app._syncCycle = 0;          // counts auto ticks → periodic forced full scan (safety net)
