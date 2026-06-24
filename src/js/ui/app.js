@@ -219,6 +219,8 @@ export class App {
     document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder('default'));
     document.getElementById('set-webmcp-fs2-pick')?.addEventListener('click', () => this.pickWebmcpFolder('dev'));
     document.getElementById('set-webmcp-fs2-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder('dev'));
+    document.getElementById('set-webmcp-fs-reset')?.addEventListener('click', () => this.resetWebmcpChannel('default'));
+    document.getElementById('set-webmcp-fs2-reset')?.addEventListener('click', () => this.resetWebmcpChannel('dev'));
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -3545,14 +3547,78 @@ export class App {
   // Per-fs-channel status (multichannel: 'default' = librarian, 'dev' = the weir dev
   // agent). Each channel = one folder = one agent (folder = identity). Updates the
   // per-channel connect/disconnect buttons + a compact channel summary in Settings.
-  renderWebmcpChannels() {
+  // fs-transport liveness: read each channel's `bridge.live` `ts` via its folder handle and
+  // flag a STALE/absent heartbeat (the bridge PROCESS is down) — so a dead bridge reads
+  // "offline", not an eternal optimistic "connecting" (the OOM-aftermath confusion). 90s
+  // mirrors the fs-channel's own LIVENESS_MS. Returns { id → { ts, ageMs, stale } }.
+  async _bridgeLiveness() {
+    const LIVENESS_MS = 90000;
+    const out = {}; const handles = this._webmcpFsHandles || {};
+    for (const id of Object.keys(handles)) {
+      const h = handles[id]; if (!h) continue;
+      let ts = null;
+      try {
+        const fh = await h.getFileHandle('bridge.live');
+        const ann = JSON.parse(await (await fh.getFile()).text());
+        ts = Number(JSON.parse(ann.payload || '{}').ts) || null;
+      } catch { ts = null; }   // no bridge.live = no bridge has announced / it cleaned up on exit
+      const ageMs = ts ? (Date.now() - ts) : null;
+      out[id] = { ts, ageMs, stale: ts == null || ageMs > LIVENESS_MS };
+    }
+    return out;
+  }
+  _agoShort(ms) {
+    if (ms == null) return '?'; const s = Math.round(ms / 1000);
+    if (s < 90) return s + 's'; const m = Math.round(s / 60);
+    if (m < 90) return m + 'm'; const h = Math.round(m / 60);
+    return h < 36 ? h + 'h' : Math.round(h / 24) + 'd';
+  }
+
+  async renderWebmcpChannels() {
     const chans = (this.webmcp && this.webmcp.channels) ? this.webmcp.channels() : [];
-    const on = (id) => { const c = chans.find((x) => x.id === id); return c && (c.state === 'connected' || c.state === 'connecting'); };
-    const btn = (id, elId) => { const b = document.getElementById(elId); if (b) b.textContent = on(id) ? 'disconnect' : 'connect over folder'; };
+    const live = await this._bridgeLiveness().catch(() => ({}));
+    // The shim reports 'connecting' both while genuinely dialing AND while waiting on a bridge
+    // that's actually dead — distinguish them by the heartbeat: stale → OFFLINE.
+    const eff = (c) => (c.state === 'connecting' && live[c.id] && live[c.id].stale) ? 'offline' : c.state;
+    const upish = (id) => { const c = chans.find((x) => x.id === id); if (!c) return false; const e = eff(c); return e === 'connected' || e === 'connecting'; };
+    const btn = (id, elId) => { const b = document.getElementById(elId); if (b) b.textContent = upish(id) ? 'disconnect' : 'connect over folder'; };
     btn('default', 'set-webmcp-fs-toggle');
     btn('dev', 'set-webmcp-fs2-toggle');
     const cl = document.getElementById('set-webmcp-channels');
-    if (cl) cl.textContent = chans.length ? chans.map((c) => `${c.identity || c.id}:${c.state}`).join('  ·  ') : '—';
+    if (cl) cl.textContent = chans.length ? chans.map((c) => {
+      const e = eff(c); const lv = live[c.id];
+      const tail = e === 'offline' ? (lv && lv.ts ? ` (bridge down — last seen ${this._agoShort(lv.ageMs)}; restart it)` : ' (no live bridge)') : '';
+      return `${c.identity || c.id}: ${e}${tail}`;
+    }).join('  ·  ') : '—';
+    // footer chip: a stale heartbeat reads "off", not "…"
+    const bar = document.getElementById('webmcp-status');
+    if (bar && !chans.some((c) => c.state === 'connected') && chans.some((c) => eff(c) === 'offline')) { bar.textContent = 'mcp off'; bar.dataset.state = 'offline'; }
+    // While the shim is still optimistically dialing, re-check soon: no shim event fires when a
+    // connection merely crosses the staleness window, so poll to flip it to "offline" (and the
+    // shim's own dial loop fires an event when a returning bridge reconnects → stops this).
+    clearTimeout(this._webmcpLivenessTimer);
+    if (chans.some((c) => c.state === 'connecting')) this._webmcpLivenessTimer = setTimeout(() => this.renderWebmcpChannels(), 20000);
+  }
+
+  // Unstick a wedged fs channel after a bridge crash: prune the dead bridge's transport
+  // scratch (a stale `bridge.live` + orphan `sessions/` dirs) via the folder handle, then
+  // re-dial. Touches ONLY the exchange folder's transport files — never weir's data store.
+  // Can't restart the bridge process (external) — that's still on you.
+  async resetWebmcpChannel(id = 'default') {
+    const lab = document.getElementById('set-webmcp-state');
+    const h = (this._webmcpFsHandles || {})[id] || (this.webmcp ? await loadHandle(this.webmcp.fsHandleKey(id)).catch(() => null) : null);
+    if (!h) { if (lab) lab.textContent = 'no folder mounted for this channel to reset'; return; }
+    try { await h.removeEntry('bridge.live'); } catch { /* already gone */ }
+    try {
+      const s = await h.getDirectoryHandle('sessions');
+      const names = []; for await (const [n] of s.entries()) names.push(n);
+      for (const n of names) { try { await s.removeEntry(n, { recursive: true }); } catch { /* skip */ } }
+    } catch { /* no sessions dir */ }
+    try { if (this.webmcp && this.webmcp.disconnectFolder) this.webmcp.disconnectFolder(id); } catch { /* wasn't connected */ }
+    const tok = (this.webmcp && this.webmcp.storedFs && this.webmcp.storedFs(id)) || '';
+    try { if (tok) this.webmcp.connectFolder(h, tok, { id }); else if (lab) lab.textContent = 'reset done — paste the folder token + connect'; }
+    catch (e) { if (lab) lab.textContent = e.message; }
+    this.renderWebmcpChannels();
   }
 
   toggleWebmcp() {

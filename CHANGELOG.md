@@ -6,6 +6,28 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Connection resilience — honest "bridge offline" status + channel reset — 2026-06-23
+
+- After weir OOM'd, its `numen` bridge process died and `bridge.live` went stale, but weir
+  sat at **"connecting" forever** — no signal that the bridge was actually down. Now weir reads
+  each fs channel's `bridge.live` `ts` via its folder handle and, when the heartbeat is
+  stale/absent (> 90 s, mirroring the fs-channel's `LIVENESS_MS`), shows **"bridge down — last
+  seen 24h ago; restart it"** (and a `mcp off` footer chip) instead of optimistic "connecting".
+  It re-checks while dialing so the status flips once past the staleness window and recovers
+  when the bridge returns.
+- **"reset" button** per fs channel (Settings → connections): prunes the dead bridge's transport
+  scratch — a stale `bridge.live` + orphan `sessions/` dirs — via the folder handle, then re-dials.
+  Touches only the exchange folder's transport files, never the data store; can't restart the
+  bridge process itself (external). `app._bridgeLiveness` / `resetWebmcpChannel`.
+- The deeper fix **shipped in `@gcu/numen` + re-vendored**: the fs-channel now emits a distinct
+  **`offline`** state when `bridge.live` is stale (> `LIVENESS_MS`) instead of collapsing it into
+  `connecting`, and the shim surfaces it per channel (auto-recovers to `open` when the bridge
+  heartbeats again). Every consumer (weir, Auditable, …) gets the honest state without
+  duplicating the heartbeat read; weir can later drop its own `bridge.live` poll and just render
+  the channel state. (numen test: `tools/smoke-fs-offline.mjs`. Deferred there: deleting
+  `bridge.live` on the bridge's *clean* exit — low value, since a crash can't, and the staleness
+  check already covers that.)
+
 ### `recatalog` safe-by-default — preserves authored cards — 2026-06-22
 
 - **`uncatalogScope`/`recatalog` now PRESERVE hand-authored / human-reviewed cards** (any card
