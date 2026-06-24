@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Storage — re-vendor `@gcu/vfs` 0.4.0 (FSA directory-handle cache) — 2026-06-24
+
+- Re-vendored `vfs.js` from `auditable@cf3b684` (0.3.0→0.4.0). `HandleBackend` now **caches
+  directory handles** (walks only from the deepest cached ancestor; invalidates on rmdir/rename;
+  stale-handle safe) and trims redundant resolves (`writeFile` resolves the parent once; `stat`
+  probes file-then-dir on one parent; `unlink`/`rmdir` type-check against the parent). On Android
+  each `getDirectoryHandle` is a SAF IPC, so an FSA-folder store dragged on DeX (both weir + Auditable);
+  this collapses per-op walks to one-per-directory. Mostly helps **desktop/DeX FSA + Auditable** —
+  weir keeps the mobile store on IndexedDB. Spec: `auditable/spec_inbox/vfs-handle-cache-spec.md`.
+  Full smoke green on the new bundle.
+
 ### Sync — reader can't clobber the hub (safe by construction) + clear-a-folder — 2026-06-24
 
 - **A `reader` now pushes ONLY its own deltas (notes, `/stacks/`), never corpus.** The roles model
