@@ -223,39 +223,43 @@ assert.equal(syncShouldScan({ rev: 5, lastRev: 5, cycle: 3, forceEvery: 10, forc
   assert.equal(JSON.parse(await read(local, MANIFEST)).cursor, 'cTree', 'cursor came from listTree — no separate latestCursor call');
 }
 {
-  // push via writeFiles — changed files committed in one batch, not per-file.
-  const local = await mk();
+  // push uses per-file files/upload (NOT the backend's batch writeFiles): Dropbox upload_session
+  // isn't CORS-enabled from a browser. Even when the remote ADVERTISES writeFiles, push must not
+  // call it — assert the changed files land per-file and writeFiles is left untouched.
+  const local = await mk(); const remote = await mk();
   await write(local, '/items/x.ndjson', '{"id":"x"}');
   await write(local, '/feeds/y.json', '{"id":"y"}');
   await write(local, MANIFEST, JSON.stringify({ files: {} }));
-  let batched = null;
-  const be = { writeFiles: async (files) => { batched = files.map((f) => f.path).sort(); return { committed: files.length }; } };
-  const r = await new SyncEngine({ local, remote: { resolve: () => ({ backend: be }) } }).push();
-  assert.equal(r.pushed, 2, 'push committed both changed files via writeFiles');
-  assert.deepEqual(batched, ['/feeds/y.json', '/items/x.ndjson'], 'writeFiles received the changed files in one batch (manifest excluded)');
+  let batchCalled = false;
+  remote.resolve('/').backend.writeFiles = async () => { batchCalled = true; };   // tempt push to batch
+  const r = await new SyncEngine({ local, remote }).push();
+  assert.equal(r.pushed, 2, 'push uploaded both changed files');
+  assert.equal(batchCalled, false, 'push did NOT use remote.writeFiles (upload_session is CORS-blocked)');
+  assert.equal(await read(remote, '/items/x.ndjson'), '{"id":"x"}', 'file uploaded per-file (files/upload)');
 }
 
 // ── reader role: push uploads ONLY its own deltas (notes), never corpus — safe by construction ──
+// (push is per-file files/upload, so we assert by what lands in the remote, not via a writeFiles spy.)
 {
-  const local = await mk();
+  const local = await mk(); const remote = await mk();
   await write(local, '/items/x.ndjson', '{"id":"x"}');       // corpus — a reader must NOT push this
   await write(local, '/feeds/f.json', '{"id":"f"}');          // corpus
   await write(local, '/stacks/inbox/note.md', '# my note');   // reader delta — OK to push
   await write(local, MANIFEST, JSON.stringify({ files: {} }));
-  const pushedPaths = [];
-  const be = { writeFiles: async (files) => { files.forEach((f) => pushedPaths.push(f.path)); return { committed: files.length }; } };
-  const r = await new SyncEngine({ local, remote: { resolve: () => ({ backend: be }) }, role: 'reader' }).push();
-  assert.deepEqual(pushedPaths.sort(), ['/stacks/inbox/note.md'], 'reader pushed only its note, not the corpus files');
+  const r = await new SyncEngine({ local, remote, role: 'reader' }).push();
   assert.equal(r.heldForRole, 2, 'reader held back the 2 corpus files (cannot clobber the hub)');
+  assert.equal(await read(remote, '/stacks/inbox/note.md'), '# my note', 'reader pushed its note');
+  assert.equal(await read(remote, '/items/x.ndjson'), null, 'reader did NOT push the corpus item shard');
+  assert.equal(await read(remote, '/feeds/f.json'), null, 'reader did NOT push the corpus feed');
   // a hub pushes everything
-  const local2 = await mk();
+  const local2 = await mk(); const remote2 = await mk();
   await write(local2, '/items/x.ndjson', '{"id":"x"}');
   await write(local2, '/stacks/inbox/n.md', '# n');
   await write(local2, MANIFEST, JSON.stringify({ files: {} }));
-  const hubPaths = [];
-  const r2 = await new SyncEngine({ local: local2, remote: { resolve: () => ({ backend: { writeFiles: async (f) => { f.forEach((x) => hubPaths.push(x.path)); return {}; } } }) }, role: 'hub' }).push();
+  const r2 = await new SyncEngine({ local: local2, remote: remote2, role: 'hub' }).push();
   assert.equal(r2.heldForRole, 0, 'hub holds nothing back');
-  assert.equal(hubPaths.length, 2, 'hub pushes corpus + notes');
+  assert.equal(await read(remote2, '/items/x.ndjson'), '{"id":"x"}', 'hub pushed the corpus');
+  assert.equal(await read(remote2, '/stacks/inbox/n.md'), '# n', 'hub pushed the note');
 }
 
 // ── bootstrap batches LOCAL writes via the local backend's writeFiles (IDB on the phone) ──

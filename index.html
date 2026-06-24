@@ -15886,29 +15886,19 @@ class SyncEngine {
     }
     let pushed = 0; const paths = [];
     this._progress('push', 0, toUpload.length);
-    const be = this._remoteBackend();
-    if (be && typeof be.writeFiles === 'function' && toUpload.length) {
-      // Fast path: commit in chunks via the backend's batch upload (Dropbox finish_batch) — far
-      // fewer write-lock conflicts than per-file uploads, and it handles 429/Retry-After itself.
-      const CHUNK = 900;   // Dropbox finish_batch caps at 1000 entries/call
-      for (let i = 0; i < toUpload.length; i += CHUNK) {
-        const chunk = toUpload.slice(i, i + CHUNK);
-        const files = await Promise.all(chunk.map(async ({ p }) => ({ path: p, content: await this.local.readFile(p, 'bytes') })));
-        await be.writeFiles(files);
-        for (const { p, sig } of chunk) { man.files[p] = sig; pushed++; if (paths.length < 100) paths.push(p); }
-        await this._saveManifest();   // checkpoint per batch → resumable
-        this._progress('push', pushed, toUpload.length);
-      }
-    } else {
-      await syncPool(toUpload, Math.min(this.concurrency, PUSH_CONCURRENCY), async ({ p, sig }) => {
-        const data = await this.local.readFile(p, 'bytes');
-        await syncEnsureParent(this.remote, p);
-        await syncRetry(() => this.remote.writeFile(p, data));
-        man.files[p] = sig; pushed++; if (paths.length < 100) paths.push(p);   // sample for the activity readout
-        if (pushed % CHECKPOINT === 0) await this._saveManifest();
-        if (pushed % PROGRESS_EVERY === 0 || pushed === toUpload.length) this._progress('push', pushed, toUpload.length);
-      });
-    }
+    // Per-file `files/upload` (NOT the backend's batch `writeFiles`). Dropbox's `upload_session/*`
+    // content endpoints are NOT CORS-enabled, so `writeFiles` (finish_batch) fails from a browser
+    // ("No Access-Control-Allow-Origin"); `files/upload` IS CORS-enabled. The throttle that batching
+    // was meant to dodge (too_many_write_operations) is now ridden out by the backend's 429/
+    // Retry-After backoff in `_send` (vfs 0.3.0), so per-file at low concurrency is correct + resilient.
+    await syncPool(toUpload, Math.min(this.concurrency, PUSH_CONCURRENCY), async ({ p, sig }) => {
+      const data = await this.local.readFile(p, 'bytes');
+      await syncEnsureParent(this.remote, p);
+      await syncRetry(() => this.remote.writeFile(p, data));
+      man.files[p] = sig; pushed++; if (paths.length < 100) paths.push(p);   // sample for the activity readout
+      if (pushed % CHECKPOINT === 0) await this._saveManifest();
+      if (pushed % PROGRESS_EVERY === 0 || pushed === toUpload.length) this._progress('push', pushed, toUpload.length);
+    });
     await this._saveManifest();
     return { pushed, skipped: scanned - toUpload.length, scanned, heldForRole, paths };
   }
@@ -25421,7 +25411,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'b2b8674';          // short content hash of the bundle (build id)
+const COMMIT = 'f0bf742';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

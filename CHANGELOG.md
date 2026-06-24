@@ -6,6 +6,18 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — fix: push reverts to per-file upload (Dropbox `upload_session` is CORS-blocked) — 2026-06-24
+
+- **Push was broken from the browser.** The batched-push path called the backend's `writeFiles`,
+  which uses Dropbox `upload_session/finish_batch` — and those content endpoints are **not
+  CORS-enabled**, so the browser got `No 'Access-Control-Allow-Origin'` → `Failed to fetch` on every
+  upload. Reverted push to **per-file `files/upload`** (which *is* CORS-enabled). The throttle that
+  batching was meant to avoid (`too_many_write_operations`) is now ridden out by the backend's
+  429/`Retry-After` backoff (vfs 0.3.0 `_send`), so per-file at low concurrency is correct + resilient.
+  (Pull's *local* `writeFiles` batching is unaffected — IDB, no network/CORS.) Build f0bf742.
+- Upstream: `@gcu/vfs` `DropboxBackend.writeFiles` is browser-unusable as written (upload_session);
+  noted to auditable to reimplement it over parallel `files/upload`.
+
 ### Documents — v0 spike: pdf.js vendored as a sibling + text extraction — 2026-06-24
 
 - First slice of SPEC-documents (PDF/EPUB as first-class corpus). **pdf.js (`pdfjs-dist@6.0.227`,
