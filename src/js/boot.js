@@ -303,6 +303,27 @@ async function boot() {
       console.log('[pdf] page 1 preview:', r.pages[0]?.text.slice(0, 400));
       return r;
     },
+    // Dropbox upload CORS diagnostic: upload tiny files 3 ways to pinpoint the failure.
+    // A CORS-blocked fetch THROWS ("Failed to fetch"); a readable one resolves with a status + ACAO.
+    // So: ascii-ok? non-ascii-raw fails? non-ascii-ESCAPED ok? → tells us if it's the Dropbox-API-Arg
+    // ASCII-escaping bug (the hypothesis) or a deeper/fundamental content-endpoint CORS problem.
+    dbxDiag: async () => {
+      const tok = await getDropboxToken();
+      if (!tok) { console.log('[dbxDiag] not connected'); return; }
+      const esc = (s) => { let o = ''; for (let i = 0; i < s.length; i++) { const cc = s.charCodeAt(i); o += cc > 127 ? String.fromCharCode(92) + 'u' + cc.toString(16).padStart(4, '0') : s[i]; } return o; };
+      const up = async (label, path, escape) => {
+        let arg = JSON.stringify({ path, mode: 'overwrite', mute: true });
+        if (escape) arg = esc(arg);
+        try {
+          const r = await fetch('https://content.dropboxapi.com/2/files/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Dropbox-API-Arg': arg, 'Content-Type': 'application/octet-stream' }, body: new TextEncoder().encode('diag') });
+          console.log(`[dbxDiag] ${label}: ${r.status} ${r.ok ? 'OK' : 'ERR'} · ACAO=${r.headers.get('access-control-allow-origin') || '(none)'}`);
+        } catch (e) { console.log(`[dbxDiag] ${label}: THREW ${e.name}: ${e.message}  ← CORS-blocked / failed to send`); }
+      };
+      await up('ascii path, raw arg', '/weir/diag/ascii.txt', false);
+      await up('unicode path, RAW arg', '/weir/diag/café-ção.txt', false);
+      await up('unicode path, ESCAPED arg', '/weir/diag/café-ção.txt', true);
+      console.log('[dbxDiag] done — if "ascii…raw" works but "unicode…RAW" throws and "unicode…ESCAPED" works → it is the Dropbox-API-Arg escaping bug.');
+    },
     catalogItemLLM: async (id, o = {}) => {
       const s = store.getSettings();
       const provider = o.provider || s.catalog_provider || 'ollama';
