@@ -3,7 +3,7 @@
 // device-local excludes, are idempotent, and round-trip content. Run: node tools/smoke-sync.mjs
 import assert from 'node:assert';
 import { VFS } from '../vendor/vfs.js';
-import { SyncEngine, syncCollectPaths, syncRetry } from '../src/js/sync.js';
+import { SyncEngine, syncCollectPaths, syncRetry, syncShouldScan } from '../src/js/sync.js';
 import { Store } from '../src/js/store/store.js';
 
 const mk = () => VFS.create({ type: 'memory' });
@@ -145,6 +145,28 @@ assert.equal(JSON.parse(await read(inLocal, MANIFEST)).cursor, 'c1', 'cursor adv
   assert.ok(w2[0] < 1000, 'a non-throttle error keeps the quick sub-second first backoff');
 
   await assert.rejects(syncRetry(async () => { throw new Error('429 too_many_requests'); }, 3, async () => {}), /too_many/, 'rethrows after exhausting tries');
+}
+
+// ── scan-skip decision: don't re-walk the whole tree every cycle. Skip when clean (rev
+// unchanged, off a force cycle); scan when local changed, forced, or on the periodic safety net. ──
+assert.equal(syncShouldScan({ rev: 5, lastRev: 5, cycle: 1, forceEvery: 10 }), false, 'clean + off-cycle → skip the FS scan');
+assert.equal(syncShouldScan({ rev: 6, lastRev: 5, cycle: 1, forceEvery: 10 }), true, 'local changed (rev advanced) → scan');
+assert.equal(syncShouldScan({ rev: 5, lastRev: 5, cycle: 10, forceEvery: 10 }), true, 'safety-net cycle (10 % 10) → scan even when clean');
+assert.equal(syncShouldScan({ rev: 5, lastRev: undefined, cycle: 3, forceEvery: 10 }), true, 'first push (no lastRev) → scan');
+assert.equal(syncShouldScan({ rev: 5, lastRev: 5, cycle: 3, forceEvery: 10, force: true }), true, 'manual force → scan');
+
+// ── mutation counter: flush-with-writes bumps it (corpus path); a no-op flush does not. (Notes
+// bypass flush and bump via store.touchSync from stacks — covered in smoke-stacks.) ──
+{
+  const s = new Store(await mk()); await s._hydrate();
+  const m0 = s._mutations;
+  await s.putFeed({ id: 'f', name: 'F', adapter: 'feed', url: 'http://f' });
+  await s.upsertItems([{ id: 'f:1', feed_id: 'f', type: 'article', title: 'hi', excerpt: 'x' }]);
+  await s.flush();
+  assert.ok(s._mutations > m0, 'flush with writes bumps the mutation counter');
+  const m1 = s._mutations;
+  await s.flush();
+  assert.equal(s._mutations, m1, 'a no-op flush does NOT bump (so idle cycles skip the scan)');
 }
 
 console.log('sync (engine mirror) smoke ok');

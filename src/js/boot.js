@@ -17,7 +17,7 @@ import { SearchIndex } from './search.js';
 import { initWebmcp } from './webmcp.js';
 import { getKey } from './llmkeys.js';
 import { handleDropboxRedirect, connectDropbox, disconnectDropbox, dropboxConnected, getDropboxToken, makeDropboxRemote } from './dropbox.js';
-import { SyncEngine } from './sync.js';
+import { SyncEngine, syncShouldScan } from './sync.js';
 import { TelegramInflux } from './telegram.js';
 import { StacksStore } from './stacks.js';
 import { Courier, DEFAULT_COURIER } from './courier.js';
@@ -254,14 +254,20 @@ async function boot() {
     syncEngine = new SyncEngine({ local: store.vfs, remote: await makeDropboxRemote(), store, onProgress: (p) => app.renderSyncStatus('syncing', p) });
     return syncEngine;
   }
-  app.syncNow = async () => {
+  app._syncCycle = 0;          // counts auto ticks → periodic forced full scan (safety net)
+  app.syncNow = async (opts = {}) => {
     const eng = await ensureSyncEngine();
     if (!eng) return { skipped: 'not connected' };
     app.renderSyncStatus?.('syncing');
     try {
       await store.flush();                  // persist in-memory changes before they mirror
-      const pushed = await eng.push();       // local → GCU-sync
-      const pulled = await eng.pull();       // GCU-sync → local (+ store.reload on changes)
+      // Skip the full local re-scan when nothing changed since last push (don't hammer the FS
+      // every cycle); a forced scan every 10th cycle is the safety net. Manual sync → force.
+      const rev = store._mutations || 0;
+      const scan = syncShouldScan({ rev, lastRev: app._lastPushRev, cycle: app._syncCycle++, forceEvery: 10, force: !!opts.force });
+      const pushed = scan ? await eng.push() : { pushed: 0, skipped: 0, scanned: 0, clean: true };
+      if (scan) app._lastPushRev = rev;
+      const pulled = await eng.pull();       // GCU-sync → local (+ store.reload on changes) — cheap (cursor delta), always run
       app.renderStream?.(); app.renderCounts?.();
       app.renderSyncStatus?.('idle');
       return { pushed, pulled };

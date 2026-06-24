@@ -18,8 +18,10 @@ assert.ok(store.getFeed('stacks'), 'stacks feed registered');
 assert.equal(store.getFeed('stacks').adapter, 'stacks');
 
 // ── writeNote: item shape, content_path, body round-trip ──
+const _mBefore = store._mutations;
 const note = await stacks.writeNote({ title: 'Huffman coding', markdown: '# Huffman coding\n\nA *greedy* prefix code.', tags: ['cs', 'algorithms'] });
 assert.ok(note.id.startsWith('stacks:'), 'id is stacks:<uid>');
+assert.ok(store._mutations > _mBefore, 'a note write bumps the sync mutation counter (notes bypass flush)');
 assert.equal(note.id, `stacks:${note.uid}`, 'id pairs to uid');
 assert.equal(note.type, 'note');
 assert.equal(note.feed_id, 'stacks');

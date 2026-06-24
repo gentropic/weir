@@ -46,6 +46,7 @@ export class Store {
     this._dirtyContent = new Set();   // feedIds whose content pack needs a rewrite
     this._contentLRU = [];            // feedIds in load order, for cache eviction
     this._archivedDirty = false;
+    this._mutations = 0;             // monotonic local-change counter — lets sync skip the full FS re-scan when nothing changed (bumped by flush + direct synced-file writes like notes)
     this._ensured = new Set();       // dirs already mkdir'd
     this._listeners = new Map();
     this._flushTimer = null;
@@ -1086,8 +1087,13 @@ export class Store {
     if (this._flushTimer && typeof this._flushTimer.unref === 'function') this._flushTimer.unref();
   }
 
+  // Mark that a synced file changed locally — bumps the monotonic counter sync reads to decide
+  // whether a full FS re-scan is needed. Called by flush() (corpus) + direct writers (notes).
+  touchSync() { this._mutations++; }
+
   async flush() {
     if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
+    const wrote = this._dirtyFeeds.size || this._dirtyCards.size || this._dirtyVocab.size || this._dirtyContent.size || this._archivedDirty;
     for (const fid of this._dirtyFeeds) await this._writeShard(fid);
     this._dirtyFeeds.clear();
     for (const b of this._dirtyCards) await this._writeCardShard(b);
@@ -1100,6 +1106,7 @@ export class Store {
       await this.vfs.writeFile('/archived_index.ndjson', this.tombstones.map((t) => JSON.stringify(t)).join('\n'));
       this._archivedDirty = false;
     }
+    if (wrote) this.touchSync();
   }
 
   async _writeShard(feedId) {

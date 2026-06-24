@@ -88,6 +88,14 @@ async function syncPool(items, concurrency, fn) {
   return done;
 }
 
+// Decide whether a push needs the full local FS re-scan. Skip it when nothing changed locally
+// since the last push (rev unchanged) — avoids walking/statting the whole tree every cycle (the
+// FS-hammer / AV smell). A periodic forced scan (every `forceEvery` cycles) is the safety net for
+// any write path the mutation counter doesn't cover, so correctness never depends on it.
+function syncShouldScan({ rev, lastRev, cycle = 0, forceEvery = 10, force = false }) {
+  return !!force || rev !== lastRev || (cycle % forceEvery === 0);
+}
+
 // retry with backoff — Dropbox throttles a burst with 429s (surfaced as EIO by the backend).
 // Dropbox throttles WRITES hard (too_many_write_operations / 429) on a big first push, and the
 // backend surfaces it only as an error message (no Retry-After), so detect it and back off
@@ -239,4 +247,4 @@ class SyncEngine {
   }
 }
 
-export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, syncIsRateLimit, SYNC_EXCLUDE };
+export { SyncEngine, syncCollectPaths, syncCopyIfDiffer, syncListTree, syncBytesEqual, syncPool, syncRetry, syncIsRateLimit, syncShouldScan, SYNC_EXCLUDE };

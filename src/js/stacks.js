@@ -130,6 +130,7 @@ export class StacksStore {
     const dir = this._dirname(abs);
     if (dir) await this.vfs.mkdir(dir, { recursive: true });
     await this.vfs.writeFile(abs, String(text));
+    this.store.touchSync?.();   // notes write straight to the VFS (bypass flush) — count it so sync re-scans
   }
 
   // ── setup ──

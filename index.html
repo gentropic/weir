@@ -12556,6 +12556,7 @@ class Store {
     this._dirtyContent = new Set();   // feedIds whose content pack needs a rewrite
     this._contentLRU = [];            // feedIds in load order, for cache eviction
     this._archivedDirty = false;
+    this._mutations = 0;             // monotonic local-change counter — lets sync skip the full FS re-scan when nothing changed (bumped by flush + direct synced-file writes like notes)
     this._ensured = new Set();       // dirs already mkdir'd
     this._listeners = new Map();
     this._flushTimer = null;
@@ -13596,8 +13597,13 @@ class Store {
     if (this._flushTimer && typeof this._flushTimer.unref === 'function') this._flushTimer.unref();
   }
 
+  // Mark that a synced file changed locally — bumps the monotonic counter sync reads to decide
+  // whether a full FS re-scan is needed. Called by flush() (corpus) + direct writers (notes).
+  touchSync() { this._mutations++; }
+
   async flush() {
     if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
+    const wrote = this._dirtyFeeds.size || this._dirtyCards.size || this._dirtyVocab.size || this._dirtyContent.size || this._archivedDirty;
     for (const fid of this._dirtyFeeds) await this._writeShard(fid);
     this._dirtyFeeds.clear();
     for (const b of this._dirtyCards) await this._writeCardShard(b);
@@ -13610,6 +13616,7 @@ class Store {
       await this.vfs.writeFile('/archived_index.ndjson', this.tombstones.map((t) => JSON.stringify(t)).join('\n'));
       this._archivedDirty = false;
     }
+    if (wrote) this.touchSync();
   }
 
   async _writeShard(feedId) {
@@ -14384,6 +14391,7 @@ class StacksStore {
     const dir = this._dirname(abs);
     if (dir) await this.vfs.mkdir(dir, { recursive: true });
     await this.vfs.writeFile(abs, String(text));
+    this.store.touchSync?.();   // notes write straight to the VFS (bypass flush) — count it so sync re-scans
   }
 
   // ── setup ──
@@ -15167,6 +15175,14 @@ async function syncPool(items, concurrency, fn) {
   const worker = async () => { while (i < items.length) { const idx = i++; await fn(items[idx], idx); done++; } };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, worker));
   return done;
+}
+
+// Decide whether a push needs the full local FS re-scan. Skip it when nothing changed locally
+// since the last push (rev unchanged) — avoids walking/statting the whole tree every cycle (the
+// FS-hammer / AV smell). A periodic forced scan (every `forceEvery` cycles) is the safety net for
+// any write path the mutation counter doesn't cover, so correctness never depends on it.
+function syncShouldScan({ rev, lastRev, cycle = 0, forceEvery = 10, force = false }) {
+  return !!force || rev !== lastRev || (cycle % forceEvery === 0);
 }
 
 // retry with backoff — Dropbox throttles a burst with 429s (surfaced as EIO by the backend).
@@ -18393,9 +18409,16 @@ class App {
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
     document.getElementById('set-sync-toggle')?.addEventListener('click', () => this.toggleSync());
+    // role + auto are per-device — persist on CHANGE, not only on a full settings save: connecting
+    // does a PKCE redirect (page reload) that would otherwise discard an unsaved role pick → reset to hub.
+    document.getElementById('set-sync-role')?.addEventListener('change', async (e) => {
+      await this.store.setSettings({ sync_role: e.target.value || 'hub' });
+      const el = document.getElementById('set-sync-msg'); if (el) el.textContent = `role saved: ${e.target.value} — takes effect on reload`;
+    });
+    document.getElementById('set-sync-auto')?.addEventListener('change', (e) => this.store.setSettings({ sync_auto: !!e.target.checked }));
     document.getElementById('set-sync-now')?.addEventListener('click', async () => {
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'syncing…';
-      try { const r = await this.syncNow?.(); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
+      try { const r = await this.syncNow?.({ force: true }); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
       catch (e) { if (el) el.textContent = 'error: ' + e.message; }
     });
     document.getElementById('set-sync-reset')?.addEventListener('click', async () => {
@@ -24568,7 +24591,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '9835960';          // short content hash of the bundle (build id)
+const COMMIT = 'c923142';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -24791,14 +24814,20 @@ async function boot() {
     syncEngine = new SyncEngine({ local: store.vfs, remote: await makeDropboxRemote(), store, onProgress: (p) => app.renderSyncStatus('syncing', p) });
     return syncEngine;
   }
-  app.syncNow = async () => {
+  app._syncCycle = 0;          // counts auto ticks → periodic forced full scan (safety net)
+  app.syncNow = async (opts = {}) => {
     const eng = await ensureSyncEngine();
     if (!eng) return { skipped: 'not connected' };
     app.renderSyncStatus?.('syncing');
     try {
       await store.flush();                  // persist in-memory changes before they mirror
-      const pushed = await eng.push();       // local → GCU-sync
-      const pulled = await eng.pull();       // GCU-sync → local (+ store.reload on changes)
+      // Skip the full local re-scan when nothing changed since last push (don't hammer the FS
+      // every cycle); a forced scan every 10th cycle is the safety net. Manual sync → force.
+      const rev = store._mutations || 0;
+      const scan = syncShouldScan({ rev, lastRev: app._lastPushRev, cycle: app._syncCycle++, forceEvery: 10, force: !!opts.force });
+      const pushed = scan ? await eng.push() : { pushed: 0, skipped: 0, scanned: 0, clean: true };
+      if (scan) app._lastPushRev = rev;
+      const pulled = await eng.pull();       // GCU-sync → local (+ store.reload on changes) — cheap (cursor delta), always run
       app.renderStream?.(); app.renderCounts?.();
       app.renderSyncStatus?.('idle');
       return { pushed, pulled };

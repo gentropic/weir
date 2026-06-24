@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — role sticks on connect + stop re-scanning the FS every idle cycle — 2026-06-23
+
+- **Role no longer resets to `hub` after connecting.** `sync_role` was only persisted in the
+  full settings-save, but connecting Dropbox does a PKCE redirect (page reload) that discarded an
+  unsaved role pick → a tablet set to `reader` came back as `hub`. The role select (and the
+  auto-sync checkbox) now **persist immediately on change**, surviving the OAuth redirect.
+- **Auto-sync skips the full local FS re-scan when nothing changed.** Push walked + statted the
+  whole tree (~1.5k files) every 120 s even when idle — an FS hammer (AV smell / poor citizen).
+  Now the store keeps a monotonic mutation counter (`_mutations`, bumped by `flush` for corpus
+  writes and by `store.touchSync()` on note writes, which bypass flush), and `syncShouldScan`
+  skips the scan when the counter is unchanged since the last push. A **forced full scan every
+  10th cycle** is the safety net, so correctness never depends on complete counter coverage; a
+  manual "sync now" always forces. Tests: `tools/smoke-sync.mjs`, `tools/smoke-stacks.mjs`.
+
 ### Dropbox sync — survive the write rate-limit on a big first push — 2026-06-23
 
 - The first full push of a large corpus (~1.5k files) tripped Dropbox's

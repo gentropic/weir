@@ -205,9 +205,16 @@ export class App {
     document.getElementById('set-cat-clear')?.addEventListener('click', () => this.clearCatalog());
     document.getElementById('set-webmcp-toggle')?.addEventListener('click', () => this.toggleWebmcp());
     document.getElementById('set-sync-toggle')?.addEventListener('click', () => this.toggleSync());
+    // role + auto are per-device — persist on CHANGE, not only on a full settings save: connecting
+    // does a PKCE redirect (page reload) that would otherwise discard an unsaved role pick → reset to hub.
+    document.getElementById('set-sync-role')?.addEventListener('change', async (e) => {
+      await this.store.setSettings({ sync_role: e.target.value || 'hub' });
+      const el = document.getElementById('set-sync-msg'); if (el) el.textContent = `role saved: ${e.target.value} — takes effect on reload`;
+    });
+    document.getElementById('set-sync-auto')?.addEventListener('change', (e) => this.store.setSettings({ sync_auto: !!e.target.checked }));
     document.getElementById('set-sync-now')?.addEventListener('click', async () => {
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'syncing…';
-      try { const r = await this.syncNow?.(); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
+      try { const r = await this.syncNow?.({ force: true }); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
       catch (e) { if (el) el.textContent = 'error: ' + e.message; }
     });
     document.getElementById('set-sync-reset')?.addEventListener('click', async () => {
