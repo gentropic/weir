@@ -198,4 +198,41 @@ assert.equal(syncShouldScan({ rev: 5, lastRev: 5, cycle: 3, forceEvery: 10, forc
   assert.equal(syncSummarize([]).total, 0, 'empty → zero, no throw');
 }
 
+// ── fast paths (vfs 0.3.0): listTree bootstrap + writeFiles batch push ──
+{
+  // bootstrap via listTree — ONE sweep returns entries + cursor; fetch only the missing files.
+  const local = await mk();
+  await write(local, MANIFEST, JSON.stringify({ files: {} }));   // fresh reader, no cursor → bootstrap
+  let listTreeCalls = 0;
+  const be = {
+    changes: async () => ({ entries: [], cursor: 'c', has_more: false }),   // present → bootstrap mode (not full-mirror)
+    latestCursor: async () => 'cFallback',
+    listTree: async () => { listTreeCalls++; return { cursor: 'cTree', entries: [
+      { path: '/items/a.ndjson', type: 'file', size: 5, contentHash: 'h1' },
+      { path: '/feeds', type: 'directory' },                       // skipped (not a file)
+      { path: '/feeds/b.json', type: 'file', size: 3, contentHash: 'h2' },
+      { path: '/sync-state.json', type: 'file', size: 9 },         // excluded — must NOT be fetched
+    ] }; },
+  };
+  const fetched = [];
+  const remote = { resolve: () => ({ backend: be }), readFile: async (p) => { fetched.push(p); return new TextEncoder().encode(p === '/items/a.ndjson' ? '{"id":"a"}' : '{"id":"b"}'); } };
+  const r = await new SyncEngine({ local, remote }).pull();
+  assert.equal(r.mode, 'bootstrap', 'no cursor → bootstrap');
+  assert.equal(listTreeCalls, 1, 'bootstrap used a single listTree sweep (no per-file stat walk)');
+  assert.deepEqual(fetched.sort(), ['/feeds/b.json', '/items/a.ndjson'], 'fetched files only (skipped the directory + the excluded manifest)');
+  assert.equal(JSON.parse(await read(local, MANIFEST)).cursor, 'cTree', 'cursor came from listTree — no separate latestCursor call');
+}
+{
+  // push via writeFiles — changed files committed in one batch, not per-file.
+  const local = await mk();
+  await write(local, '/items/x.ndjson', '{"id":"x"}');
+  await write(local, '/feeds/y.json', '{"id":"y"}');
+  await write(local, MANIFEST, JSON.stringify({ files: {} }));
+  let batched = null;
+  const be = { writeFiles: async (files) => { batched = files.map((f) => f.path).sort(); return { committed: files.length }; } };
+  const r = await new SyncEngine({ local, remote: { resolve: () => ({ backend: be }) } }).push();
+  assert.equal(r.pushed, 2, 'push committed both changed files via writeFiles');
+  assert.deepEqual(batched, ['/feeds/y.json', '/items/x.ndjson'], 'writeFiles received the changed files in one batch (manifest excluded)');
+}
+
 console.log('sync (engine mirror) smoke ok');

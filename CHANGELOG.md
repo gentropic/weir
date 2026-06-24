@@ -6,6 +6,20 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — fast bootstrap (`listTree`) + batched push (`writeFiles`) — 2026-06-24
+
+- The sync engine now *uses* the `@gcu/vfs` 0.3.0 fast paths (feature-detected, with the old paths
+  as fallback for non-Dropbox backends / tests):
+  - **Bootstrap** does ONE `be.listTree('/')` sweep — whole tree (paths + content_hash) **and** the
+    cursor in a single call — instead of `syncCollectPaths`' `readdir` + a `get_metadata` per file.
+    That's the "checking the cloud folder" **minutes → ~1 s**; it also reuses listTree's cursor
+    instead of a separate `latestCursor`.
+  - **Push** commits changed files in **batches via `be.writeFiles`** (Dropbox `finish_batch`,
+    chunked at 900) instead of per-file uploads — far gentler on the write-lock, so the first push
+    stops tripping `too_many_write_operations`. Checkpoints the manifest per batch (resumable).
+- Tests: `tools/smoke-sync.mjs` (listTree bootstrap uses one sweep + its cursor + skips
+  dirs/excluded; writeFiles batches the changed set). Closes the rewire from the 0.3.0 re-vendor.
+
 ### Sync — re-vendor `@gcu/vfs` 0.3.0 (Dropbox rate-limit citizenship) — 2026-06-24
 
 - Re-vendored `vfs.js` from `auditable@7c9e8cf` (vfs 0.2.0→0.3.0). The `DropboxBackend` now

@@ -15516,14 +15516,29 @@ class SyncEngine {
     });
     let pushed = 0; const paths = [];
     this._progress('push', 0, toUpload.length);
-    await syncPool(toUpload, Math.min(this.concurrency, PUSH_CONCURRENCY), async ({ p, sig }) => {
-      const data = await this.local.readFile(p, 'bytes');
-      await syncEnsureParent(this.remote, p);
-      await syncRetry(() => this.remote.writeFile(p, data));
-      man.files[p] = sig; pushed++; if (paths.length < 100) paths.push(p);   // sample for the activity readout
-      if (pushed % CHECKPOINT === 0) await this._saveManifest();
-      if (pushed % PROGRESS_EVERY === 0 || pushed === toUpload.length) this._progress('push', pushed, toUpload.length);
-    });
+    const be = this._remoteBackend();
+    if (be && typeof be.writeFiles === 'function' && toUpload.length) {
+      // Fast path: commit in chunks via the backend's batch upload (Dropbox finish_batch) — far
+      // fewer write-lock conflicts than per-file uploads, and it handles 429/Retry-After itself.
+      const CHUNK = 900;   // Dropbox finish_batch caps at 1000 entries/call
+      for (let i = 0; i < toUpload.length; i += CHUNK) {
+        const chunk = toUpload.slice(i, i + CHUNK);
+        const files = await Promise.all(chunk.map(async ({ p }) => ({ path: p, content: await this.local.readFile(p, 'bytes') })));
+        await be.writeFiles(files);
+        for (const { p, sig } of chunk) { man.files[p] = sig; pushed++; if (paths.length < 100) paths.push(p); }
+        await this._saveManifest();   // checkpoint per batch → resumable
+        this._progress('push', pushed, toUpload.length);
+      }
+    } else {
+      await syncPool(toUpload, Math.min(this.concurrency, PUSH_CONCURRENCY), async ({ p, sig }) => {
+        const data = await this.local.readFile(p, 'bytes');
+        await syncEnsureParent(this.remote, p);
+        await syncRetry(() => this.remote.writeFile(p, data));
+        man.files[p] = sig; pushed++; if (paths.length < 100) paths.push(p);   // sample for the activity readout
+        if (pushed % CHECKPOINT === 0) await this._saveManifest();
+        if (pushed % PROGRESS_EVERY === 0 || pushed === toUpload.length) this._progress('push', pushed, toUpload.length);
+      });
+    }
     await this._saveManifest();
     return { pushed, skipped: scanned - toUpload.length, scanned, paths };
   }
@@ -15577,23 +15592,33 @@ class SyncEngine {
   // hub that just pushed everything downloads nothing — they're all in the manifest), then
   // capture the cursor so every later pull is an incremental delta.
   async _bootstrapPull(man, be) {
-    this._progress('scan-remote', 0, 0);   // walking the remote tree (Dropbox list calls) can take a moment
-    const paths = (await syncCollectPaths(this.remote)).filter((p) => !man.files[p]);
+    this._progress('scan-remote', 0, 0);   // listing the remote tree can take a moment
+    // Fast path: ONE recursive listTree sweep yields the whole tree (paths + content_hash) AND the
+    // cursor — vs syncCollectPaths' readdir + per-file stat walk (~1 get_metadata per file, the
+    // minutes-long "checking the cloud folder"). Falls back for backends without listTree.
+    let toFetch, treeCursor = null;
+    if (typeof be.listTree === 'function') {
+      const tree = await be.listTree('/');
+      treeCursor = tree.cursor;
+      toFetch = (tree.entries || []).filter((e) => e.type === 'file' && !syncExcluded(e.path) && !man.files[e.path]).map((e) => e.path);
+    } else {
+      toFetch = (await syncCollectPaths(this.remote)).filter((p) => !man.files[p]);
+    }
     let pulled = 0;
-    this._progress('pull-first', 0, paths.length);
-    await syncPool(paths, this.concurrency, async (p) => {
+    this._progress('pull-first', 0, toFetch.length);
+    await syncPool(toFetch, this.concurrency, async (p) => {
       const data = await syncRetry(() => this.remote.readFile(p, 'bytes'));
       await syncEnsureParent(this.local, p);
       await this.local.writeFile(p, data);
       try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ }
       pulled++;
       if (pulled % CHECKPOINT === 0) await this._saveManifest();
-      if (pulled % PROGRESS_EVERY === 0 || pulled === paths.length) this._progress('pull-first', pulled, paths.length);
+      if (pulled % PROGRESS_EVERY === 0 || pulled === toFetch.length) this._progress('pull-first', pulled, toFetch.length);
     });
-    try { man.cursor = await be.latestCursor(); } catch { /* leave null — retries as bootstrap */ }
+    man.cursor = treeCursor || (await be.latestCursor().catch(() => null));   // listTree's cursor, else fall back
     await this._saveManifest();
     if (pulled && this.store && typeof this.store.reload === 'function') await this.store.reload();
-    return { pulled, scanned: paths.length, mode: 'bootstrap', paths: paths.slice(0, 100) };
+    return { pulled, scanned: toFetch.length, mode: 'bootstrap', paths: toFetch.slice(0, 100) };
   }
 
   async _fullMirrorPull(man) {
@@ -24913,7 +24938,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '1300519';          // short content hash of the bundle (build id)
+const COMMIT = '7a2d8f0';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
