@@ -1397,6 +1397,7 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
         <div class="set-row"><span>status: <b id="set-sync-state">—</b></span><button class="btn-link" id="set-sync-toggle" type="button">connect</button></div>
         <label class="set-row">role<select id="set-sync-role" class="field"><option value="hub">hub — fetches + owns the corpus</option><option value="reader">reader — no polling; read + annotate</option></select></label>
         <label class="set-row check"><input type="checkbox" id="set-sync-auto"> sync automatically in the background</label>
+        <label class="set-row check"><input type="checkbox" id="set-keepawake"> keep the screen awake (phone/tablet — stops a long first sync stalling when the screen locks)</label>
         <div class="set-row"><span id="set-sync-msg" class="hint">—</span><span><button class="btn-link" id="set-sync-reset" type="button" title="Forget what's been synced; the next sync re-scans + re-uploads everything. Use to recover if Dropbox and weir have drifted.">reset</button> &nbsp; <button class="btn-link" id="set-sync-now" type="button">sync now</button></span></div>
         <div class="hint">Mirror the corpus across your devices over a shared <code>GCU-sync</code> Dropbox app folder (<code>/Apps/GCU-sync/weir</code>). Connect once per device. The <b>hub</b> polls feeds; <b>readers</b> (e.g. a tablet) skip polling and receive the corpus via sync. Role changes take effect on reload. The first full sync of a large corpus is slow.</div>
       </section>
@@ -17364,6 +17365,26 @@ function setAutoCheck(value) {
   navigator.serviceWorker?.controller?.postMessage({ type: 'weir:set-auto-check', value: !!value });
 }
 
+// ── Screen Wake Lock — keep a phone/tablet awake during a long first sync (and optionally while
+// reading), so the screen doesn't auto-lock and stall/throttle the page. Held while ANY holder
+// wants it AND the page is visible (the API auto-releases on hide; we re-acquire when it returns). ──
+let _wakeLock = null; const _wakeHolders = new Set();
+async function _acquireWakeLock() {
+  if (!_wakeHolders.size || _wakeLock) return;
+  if (typeof navigator === 'undefined' || !navigator.wakeLock) return;
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+  try { _wakeLock = await navigator.wakeLock.request('screen'); _wakeLock.addEventListener?.('release', () => { _wakeLock = null; }); }
+  catch { /* denied (e.g. low battery) — best effort */ }
+}
+function _releaseWakeLock() { if (_wakeLock) { try { _wakeLock.release(); } catch { /* already gone */ } _wakeLock = null; } }
+// keepAwake(holder, on) — ref-counted by holder string so the sync hold + a manual toggle compose.
+function keepAwake(holder, on) {
+  if (on) _wakeHolders.add(holder); else _wakeHolders.delete(holder);
+  if (_wakeHolders.size) _acquireWakeLock(); else _releaseWakeLock();
+}
+function wakeLockSupported() { return typeof navigator !== 'undefined' && !!navigator.wakeLock; }
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _acquireWakeLock(); });
+
 // Check for a shell update. Robust to the page not currently being CONTROLLED by
 // the SW — which is a normal state for an installed PWA (a cold start, or the
 // browser evicting the idle worker), NOT "no service worker". An uncontrolled
@@ -18521,6 +18542,7 @@ class App {
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = `role saved: ${e.target.value} — takes effect on reload`;
     });
     document.getElementById('set-sync-auto')?.addEventListener('change', (e) => this.store.setSettings({ sync_auto: !!e.target.checked }));
+    document.getElementById('set-keepawake')?.addEventListener('change', (e) => { this.store.setSettings({ keep_awake: !!e.target.checked }); keepAwake('user', !!e.target.checked); });
     document.getElementById('set-sync-now')?.addEventListener('click', async () => {
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'syncing…';
       try { const r = await this.syncNow?.({ force: true }); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
@@ -21853,7 +21875,7 @@ class App {
       if (phase === 'scan-local' || phase === 'scan') txt = `checking for local changes… (${n})`;
       else if (phase === 'scan-remote') txt = 'checking the cloud folder…';
       else if (phase === 'push') txt = `uploading ${n}${of}…`;
-      else if (phase === 'pull-first') txt = `first sync — downloading ${n}${of} (one-time)…`;
+      else if (phase === 'pull-first') txt = `first sync — downloading ${n}${of}${pct != null ? ` · ${pct}%` : ''} (one-time, screen kept awake)…`;
       else txt = `downloading ${n}${of} update${n === 1 ? '' : 's'}…`;   // 'pull' = incremental
       if (msg) msg.textContent = txt;
     } else if (state === 'idle') {
@@ -22073,6 +22095,7 @@ class App {
     val('set-courier-author', s.courier_author || 'laney');
     val('set-sync-role', s.sync_role || 'hub');
     chk('set-sync-auto', s.sync_auto);
+    chk('set-keepawake', s.keep_awake);
     this.dropbox?.connected().then((c) => this.renderSyncStatus(c ? 'idle' : 'off')).catch(() => {});
     document.getElementById('settings-msg').textContent = '';
     const aff = this.store.feedsWithAffinity();
@@ -22403,6 +22426,7 @@ class App {
       courier_author: (document.getElementById('set-courier-author')?.value.trim() || 'laney').toLowerCase(),
       sync_role: document.getElementById('set-sync-role')?.value || 'hub',
       sync_auto: chk('set-sync-auto'),
+      keep_awake: chk('set-keepawake'),
     };
     await this.store.setSettings(patch);
     if (this.courier) {   // keep the live Courier config in sync; re-publish so its README/exports reflect the new identity
@@ -24721,7 +24745,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '030635e';          // short content hash of the bundle (build id)
+const COMMIT = '68daf23';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -24775,6 +24799,7 @@ async function boot() {
   }
 
   setAutoCheck(store.getSettings().auto_check_updates);   // sync the SW with the saved preference
+  keepAwake('user', store.getSettings().keep_awake);      // apply the saved "keep screen awake" preference
 
   const backendType = store.vfs.mounts()[0]?.type || '?';
   const backendLabel = backendType === 'fsaa' ? 'folder' : backendType;
@@ -24949,6 +24974,7 @@ async function boot() {
     const eng = await ensureSyncEngine();
     if (!eng) return { skipped: 'not connected' };
     app.renderSyncStatus?.('syncing');
+    keepAwake('sync', true);                 // hold the screen awake while syncing — the first (bootstrap) sync is long and must not stall when the screen would lock
     try {
       await store.flush();                  // persist in-memory changes before they mirror
       // Skip the full local re-scan when nothing changed since last push (don't hammer the FS
@@ -24968,6 +24994,7 @@ async function boot() {
       app.renderSyncStatus?.('idle');
       return { pushed, pulled };
     } catch (e) { app.renderSyncStatus?.('error'); throw e; }
+    finally { keepAwake('sync', false); }
   };
   app.syncReset = async () => {   // forget the manifest → the next sync re-scans + re-uploads everything (recover from manifest/remote drift)
     try { await store.vfs.unlink('/sync-state.json'); } catch { /* already gone */ }

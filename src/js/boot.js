@@ -10,7 +10,7 @@ import { extractArticle } from './extract.js';
 import { Retainer } from './retainer.js';
 import { FaviconFetcher } from './favicon.js';
 import { App } from './ui/app.js';
-import { initPwa, setAutoCheck } from './pwa.js';
+import { initPwa, setAutoCheck, keepAwake } from './pwa.js';
 import { loadHandle, handlePermission } from './fsmount.js';
 import { catalogStoreItem } from './cataloger.js';
 import { SearchIndex } from './search.js';
@@ -85,6 +85,7 @@ async function boot() {
   }
 
   setAutoCheck(store.getSettings().auto_check_updates);   // sync the SW with the saved preference
+  keepAwake('user', store.getSettings().keep_awake);      // apply the saved "keep screen awake" preference
 
   const backendType = store.vfs.mounts()[0]?.type || '?';
   const backendLabel = backendType === 'fsaa' ? 'folder' : backendType;
@@ -259,6 +260,7 @@ async function boot() {
     const eng = await ensureSyncEngine();
     if (!eng) return { skipped: 'not connected' };
     app.renderSyncStatus?.('syncing');
+    keepAwake('sync', true);                 // hold the screen awake while syncing — the first (bootstrap) sync is long and must not stall when the screen would lock
     try {
       await store.flush();                  // persist in-memory changes before they mirror
       // Skip the full local re-scan when nothing changed since last push (don't hammer the FS
@@ -278,6 +280,7 @@ async function boot() {
       app.renderSyncStatus?.('idle');
       return { pushed, pulled };
     } catch (e) { app.renderSyncStatus?.('error'); throw e; }
+    finally { keepAwake('sync', false); }
   };
   app.syncReset = async () => {   // forget the manifest → the next sync re-scans + re-uploads everything (recover from manifest/remote drift)
     try { await store.vfs.unlink('/sync-state.json'); } catch { /* already gone */ }

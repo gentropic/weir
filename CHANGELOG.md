@@ -6,6 +6,18 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — keep the screen awake during a sync + clearer first-sync progress — 2026-06-24
+
+- A long first (bootstrap) sync on a phone/tablet could stall when the screen auto-locked
+  (the page backgrounds + throttles). weir now **holds a screen Wake Lock while a sync is
+  running** (`keepAwake('sync', …)` around `syncNow`; auto-released when done, re-acquired when
+  the tab returns to foreground) — so the first sync survives an idle screen. Plus a manual
+  **"keep the screen awake"** toggle in Settings → connections (persisted `keep_awake`), for
+  reading sessions. Best-effort: no-ops where the Wake Lock API is unavailable.
+- **Clearer first-sync feedback:** the bootstrap line now shows a **percent** alongside the
+  count — `first sync — downloading 312/1357 · 23% (one-time, screen kept awake)…` — so you can
+  tell it's progressing, not stuck. (`pwa.js` wake-lock helper; `renderSyncStatus`.)
+
 ### Responsive — phase 0: usable on a phone (source rail → drawer) + reader spec — 2026-06-24
 
 - weir had **zero `@media` queries** — a fixed desktop layout, so a phone was useless (the 240 px

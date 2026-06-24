@@ -14,7 +14,7 @@ import { showMenu } from './menu.js';
 import { showPalette } from './palette.js';
 import { renderMarkdown } from './markdown.js';
 import { extractArticle } from '../extract.js';
-import { checkForUpdateNow, setAutoCheck } from '../pwa.js';
+import { checkForUpdateNow, setAutoCheck, keepAwake } from '../pwa.js';
 import { recoverFeed } from '../wayback.js';
 import { parseFeed } from '../adapters/feed.js';
 import { monogram } from '../favicon.js';
@@ -212,6 +212,7 @@ export class App {
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = `role saved: ${e.target.value} — takes effect on reload`;
     });
     document.getElementById('set-sync-auto')?.addEventListener('change', (e) => this.store.setSettings({ sync_auto: !!e.target.checked }));
+    document.getElementById('set-keepawake')?.addEventListener('change', (e) => { this.store.setSettings({ keep_awake: !!e.target.checked }); keepAwake('user', !!e.target.checked); });
     document.getElementById('set-sync-now')?.addEventListener('click', async () => {
       const el = document.getElementById('set-sync-msg'); if (el) el.textContent = 'syncing…';
       try { const r = await this.syncNow?.({ force: true }); if (el) el.textContent = r?.skipped ? 'not connected' : `pushed ${r?.pushed?.pushed ?? 0}, pulled ${r?.pulled?.pulled ?? 0}`; }
@@ -3544,7 +3545,7 @@ export class App {
       if (phase === 'scan-local' || phase === 'scan') txt = `checking for local changes… (${n})`;
       else if (phase === 'scan-remote') txt = 'checking the cloud folder…';
       else if (phase === 'push') txt = `uploading ${n}${of}…`;
-      else if (phase === 'pull-first') txt = `first sync — downloading ${n}${of} (one-time)…`;
+      else if (phase === 'pull-first') txt = `first sync — downloading ${n}${of}${pct != null ? ` · ${pct}%` : ''} (one-time, screen kept awake)…`;
       else txt = `downloading ${n}${of} update${n === 1 ? '' : 's'}…`;   // 'pull' = incremental
       if (msg) msg.textContent = txt;
     } else if (state === 'idle') {
@@ -3764,6 +3765,7 @@ export class App {
     val('set-courier-author', s.courier_author || 'laney');
     val('set-sync-role', s.sync_role || 'hub');
     chk('set-sync-auto', s.sync_auto);
+    chk('set-keepawake', s.keep_awake);
     this.dropbox?.connected().then((c) => this.renderSyncStatus(c ? 'idle' : 'off')).catch(() => {});
     document.getElementById('settings-msg').textContent = '';
     const aff = this.store.feedsWithAffinity();
@@ -4094,6 +4096,7 @@ export class App {
       courier_author: (document.getElementById('set-courier-author')?.value.trim() || 'laney').toLowerCase(),
       sync_role: document.getElementById('set-sync-role')?.value || 'hub',
       sync_auto: chk('set-sync-auto'),
+      keep_awake: chk('set-keepawake'),
     };
     await this.store.setSettings(patch);
     if (this.courier) {   // keep the live Courier config in sync; re-publish so its README/exports reflect the new identity

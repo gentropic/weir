@@ -12,6 +12,26 @@ export function setAutoCheck(value) {
   navigator.serviceWorker?.controller?.postMessage({ type: 'weir:set-auto-check', value: !!value });
 }
 
+// ── Screen Wake Lock — keep a phone/tablet awake during a long first sync (and optionally while
+// reading), so the screen doesn't auto-lock and stall/throttle the page. Held while ANY holder
+// wants it AND the page is visible (the API auto-releases on hide; we re-acquire when it returns). ──
+let _wakeLock = null; const _wakeHolders = new Set();
+async function _acquireWakeLock() {
+  if (!_wakeHolders.size || _wakeLock) return;
+  if (typeof navigator === 'undefined' || !navigator.wakeLock) return;
+  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+  try { _wakeLock = await navigator.wakeLock.request('screen'); _wakeLock.addEventListener?.('release', () => { _wakeLock = null; }); }
+  catch { /* denied (e.g. low battery) — best effort */ }
+}
+function _releaseWakeLock() { if (_wakeLock) { try { _wakeLock.release(); } catch { /* already gone */ } _wakeLock = null; } }
+// keepAwake(holder, on) — ref-counted by holder string so the sync hold + a manual toggle compose.
+export function keepAwake(holder, on) {
+  if (on) _wakeHolders.add(holder); else _wakeHolders.delete(holder);
+  if (_wakeHolders.size) _acquireWakeLock(); else _releaseWakeLock();
+}
+export function wakeLockSupported() { return typeof navigator !== 'undefined' && !!navigator.wakeLock; }
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _acquireWakeLock(); });
+
 // Check for a shell update. Robust to the page not currently being CONTROLLED by
 // the SW — which is a normal state for an installed PWA (a cold start, or the
 // browser evicting the idle worker), NOT "no service worker". An uncontrolled
