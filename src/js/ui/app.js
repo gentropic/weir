@@ -3516,10 +3516,14 @@ export class App {
   // connected), idle (connected), syncing, error. The toggle reflects connected-ness.
   renderSyncStatus(state, prog) {
     const bar = document.getElementById('sync-status');
+    const phase = prog && prog.phase;
+    const scanning = phase === 'scan-local' || phase === 'scan-remote' || phase === 'scan';   // 'scan' kept for back-compat
+    const pct = prog && prog.total ? Math.round((prog.done / prog.total) * 100) : null;
     let barTxt = '';
     if (state === 'syncing') {
-      if (prog && prog.phase === 'scan') barTxt = 'scan…';
-      else { const pct = prog && prog.total ? Math.round((prog.done / prog.total) * 100) : null; barTxt = pct != null ? `sync ${pct}%` : 'sync…'; }
+      if (scanning) barTxt = 'scan…';
+      else if (phase === 'pull-first') barTxt = pct != null ? `first ${pct}%` : 'first sync…';
+      else barTxt = pct != null ? `sync ${pct}%` : 'sync…';
     } else barTxt = state === 'idle' ? 'sync' : state === 'error' ? 'sync err' : '';
     if (bar) { bar.textContent = barTxt; bar.dataset.state = state || 'off'; }
     const lab = document.getElementById('set-sync-state');
@@ -3528,7 +3532,16 @@ export class App {
     if (btn) btn.textContent = (state && state !== 'off') ? 'disconnect' : 'connect';
     if (state === 'syncing' && prog) {
       const msg = document.getElementById('set-sync-msg');
-      if (msg) msg.textContent = prog.phase === 'scan' ? `scanning ${prog.done || ''} files…` : `${prog.phase === 'push' ? 'uploading' : 'downloading'} ${prog.done}${prog.total ? '/' + prog.total : ''}…`;
+      const n = prog.done || 0, of = prog.total ? '/' + prog.total : '';
+      // Clear, honest phases: a local stat-diff vs the cloud listing, an upload, a ONE-TIME first
+      // download (bootstrap), and routine incremental pulls — so "downloading" isn't alarming.
+      let txt;
+      if (phase === 'scan-local' || phase === 'scan') txt = `checking for local changes… (${n})`;
+      else if (phase === 'scan-remote') txt = 'checking the cloud folder…';
+      else if (phase === 'push') txt = `uploading ${n}${of}…`;
+      else if (phase === 'pull-first') txt = `first sync — downloading ${n}${of} (one-time)…`;
+      else txt = `downloading ${n}${of} update${n === 1 ? '' : 's'}…`;   // 'pull' = incremental
+      if (msg) msg.textContent = txt;
     }
   }
 

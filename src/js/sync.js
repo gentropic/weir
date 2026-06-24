@@ -156,7 +156,7 @@ class SyncEngine {
     const toUpload = []; let scanned = 0;
     await syncWalkStat(this.local, '/', (p, st) => {
       scanned++;
-      if (scanned % 256 === 0) this._progress('scan', scanned, 0);
+      if (scanned % 256 === 0) this._progress('scan-local', scanned, 0);
       const sig = this._sig(st);
       if (this._changed(man.files[p], sig)) toUpload.push({ p, sig });
     });
@@ -214,10 +214,10 @@ class SyncEngine {
   // hub that just pushed everything downloads nothing — they're all in the manifest), then
   // capture the cursor so every later pull is an incremental delta.
   async _bootstrapPull(man, be) {
-    this._progress('scan', 0, 0);   // walking the remote tree (Dropbox list calls) can take a moment
+    this._progress('scan-remote', 0, 0);   // walking the remote tree (Dropbox list calls) can take a moment
     const paths = (await syncCollectPaths(this.remote)).filter((p) => !man.files[p]);
     let pulled = 0;
-    this._progress('pull', 0, paths.length);
+    this._progress('pull-first', 0, paths.length);
     await syncPool(paths, this.concurrency, async (p) => {
       const data = await syncRetry(() => this.remote.readFile(p, 'bytes'));
       await syncEnsureParent(this.local, p);
@@ -225,7 +225,7 @@ class SyncEngine {
       try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ }
       pulled++;
       if (pulled % CHECKPOINT === 0) await this._saveManifest();
-      if (pulled % PROGRESS_EVERY === 0 || pulled === paths.length) this._progress('pull', pulled, paths.length);
+      if (pulled % PROGRESS_EVERY === 0 || pulled === paths.length) this._progress('pull-first', pulled, paths.length);
     });
     try { man.cursor = await be.latestCursor(); } catch { /* leave null — retries as bootstrap */ }
     await this._saveManifest();
@@ -234,7 +234,7 @@ class SyncEngine {
   }
 
   async _fullMirrorPull(man) {
-    this._progress('scan', 0, 0);
+    this._progress('scan-remote', 0, 0);
     const paths = await syncCollectPaths(this.remote);
     let pulled = 0;
     for (const p of paths) {

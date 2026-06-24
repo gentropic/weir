@@ -19,6 +19,10 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
   skips the scan when the counter is unchanged since the last push. A **forced full scan every
   10th cycle** is the safety net, so correctness never depends on complete counter coverage; a
   manual "sync now" always forces. Tests: `tools/smoke-sync.mjs`, `tools/smoke-stacks.mjs`.
+- **Clearer sync status labels.** Progress now names distinct phases — `checking for local
+  changes…` / `checking the cloud folder…` / `uploading N/M…` / **`first sync — downloading N/M
+  (one-time)…`** (the bootstrap) / `downloading N updates…` (routine incremental) — so a first-time
+  bootstrap download reads as the one-time event it is, not an alarming "downloading everything."
 
 ### Dropbox sync — survive the write rate-limit on a big first push — 2026-06-23
 
