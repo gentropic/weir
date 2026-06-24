@@ -216,14 +216,20 @@ class SyncEngine {
     }
     let pushed = 0; const paths = [];
     this._progress('push', 0, toUpload.length);
-    // Per-file `files/upload` (NOT the backend's batch `writeFiles`). Dropbox's `upload_session/*`
-    // content endpoints are NOT CORS-enabled, so `writeFiles` (finish_batch) fails from a browser
-    // ("No Access-Control-Allow-Origin"); `files/upload` IS CORS-enabled. The throttle that batching
-    // was meant to dodge (too_many_write_operations) is now ridden out by the backend's 429/
-    // Retry-After backoff in `_send` (vfs 0.3.0), so per-file at low concurrency is correct + resilient.
+    // Ensure each unique remote parent dir ONCE per session — not per file. Per-file mkdir fired ~1
+    // create_folder_v2 per upload (all 409 "exists"), hammering Dropbox's rate limit → 429s whose
+    // content-endpoint responses omit CORS headers → surfaced as a bogus "CORS blocked" on the next
+    // files/upload. (Dropbox upload auto-creates parents anyway; FSA/memory need them — so we still
+    // ensure, just deduped + cached for the engine's lifetime since weir never deletes remote dirs.)
+    this._ensuredRemoteDirs = this._ensuredRemoteDirs || new Set();
+    const toMk = new Set();
+    for (const { p } of toUpload) { const s = p.lastIndexOf('/'); if (s > 0) { const d = p.slice(0, s); if (!this._ensuredRemoteDirs.has(d)) toMk.add(d); } }
+    for (const dir of toMk) { try { await this.remote.mkdir(dir, { recursive: true }); } catch { /* exists */ } this._ensuredRemoteDirs.add(dir); }
+    // Per-file `files/upload` (NOT batch `writeFiles` — Dropbox `upload_session/*` isn't CORS-enabled;
+    // `files/upload` IS). The too_many_write_operations throttle is ridden out by the backend's
+    // 429/Retry-After backoff in `_send` (vfs 0.3.0), so per-file at low concurrency is fine.
     await syncPool(toUpload, Math.min(this.concurrency, PUSH_CONCURRENCY), async ({ p, sig }) => {
       const data = await this.local.readFile(p, 'bytes');
-      await syncEnsureParent(this.remote, p);
       await syncRetry(() => this.remote.writeFile(p, data));
       man.files[p] = sig; pushed++; if (paths.length < 100) paths.push(p);   // sample for the activity readout
       if (pushed % CHECKPOINT === 0) await this._saveManifest();

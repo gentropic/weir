@@ -15,6 +15,13 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
   batching was meant to avoid (`too_many_write_operations`) is now ridden out by the backend's
   429/`Retry-After` backoff (vfs 0.3.0 `_send`), so per-file at low concurrency is correct + resilient.
   (Pull's *local* `writeFiles` batching is unaffected — IDB, no network/CORS.) Build f0bf742.
+- **Follow-on: the parent-`mkdir` storm was *causing* an upload "CORS" error.** `syncEnsureParent`
+  ran `mkdir(recursive)` on the parent **per file** → ~1 `create_folder_v2` per upload (all 409
+  "exists"), hammering Dropbox's rate limit; a 429 on a content endpoint comes back **without** a
+  CORS header, so the browser masked it as `No 'Access-Control-Allow-Origin'` on `files/upload`. Now
+  push ensures each unique parent dir **once per session** (cached — weir never deletes remote dirs;
+  Dropbox upload auto-creates parents anyway). Kills the 409 spam + the rate-limit pressure → real
+  uploads go through. Build f5a7301.
 - Upstream: `@gcu/vfs` `DropboxBackend.writeFiles` is browser-unusable as written (upload_session);
   noted to auditable to reimplement it over parallel `files/upload`.
 
