@@ -6,6 +6,17 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Storage — re-vendor `@gcu/vfs` 0.7.0 (optimized API through the router) — 2026-06-24
+
+- Re-vendored `vfs.js` from `auditable@2bb73b5` (0.6.0→0.7.0). The 0.3–0.6 backend fast paths
+  (`writeFiles`/`deleteBatch`/`listTree`/native recursive delete) are now **plumbed through the VFS
+  router + cache/overlay composers** with capability-detect + graceful fallback — so they work at
+  the *facade* level (`vfs.writeFiles` etc.), not only by addressing the concrete backend; and
+  `vfs.rm({recursive})`/`vfs.rmdir` use the backend's one-shot path instead of re-walking the tree.
+  weir reaches the concrete backends directly today (un-cached primary mounts), so this is mainly
+  correctness-through-composition + future-proofing for an eventual cache-wrapped Dropbox remote
+  (SYNC.md offline-first). Full smoke green on the new bundle.
+
 ### Sync — bootstrap batches local writes (`local.writeFiles`) — 2026-06-24
 
 - A reader's first pull now commits downloaded files to the local store in **batches** via the
