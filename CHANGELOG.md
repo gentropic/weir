@@ -6,6 +6,16 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — bootstrap batches local writes (`local.writeFiles`) — 2026-06-24
+
+- A reader's first pull now commits downloaded files to the local store in **batches** via the
+  local backend's `writeFiles` (one IndexedDB transaction per ~200-file chunk) instead of a
+  `writeFile` per file — the local-write twin of the batched push, cashing in `@gcu/vfs` 0.6.0.
+  Bounded memory (a chunk in flight), feature-detected (`_localBackend().writeFiles`) with the
+  per-file path as fallback, so it activates on the phone's IDB store and no-ops on memory/FSA.
+  Download still dominates a first sync — this trims the on-device write overhead on top. Bootstrap
+  only (incremental deltas are small). Test: `tools/smoke-sync.mjs`. No upstream change (consumes 0.6.0).
+
 ### Storage — re-vendor `@gcu/vfs` 0.6.0 (IndexedDB transaction batching) — 2026-06-24
 
 - Re-vendored `vfs.js` from `auditable@e06a0ee` (0.5.0→0.6.0). **`IDBBackend` now batches into one

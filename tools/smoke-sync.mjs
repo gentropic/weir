@@ -258,4 +258,26 @@ assert.equal(syncShouldScan({ rev: 5, lastRev: 5, cycle: 3, forceEvery: 10, forc
   assert.equal(hubPaths.length, 2, 'hub pushes corpus + notes');
 }
 
+// ── bootstrap batches LOCAL writes via the local backend's writeFiles (IDB on the phone) ──
+{
+  const local = await mk();
+  await write(local, MANIFEST, JSON.stringify({ files: {} }));
+  const lbe = local.resolve('/').backend;        // memory backend has no writeFiles — patch one in to exercise the wiring
+  let batchCalls = 0, batched = 0;
+  lbe.writeFiles = async (files) => { batchCalls++; batched += files.length; for (const f of files) await write(local, f.path, new TextDecoder().decode(f.content)); };
+  const be = {
+    changes: async () => ({ entries: [], cursor: 'c', has_more: false }),
+    latestCursor: async () => 'cFallback',
+    listTree: async () => ({ cursor: 'cTree', entries: [{ path: '/items/a.ndjson', type: 'file' }, { path: '/items/b.ndjson', type: 'file' }] }),
+  };
+  const remote = { resolve: () => ({ backend: be }), readFile: async (p) => new TextEncoder().encode(`data:${p}`) };
+  const r = await new SyncEngine({ local, remote }).pull();
+  assert.equal(r.mode, 'bootstrap', 'bootstrap mode');
+  assert.equal(r.pulled, 2, 'pulled both files');
+  assert.ok(batchCalls >= 1, 'bootstrap committed local writes via the backend batch (writeFiles)');
+  assert.equal(batched, 2, 'both files went through the batch, not per-file');
+  assert.equal(await read(local, '/items/a.ndjson'), 'data:/items/a.ndjson', 'file landed locally');
+  assert.equal(JSON.parse(await read(local, MANIFEST)).cursor, 'cTree', 'cursor set from listTree');
+}
+
 console.log('sync (engine mirror) smoke ok');

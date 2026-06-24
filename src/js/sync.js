@@ -183,6 +183,9 @@ class SyncEngine {
 
   // the remote backend instance (for its change feed), via resolve() — mounts() only gives type.
   _remoteBackend() { try { return this.remote.resolve('/').backend; } catch { return null; } }
+  // the local backend (for its bulk writeFiles) — the local store is the primary, un-cached mount,
+  // so writing through it is layer-coherent (the facade reads the same bytes back on reload).
+  _localBackend() { try { return this.local.resolve('/').backend; } catch { return null; } }
   // a Dropbox change-feed entry's path (e.g. /weir/items/x) → our VFS path (/items/x): strip root.
   _entryToVfsPath(be, e) {
     const root = (be && be._root) || '';
@@ -303,15 +306,35 @@ class SyncEngine {
     }
     let pulled = 0;
     this._progress('pull-first', 0, toFetch.length);
-    await syncPool(toFetch, this.concurrency, async (p) => {
-      const data = await syncRetry(() => this.remote.readFile(p, 'bytes'));
-      await syncEnsureParent(this.local, p);
-      await this.local.writeFile(p, data);
-      try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ }
-      pulled++;
-      if (pulled % CHECKPOINT === 0) await this._saveManifest();
-      if (pulled % PROGRESS_EVERY === 0 || pulled === toFetch.length) this._progress('pull-first', pulled, toFetch.length);
-    });
+    const lbe = this._localBackend();
+    if (lbe && typeof lbe.writeFiles === 'function') {
+      // Batch the LOCAL writes too: download a chunk (bounded concurrency), then commit it to the
+      // store in one op (one IDB transaction) — the local-write twin of the batched push. Download
+      // still dominates a first sync, but this removes ~one tx per file on the phone. Bounded
+      // memory (a chunk in flight).
+      const CHUNK = 200;
+      for (let i = 0; i < toFetch.length; i += CHUNK) {
+        const slice = toFetch.slice(i, i + CHUNK);
+        const files = [];
+        await syncPool(slice, this.concurrency, async (p) => {
+          try { files.push({ path: p, content: await syncRetry(() => this.remote.readFile(p, 'bytes')) }); } catch { /* skip a file that won't download; a later sync retries it */ }
+        });
+        await lbe.writeFiles(files);
+        for (const f of files) { try { man.files[f.path] = this._sig(await this.local.stat(f.path)); } catch { /* */ } pulled++; }
+        await this._saveManifest();
+        this._progress('pull-first', pulled, toFetch.length);
+      }
+    } else {
+      await syncPool(toFetch, this.concurrency, async (p) => {
+        const data = await syncRetry(() => this.remote.readFile(p, 'bytes'));
+        await syncEnsureParent(this.local, p);
+        await this.local.writeFile(p, data);
+        try { man.files[p] = this._sig(await this.local.stat(p)); } catch { /* */ }
+        pulled++;
+        if (pulled % CHECKPOINT === 0) await this._saveManifest();
+        if (pulled % PROGRESS_EVERY === 0 || pulled === toFetch.length) this._progress('pull-first', pulled, toFetch.length);
+      });
+    }
     man.cursor = treeCursor || (await be.latestCursor().catch(() => null));   // listTree's cursor, else fall back
     await this._saveManifest();
     if (pulled && this.store && typeof this.store.reload === 'function') await this.store.reload();
