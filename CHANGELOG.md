@@ -6,6 +6,14 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Responsive — phase 1: reading typography — 2026-06-24
+
+- Comfortable article/note reading on a phone. On the `≤720px` breakpoint the body (`.icontent`)
+  gets a larger font (16.5 px) + roomier line-height (1.72) and proper paragraph / heading /
+  list / blockquote / code spacing; the **expanded article breaks out past the pill column to a
+  full-width measure** (and the pill column slims 92→60 px so list rows give content more room).
+  Desktop unchanged.
+
 ### Responsive — phase 1: mobile bottom tab bar — 2026-06-24
 
 - First phase-1 slice: a thumb-reachable **bottom tab bar** on narrow screens —

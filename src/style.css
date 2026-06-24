@@ -652,10 +652,22 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
   .set-row input[type="number"], .set-row input[type="text"], .set-row input[type="password"], .set-row select, .set-row .field { width: 100%; box-sizing: border-box; }
   /* item rows: tighter side padding (reclaim width) + the opened/selected item's actions shown
      with finger-sized tap targets (touch has no hover to reveal them). */
-  .item { padding: 13px 14px; gap: 12px; }
+  .item { grid-template-columns: 60px 1fr; padding: 13px 14px; gap: 12px; }   /* the pill needs little — give the content the width */
   .item.sel .iactions, .item.expanded .iactions { opacity: 1; }
   .iactions { padding-left: 16px; }
   .iactions button { width: 34px; height: 32px; font-size: 15px; }
+  /* ── Reading typography (phase 1): comfortable article/note body on a narrow column ── */
+  .item.expanded .iexpand { margin-left: calc(-60px - 12px); }   /* break the article out past the pill column → full-width measure */
+  .icontent { font-size: 16.5px; line-height: 1.72; margin-top: 14px; padding-top: 14px; }
+  .icontent p { margin: 0 0 1em; }
+  .icontent h1, .icontent h2, .icontent h3, .icontent h4 { line-height: 1.3; margin: 1.4em 0 0.5em; font-weight: 600; }
+  .icontent h1 { font-size: 1.5em; }
+  .icontent h2 { font-size: 1.3em; }
+  .icontent h3 { font-size: 1.12em; }
+  .icontent ul, .icontent ol { padding-left: 1.4em; margin: 0 0 1em; }
+  .icontent li { margin: 0.3em 0; }
+  .icontent blockquote { margin: 0 0 1em; padding: 0.2em 0 0.2em 1em; border-left: 3px solid var(--au-border); color: var(--au-fg-muted); }
+  .icontent pre, .icontent code { font-size: 13px; }
   /* bottom tab bar (phase 1) — thumb-reachable primary nav; replaces the cramped footer. */
   .statusbar { display: none; }
   .stream { padding-bottom: 64px; }   /* clear the bar so the last item is reachable */
