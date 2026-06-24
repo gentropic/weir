@@ -638,4 +638,15 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
   .topbar .actions { flex-wrap: wrap; gap: 8px; flex-shrink: 1; min-width: 0; }
   #search-input { flex: 1 1 130px; min-width: 110px; }
   #addfeed, #btn-import, #btn-export, #open-rules, #btn-recover, #btn-flightdeck, #btn-layout, #btn-saveview, .topbar-sep { display: none; }
+  /* settings dialog: full-screen, tabs on top (wrapping strip), rows STACKED (label over a
+     full-width control) — kills the squished 150px-sidebar + the horizontal scroll from fixed
+     150px inputs. The settings revamp for touch is phase 1; this makes it usable now. */
+  #settings-overlay .panel { width: 100vw; height: 100dvh; max-height: none; border-radius: 0; }
+  .settings-body { flex-direction: column; }
+  .settings-nav { flex: 0 0 auto; flex-flow: row wrap; gap: 6px; padding: 10px 12px; border-right: none; border-bottom: 1px solid var(--au-border); }
+  .settings-filter { flex: 1 1 100%; margin: 0 0 4px; }
+  .settings-panes { padding: 8px 14px 16px; }
+  .set-row { flex-direction: column; align-items: stretch; gap: 5px; }
+  .set-row.check { flex-direction: row; align-items: center; }
+  .set-row input[type="number"], .set-row input[type="text"], .set-row input[type="password"], .set-row select, .set-row .field { width: 100%; box-sizing: border-box; }
 }
