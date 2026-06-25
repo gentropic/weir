@@ -754,6 +754,19 @@ answer).
 - **Sync** (the open question, SPEC §10). Lean on the FSA archive dir +
   syncthing/rclone, or a `@gcu/pointer`/Trystero CRDT for read-state. Deferred
   until the need is real (multi-device).
+- **LOT — "Library of Things" (glass generalized to physical possessions; LIS-design-led).** Extend
+  glass from cataloging documents/books to **stuff Arthur owns + wants to find**. The key LIS insight:
+  cataloging *things* ≠ *documents* — things classify by **function/typology**, not *aboutness*, so
+  the 0–9 subject call-numbers (`callnumber.js`) do **not** carry over (Holocene's mistake: it bolted
+  dewey/call_number onto objects). Needs real LIS design — faceted/Ranganathan, museum cataloging
+  (CIDOC-CRM, Spectrum), product taxonomies, FRBR product=Work/unit=Item, **mereology** (part-of /
+  has-part), and **location as a place-authority**. This is the **librarian seat's** job (1+2i):
+  design brief dispatched to `../weir-desk/spec_desk/_inbox/LOT-library-of-things-DESIGN-REQUEST.md`;
+  librarian develops the canonical scheme → dispatches a spec → dev implements a "things" **domain on
+  the glass engine** (not a fork). Seed/field-evidence: `personal/holocene.db` (built-but-tiny `items`
+  inventory + 884 ML favorites). The **RFID inventory/locate** vision (UHF wand → WebSerial → weir →
+  propose-location-then-ratify; two tiers handheld→ambient) is the **later sensing layer** that keeps
+  the location facet honest; the LIS design only leaves the seam (`epc` field + location-as-authority).
 - **WebXR mode — "walk your library" (for the fun of it; a lazy-afternoon someday).** The glass
   catalog is unusually well-suited to a spatial view: the **0–9 call-number classification** is
   already a shelving metaphor (stacks you walk), the **knowledge graph** (typed `related` edges,
