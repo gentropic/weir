@@ -8,10 +8,12 @@ install. Re-vendor by running **`node tools/sync-vendor.mjs`** (auto-locates
 file** — fix upstream in canon, then re-sync.
 
 Source snapshot: `auditable@bba50e15`, vendored 2026-05-30. `vfs.js` re-vendored from
-`auditable@4f202b8` (2026-06-24, vfs 0.7.0→**0.7.1**) — **escape `Dropbox-API-Arg` (non-ASCII →
-`\uXXXX`)**, fixing upload *and* download of paths with accented/unicode characters (a malformed
-ASCII-only header was failing the request, surfacing as a bogus CORS error; confirmed live via
-`__weir.dbxDiag`). Earlier: re-vendored from
+`auditable@c06e8e0` (2026-06-24, vfs 0.7.1→**0.8.0**) — **additive streaming escape hatch**
+(`toFile` / `resolveHandle` / `readRange` + `requireStreamable` guard + `writeFrom` backpressure);
+weir's whole-file read/write paths are unaffected (available for the documents/PDF blob work later).
+Includes the 0.7.1 **`Dropbox-API-Arg` non-ASCII `\uXXXX` escaping** (upload+download of accented
+paths; confirmed live via `__weir.dbxDiag`) + 0.7.1 batch-import. Earlier: re-vendored from
+`auditable@4f202b8` (vfs 0.7.0→0.7.1, the Dropbox-API-Arg escaping). Before that, from
 `auditable@2bb73b5` (2026-06-24, vfs 0.6.0→0.7.0) — **plumb the optimized backend API through
 the VFS router + cache/overlay composers** (capability-detect + fallback): `writeFiles`/`deleteBatch`/
 `listTree`/recursive-remove now work at the *facade* level, and `vfs.rm({recursive})`/`rmdir` use the
@@ -40,7 +42,7 @@ in-memory (rebuilt at startup from items), so a deploy + reload reindexes automa
 
 | Path | Source in auditable | Version | License | Notes |
 |------|---------------------|---------|---------|-------|
-| `vfs.js` | `ext/vfs/index.js` | @gcu/vfs 0.7.1 | MIT | Built single-file ESM bundle. Exports `VFS`, `IDBBackend`, `OPFSBackend`, `FSAABackend`, `MemoryBackend`, `FetchBackend`, `RESTBackend`, `OverlayBackend`, `CacheBackend`, **`DropboxBackend`**, `path`, … Storage backbone (backend-swappable + mount table). **Re-vendored 2026-06-09 (`auditable@1d8fed4`, vfs 0.1.0→0.2.0) for `DropboxBackend`** — the cloud-sync backend (SYNC.md; spec'd via `spec_inbox`), mounted secondary + `cache`-wrapped, with `getToken` injected by weir's `src/js/dropbox.js`. Vendored separately (direct copy of the built bundle), not via `sync-vendor.mjs`. |
+| `vfs.js` | `ext/vfs/index.js` | @gcu/vfs 0.8.0 | MIT | Built single-file ESM bundle. Exports `VFS`, `IDBBackend`, `OPFSBackend`, `FSAABackend`, `MemoryBackend`, `FetchBackend`, `RESTBackend`, `OverlayBackend`, `CacheBackend`, **`DropboxBackend`**, `path`, … Storage backbone (backend-swappable + mount table). **Re-vendored 2026-06-09 (`auditable@1d8fed4`, vfs 0.1.0→0.2.0) for `DropboxBackend`** — the cloud-sync backend (SYNC.md; spec'd via `spec_inbox`), mounted secondary + `cache`-wrapped, with `getToken` injected by weir's `src/js/dropbox.js`. Vendored separately (direct copy of the built bundle), not via `sync-vendor.mjs`. |
 | `bridge-client.js` | `../bridge` repo `client/bridge-client.js` | @gcu/bridge 0.3.6+ (gentropic/bridge@6c56584) | CC0-1.0 | Page-side fetch broker. Exports `gcuFetch`, `hasBridge`, `bridgeVersion`, `clearBridgeCache`. Re-vendored 2026-06-03 for the detectBridge marker-re-check fix (no sticky false-negative stranding the session on direct fetch). Probed non-blockingly for status; the poller's transport. |
 | `librarian.js` | `ext/librarian/index.js` (built bundle) | @gcu/librarian 0.2 (v2 CSR) | MIT | BM25F full-text search engine (unified typed-array CSR; lean folded mode, fuzzy/prefix, incremental addDoc/removeDoc, pack/unpack, scan). Vendored via `tools/sync-vendor.mjs` (never hand-edit — upstream-first per the librarian vendoring contract). Consumed by `src/js/search.js` (search v2). |
 | `webmcp-shim.js` | `../numen` repo `shim.js` | @gcu/numen 0.1.3 | MIT | WebMCP client shim. Plain IIFE — installs `window.gcuWebMCP` (alias `gcuMCP`) + a `navigator.modelContext` polyfill, relays tool calls to the @gcu/numen bridge. Transports: WS / HTTP-long-poll over localhost (injectable `gcuFetch` routes HTTP through the bridge extension for the public-origin PWA), and **`fs`** — set `gcuWebMCP.folder = <FileSystemDirectoryHandle>` and connect with a bare token to relay over a shared (optionally synced) folder, no port/extension (uses `webmcp-fs-channel.js`). **Re-vendored 2026-06-20 (numen 0.1.3) for fs MULTICHANNEL** (SPEC-numen-multichannel.md): `gcuMCP.addFolder({id,handle,token,identity})` runs N fs channels at once (one per folder = one agent), all sharing the tool registry; replies route to the calling channel and its `identity` is carried into `tool.execute(input, client)` (`client.identity`) — the SPEC-librarian §2 provenance hook. `connectFolder`/`wm.folder`+`connect` remain the single-channel ('default') path. Consumed by `src/js/webmcp.js`. |

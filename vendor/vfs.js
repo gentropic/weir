@@ -295,6 +295,22 @@ class Backend {
   createReadStream() { return null; }
   createWriter() { return null; }
 
+  // Resolve a path to its NATIVE source without decoding — a `File` the consumer
+  // can run its own stream/parse over and `postMessage`-transfer into a worker
+  // ("phonebook, then get out of the pipe"; spec_inbox/vfs-streaming-spec.md §1).
+  // Base fallback reads + wraps — works everywhere but is NOT lazy, so `nativeFile`
+  // stays false here; handle/OPFS override with the lazy native handle.
+  async toFile(p) {
+    const bytes = await this.readFile(p, 'bytes');
+    return new File([bytes], p.split('/').pop() || 'file');
+  }
+  // The backend-native file handle (FSAA `FileSystemFileHandle`, …), or null.
+  async resolveHandle() { return null; }
+  // Read a byte range WITHOUT reading the whole file. null ⇒ this backend can't
+  // seek — the caller checks `rangeReadable` and falls back knowingly; we never
+  // silently read a multi-GB file here (that would defeat the point).
+  async readRange() { return null; }
+
   // Worker-replication: return a structured-cloneable config that a worker
   // can pass back to the constructor (alongside the type string from
   // BACKEND_TYPES) to instantiate a peer backend that talks to the same
@@ -315,6 +331,8 @@ class Backend {
   get persistent() { return false; }
   get streamable() { return false; }
   get estimatable() { return false; }
+  get nativeFile() { return false; }    // toFile yields a lazy native handle (no full read)
+  get rangeReadable() { return false; } // readRange seeks (no full read)
   get exportable() { return true; }
   get portable() { return false; }
   get symlinks() { return false; }
@@ -433,6 +451,13 @@ class MemoryBackend extends Backend {
     }
     if (content instanceof Uint8Array) return new TextDecoder().decode(content);
     return content;
+  }
+
+  // Resident bytes → a range is a cheap subarray (no re-read).
+  get rangeReadable() { return true; }
+  async readRange(p, offset, length) {
+    const b = await this.readFile(p, 'bytes');
+    return b.subarray(offset, offset + length);
   }
 
   async writeFile(p, content) {
@@ -1618,6 +1643,17 @@ class HandleBackend extends Backend {
   get persistent() { return true; }
   get streamable() { return true; }
   get estimatable() { return true; }
+  get nativeFile() { return true; }
+  get rangeReadable() { return true; }
+
+  // Native File / handle off the FSA file handle — lazy (no read), transferable.
+  async toFile(p) { return (await this._resolveFile(p)).getFile(); }
+  async resolveHandle(p) { return this._resolveFile(p); }
+  // Blob.slice is lazy; .arrayBuffer() reads ONLY the slice (a true seek).
+  async readRange(p, offset, length) {
+    const file = await (await this._resolveFile(p)).getFile();
+    return new Uint8Array(await file.slice(offset, offset + length).arrayBuffer());
+  }
   get recursiveRemove() { return true; }   // removeEntry({recursive}) — see _rmDir
 
   async estimate() {
@@ -1712,6 +1748,18 @@ class OPFSBackend extends HandleBackend {
     if (this._fallback) return this._fallback.createReadStream(p);
     return super.createReadStream(p);
   }
+  async toFile(p) {
+    if (this._fallback) return this._fallback.toFile(p);
+    return super.toFile(p);
+  }
+  async resolveHandle(p) {
+    if (this._fallback) return this._fallback.resolveHandle ? this._fallback.resolveHandle(p) : null;
+    return super.resolveHandle(p);
+  }
+  async readRange(p, offset, length) {
+    if (this._fallback) return this._fallback.readRange ? this._fallback.readRange(p, offset, length) : null;
+    return super.readRange(p, offset, length);
+  }
   async createWriter(p) {
     if (this._fallback) return this._fallback.createWriter(p);
     return super.createWriter(p);
@@ -1744,6 +1792,8 @@ class OPFSBackend extends HandleBackend {
   get persistent() { return this._fallback ? !!this._fallback.persistent : true; }
   get streamable() { return this._fallback ? !!this._fallback.streamable : true; }
   get estimatable() { return this._fallback ? !!this._fallback.estimatable : true; }
+  get nativeFile() { return this._fallback ? !!this._fallback.nativeFile : true; }
+  get rangeReadable() { return this._fallback ? !!this._fallback.rangeReadable : true; }
   get readonly() { return this._fallback ? !!this._fallback.readonly : false; }
   get portable() { return this._fallback ? !!this._fallback.portable : false; }
   get symlinks() { return this._fallback ? !!this._fallback.symlinks : false; }
@@ -3137,6 +3187,8 @@ class VFS extends EventEmitter {
       writable: !backend.readonly,
       streamable: !!backend.streamable,
       estimatable: !!backend.estimatable,
+      nativeFile: !!backend.nativeFile,
+      rangeReadable: !!backend.rangeReadable,
       exportable: backend.exportable !== false,
       portable: !!backend.portable,
       symlinks: !!backend.symlinks,
@@ -3485,6 +3537,43 @@ class VFS extends EventEmitter {
     return backend.createReadStream(subpath, opts);
   }
 
+  // Resolve a path to a native `File` without decoding — the streaming escape
+  // hatch (vfs = phonebook, the consumer owns the pipe). `capabilities(p).nativeFile`
+  // tells you whether it's lazy (FSAA/OPFS) or a wrap-of-resident-bytes fallback.
+  async toFile(p, opts) {
+    checkPermission('readFile', p, opts?.principal);
+    const { backend, subpath } = this.resolve(p);
+    return backend.toFile(subpath);
+  }
+
+  // The backend-native handle (FSAA `FileSystemFileHandle`), or null.
+  async resolveHandle(p, opts) {
+    checkPermission('readFile', p, opts?.principal);
+    const { backend, subpath } = this.resolve(p);
+    return backend.resolveHandle ? backend.resolveHandle(subpath) : null;
+  }
+
+  // Read a byte range without reading the whole file. null where the backend
+  // can't seek (check `capabilities(p).rangeReadable`).
+  async readRange(p, offset, length, opts) {
+    checkPermission('readFile', p, opts?.principal);
+    const { backend, subpath } = this.resolve(p);
+    return backend.readRange ? backend.readRange(subpath, offset, length) : null;
+  }
+
+  // Assert this path can be read WITHOUT buffering the whole file — a forward
+  // stream OR a lazy native File. The "this huge file must never be fully read —
+  // fail loud, don't silently OOM" guard (spec §3): a consumer calls it before
+  // committing a multi-GB file to a mount / entering its hot path. Throws ENOTSUP
+  // (with the mount + type) otherwise; returns the capabilities on success.
+  requireStreamable(p) {
+    const { backend, mount } = this.resolve(p);
+    if (!(backend.streamable || backend.nativeFile)) {
+      throw vfsError('ENOTSUP', p, `mount '${mount}' (${backend.constructor?.type || 'custom'}) can't stream — reading would buffer the whole file`);
+    }
+    return this.capabilities(p);
+  }
+
   async createWriter(p, opts) {
     const { backend, subpath } = this.resolve(p);
     this._checkWrite(backend, p);
@@ -3496,7 +3585,10 @@ class VFS extends EventEmitter {
     this._checkWrite(backend, p);
     const writer = backend.createWriter?.(subpath);
     if (writer) {
-      for await (const chunk of iterable) writer.write(chunk);
+      // AWAIT each write — the sink's promise reflects readiness (FSAA's
+      // FileSystemWritableFileStream is backpressured). Fire-and-forget here
+      // would re-introduce OOM on the write side for a multi-GB export (spec §4).
+      for await (const chunk of iterable) await writer.write(chunk);
       await writer.close();
     } else {
       // Fallback: collect and writeFile
