@@ -6,6 +6,10 @@
 // v0 reading order is NAIVE (join the text-layer items) — the column/de-hyphen/header-strip
 // reconstruction (SPEC §3) is the next slice, as a re-runnable `extract_algo` layer on top.
 
+// Bump when the extraction pipeline changes (SPEC §3 reconstruction) — stamped on each document so a
+// later re-extract pass can find + re-process the stale ones (the binary is the source of truth).
+export const EXTRACT_ALGO = 'pdfjs-naive-v0';
+
 let _pdfjs = null;
 
 // Dynamic-import the vendored pdf.js + point its worker at the vendored sibling. Resolved against
@@ -43,17 +47,23 @@ export async function extractPdfText(bytes, { onProgress } = {}) {
   return { pageCount: pages.length, pages, text: full, pageOffsets };
 }
 
-// Ingest a picked PDF File → a first-class, searchable `document` item (SPEC-documents v0 §2a):
-// read bytes → extract text → store.addDocument (content-addressed blob + item + searchable text).
-// Returns { id, pageCount, ... } from the extraction. The binary is the source of truth; the text
-// is a re-runnable derived layer (the column/de-hyphen reconstruction is the next slice).
-export async function ingestPdfFile(file, store, { onProgress } = {}) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+// Ingest PDF BYTES → a first-class, searchable `document` item (SPEC-documents v0): extract text →
+// store.addDocument (content-addressed blob + item + searchable text + extract_algo stamp). The
+// binary is the source of truth; the text is a re-runnable derived layer (reconstruction next slice).
+// The shared core of both the human (file-picker) and agent (mount-drop) ingest paths.
+export async function ingestPdfBytes(bytes, store, { title, url, author, source = 'human', added_by, onProgress } = {}) {
   const extracted = await extractPdfText(bytes, { onProgress });
-  const title = (file.name || 'document').replace(/\.pdf$/i, '');
   const id = await store.addDocument({
-    bytes, ext: 'pdf', title, text: extracted.text,
-    pageCount: extracted.pageCount, pageOffsets: extracted.pageOffsets, source: 'human',
+    bytes, ext: 'pdf', title: title || 'document', url, author,
+    text: extracted.text, pageCount: extracted.pageCount, pageOffsets: extracted.pageOffsets,
+    extract_algo: EXTRACT_ALGO, source, added_by,
   });
   return { id, ...extracted };
+}
+
+// The human path: a picked File → bytes → ingestPdfBytes (title from the filename).
+export async function ingestPdfFile(file, store, opts = {}) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const title = opts.title || (file.name || 'document').replace(/\.pdf$/i, '');
+  return ingestPdfBytes(bytes, store, { ...opts, title, source: opts.source || 'human' });
 }

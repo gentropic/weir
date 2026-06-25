@@ -4090,6 +4090,15 @@ export class App {
     if (!this.reposVfs) throw new Error('repos folder not mounted — mount it (read-only) in Settings → Courier, or pass docs:[{markdown}]');
     return readMountedDoc(this.reposVfs, repoDir, path);   // pure + node-tested (the read returns TEXT)
   }
+  // Read a BINARY file (a dropped PDF) from the read-only repos mount, by path relative to the mount
+  // root (SPEC-documents agent ingest: the librarian drops files under the mounted GitHub folder).
+  // Same no-verbatim-conduit idiom as readRepoDoc, with a traversal guard. Returns a Uint8Array.
+  async readRepoBlob(path) {
+    if (!this.reposVfs) throw new Error('repos folder not mounted — mount your GitHub folder (read-only) in Settings → Courier');
+    const safe = String(path || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!safe || /(^|\/)\.\.(\/|$)/.test(safe)) throw new Error('invalid path (no traversal)');
+    return this.reposVfs.readFile('/' + safe, 'bytes');
+  }
   renderReposSettings() {
     const loc = document.getElementById('set-repos-loc');
     const acts = document.getElementById('set-repos-actions');

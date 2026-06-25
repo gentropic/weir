@@ -639,7 +639,7 @@ export class Store {
   // tier up); the extracted TEXT rides the normal lazy-content path (so it's searched + quotable);
   // the item record + page-offset map live in IDB. Content-addressed id → re-ingesting the same file
   // updates in place (idempotent). `text`/`pageOffsets` come from the caller (documents.js extraction).
-  async addDocument({ bytes, ext = 'pdf', title, author, url, text = '', pageCount, pageOffsets, source, added_by } = {}) {
+  async addDocument({ bytes, ext = 'pdf', title, author, url, text = '', pageCount, pageOffsets, extract_algo, source, added_by } = {}) {
     if (!bytes || !bytes.length) throw new Error('addDocument: no bytes');
     const buf = await crypto.subtle.digest('SHA-256', bytes);
     const sha = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -661,7 +661,7 @@ export class Store {
       title: title || `document ${sha.slice(0, 8)}`,
       author: author || undefined, url: url || undefined,
       content: text, published_at: now(), tags: ['document'],
-      structured: { doc_kind: ext === 'pdf' ? 'pdf' : ext, blob: { sha256: sha, ext, bytes: bytes.length, pages: pageCount }, pageOffsets },
+      structured: { doc_kind: ext === 'pdf' ? 'pdf' : ext, blob: { sha256: sha, ext, bytes: bytes.length, pages: pageCount }, pageOffsets, extract_algo },
       added_src: source || 'human', added_by: added_by || undefined,
     }]);
     return id;

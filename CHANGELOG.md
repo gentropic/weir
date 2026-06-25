@@ -6,6 +6,22 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Documents — `weir_ingestDocument` MCP tool (mount-drop, live + attributed) — 2026-06-24
+
+- The **agent ingest path** for the CCG-guidebook firehose: the librarian (free to download from
+  anywhere) **drops PDFs under the read-only repos folder** Arthur mounts in weir, then calls
+  `weir_ingestDocument({ paths: [...] })`. weir reads each binary from the mount (`app.readRepoBlob`,
+  traversal-guarded), extracts, and stores a first-class `document` — **no bytes over the wire, no
+  bridge-binary fetch** (the same no-verbatim-conduit idiom as `ingestRepo`'s `paths`).
+- **Ratify simplification (for librarian content):** documents land **LIVE + attributed**
+  (`source:agent` + identity, visible via `weir_listMine`) — **not** gated in the review queue. A
+  corpus the user explicitly asked for shouldn't flood it; provenance without a gate. (A general
+  trusted-agent ratify simplification is flagged for a focused pass.)
+- **Re-extraction seam:** each document is stamped with an `extract_algo` version
+  (`pdfjs-naive-v0`) so a later reconstruction pass (SPEC §3) can find + re-process the stale ones
+  in place — the binary is the source of truth. Shared ingest core: `documents.js` `ingestPdfBytes`
+  (human file-picker + agent mount-drop both route through it).
+
 ### Documents — drop a PDF, get a searchable item (SPEC-documents v0 §2a) — 2026-06-24
 
 - Beyond the extraction spike: a PDF is now a **first-class, searchable `document` item**.

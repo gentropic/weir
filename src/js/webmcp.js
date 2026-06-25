@@ -17,6 +17,7 @@ import { facetsOf, FACETS, buildCard } from './glass.js';
 import { listModels } from './llm.js';
 import { getKey } from './llmkeys.js';
 import { formatItem, citeKey, buildBibliography } from './cite.js';
+import { ingestPdfBytes } from './documents.js';   // SPEC-documents: agent ingest reads PDFs from the mount
 
 const LS_KEY = 'weir-webmcp';      // localStorage "port:token" (socket transport) — origin-scoped (no cross-origin read)
 // fs-transport machine token. NOTE: this is a CLUSTER-shared secret (the same token
@@ -1344,7 +1345,42 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, listMine, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
+  // SPEC-documents: ingest PDF(s) the agent has DROPPED under the read-only repos mount (the
+  // librarian downloads freely + drops files; weir reads them by path — no bytes over the wire, no
+  // bridge-binary fetch). Each PDF → a first-class searchable `document` item (content-addressed
+  // blob + extracted text + page-offset map). Ingested LIVE + attributed (source:agent) — NOT gated
+  // in the review queue (a corpus the user asked for shouldn't flood it; provenance via listMine).
+  async function ingestDocument(input = {}, client) {
+    if (!app) throw new Error('ingestDocument is only available in the running app');
+    if (!app.readRepoBlob || !app.reposVfs) throw new Error('repos folder not mounted — mount your GitHub folder (read-only) in Settings → Courier, drop the PDFs under it, then pass their `paths`');
+    const list = Array.isArray(input.paths) ? input.paths : (input.path ? [input.path] : []);
+    if (!list.length) throw new Error('pass `paths`: PDF paths relative to the mounted folder, e.g. ["weir-desk/documents/ccg/declustering.pdf"] (optionally [{ path, title, author, url }])');
+    const p = agentProv(client);
+    const added = []; const failed = {};
+    for (const entry of list) {
+      const path = typeof entry === 'string' ? entry : (entry && entry.path);
+      if (!path) { failed[String(entry)] = 'no-path'; continue; }
+      const meta = (entry && typeof entry === 'object') ? entry : {};
+      let bytes;
+      try { bytes = await app.readRepoBlob(path); }
+      catch (e) { failed[path] = `read-error: ${e.message}`; continue; }
+      if (!bytes || !bytes.length) { failed[path] = 'empty'; continue; }
+      try {
+        const title = meta.title || String(path).split(/[/\\]/).pop().replace(/\.pdf$/i, '');
+        const r = await ingestPdfBytes(bytes, store, { title, author: meta.author, url: meta.url, source: p.source, added_by: p.by });
+        added.push({ id: r.id, path, title, pages: r.pageCount, chars: r.text.length });
+      } catch (e) { failed[path] = `ingest-error: ${e.message}`; }
+    }
+    await store.flush();
+    if (app.renderAll) app.renderAll();
+    return {
+      added: added.length, items: added,
+      failed: Object.keys(failed).length ? failed : undefined,
+      note: 'Ingested LIVE + attributed (source:agent) — searchable now, not gated in the review queue. Extraction is naive v0 (re-extractable in place when the reconstruction pass lands).',
+    };
+  }
+
+  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, ingestDocument, listMine, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1618,6 +1654,17 @@ const TOOLS = [
       }, required: ['repo'],
     },
     annotations: { title: 'Ingest a repo as a source' },
+  },
+  {
+    name: 'weir_ingestDocument', fn: 'ingestDocument',
+    description: 'Ingest PDF document(s) you have DROPPED under the read-only repos folder Arthur mounted in weir (Settings → Courier) — the way to add binary documents at fidelity without a verbatim conduit or a bridge fetch. YOU (free to download from anywhere) save the PDFs under the mounted GitHub folder, then pass their `paths` (relative to the mount root, e.g. ["weir-desk/documents/ccg/declustering.pdf"], optionally [{ path, title?, author?, url? }]). weir reads each file, extracts its text (+ a per-page offset map for page-anchored weir_quote), and stores it as a first-class, content-addressed `document` item: full-text searchable, quotable, catalogable, relatable. Idempotent (same bytes → same id, updates in place). Ingested LIVE + attributed (source:agent + your identity) — NOT gated in the review queue (a corpus the user asked for shouldn\'t flood it; see your footprint via weir_listMine). NOTE: extraction is currently naive reading order (v0) — fine for single-column; two-column docs (CCG guidebooks) shuffle until the reconstruction pass ships, after which the corpus is re-extracted in place (the binary is the source of truth). Returns { added, items:[{id,path,title,pages,chars}], failed?:{path:reason} }.',
+    inputSchema: {
+      type: 'object', properties: {
+        paths: { type: 'array', description: 'PDF paths relative to the mounted folder root: ["weir-desk/documents/x.pdf", …] or [{ path, title?, author?, url? }]. weir reads the named files itself (no bytes through this call).', items: {} },
+        path: { type: 'string', description: 'Convenience: a single path (use `paths` for batches)' },
+      },
+    },
+    annotations: { title: 'Ingest dropped PDF documents' },
   },
   {
     name: 'weir_catalogItem', fn: 'catalogItem',

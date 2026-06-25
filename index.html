@@ -13888,7 +13888,7 @@ class Store {
   // tier up); the extracted TEXT rides the normal lazy-content path (so it's searched + quotable);
   // the item record + page-offset map live in IDB. Content-addressed id → re-ingesting the same file
   // updates in place (idempotent). `text`/`pageOffsets` come from the caller (documents.js extraction).
-  async addDocument({ bytes, ext = 'pdf', title, author, url, text = '', pageCount, pageOffsets, source, added_by } = {}) {
+  async addDocument({ bytes, ext = 'pdf', title, author, url, text = '', pageCount, pageOffsets, extract_algo, source, added_by } = {}) {
     if (!bytes || !bytes.length) throw new Error('addDocument: no bytes');
     const buf = await crypto.subtle.digest('SHA-256', bytes);
     const sha = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -13910,7 +13910,7 @@ class Store {
       title: title || `document ${sha.slice(0, 8)}`,
       author: author || undefined, url: url || undefined,
       content: text, published_at: now(), tags: ['document'],
-      structured: { doc_kind: ext === 'pdf' ? 'pdf' : ext, blob: { sha256: sha, ext, bytes: bytes.length, pages: pageCount }, pageOffsets },
+      structured: { doc_kind: ext === 'pdf' ? 'pdf' : ext, blob: { sha256: sha, ext, bytes: bytes.length, pages: pageCount }, pageOffsets, extract_algo },
       added_src: source || 'human', added_by: added_by || undefined,
     }]);
     return id;
@@ -16293,6 +16293,10 @@ class SearchIndex {
 // v0 reading order is NAIVE (join the text-layer items) — the column/de-hyphen/header-strip
 // reconstruction (SPEC §3) is the next slice, as a re-runnable `extract_algo` layer on top.
 
+// Bump when the extraction pipeline changes (SPEC §3 reconstruction) — stamped on each document so a
+// later re-extract pass can find + re-process the stale ones (the binary is the source of truth).
+const EXTRACT_ALGO = 'pdfjs-naive-v0';
+
 let _pdfjs = null;
 
 // Dynamic-import the vendored pdf.js + point its worker at the vendored sibling. Resolved against
@@ -16330,19 +16334,25 @@ async function extractPdfText(bytes, { onProgress } = {}) {
   return { pageCount: pages.length, pages, text: full, pageOffsets };
 }
 
-// Ingest a picked PDF File → a first-class, searchable `document` item (SPEC-documents v0 §2a):
-// read bytes → extract text → store.addDocument (content-addressed blob + item + searchable text).
-// Returns { id, pageCount, ... } from the extraction. The binary is the source of truth; the text
-// is a re-runnable derived layer (the column/de-hyphen reconstruction is the next slice).
-async function ingestPdfFile(file, store, { onProgress } = {}) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+// Ingest PDF BYTES → a first-class, searchable `document` item (SPEC-documents v0): extract text →
+// store.addDocument (content-addressed blob + item + searchable text + extract_algo stamp). The
+// binary is the source of truth; the text is a re-runnable derived layer (reconstruction next slice).
+// The shared core of both the human (file-picker) and agent (mount-drop) ingest paths.
+async function ingestPdfBytes(bytes, store, { title, url, author, source = 'human', added_by, onProgress } = {}) {
   const extracted = await extractPdfText(bytes, { onProgress });
-  const title = (file.name || 'document').replace(/\.pdf$/i, '');
   const id = await store.addDocument({
-    bytes, ext: 'pdf', title, text: extracted.text,
-    pageCount: extracted.pageCount, pageOffsets: extracted.pageOffsets, source: 'human',
+    bytes, ext: 'pdf', title: title || 'document', url, author,
+    text: extracted.text, pageCount: extracted.pageCount, pageOffsets: extracted.pageOffsets,
+    extract_algo: EXTRACT_ALGO, source, added_by,
   });
   return { id, ...extracted };
+}
+
+// The human path: a picked File → bytes → ingestPdfBytes (title from the filename).
+async function ingestPdfFile(file, store, opts = {}) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const title = opts.title || (file.name || 'document').replace(/\.pdf$/i, '');
+  return ingestPdfBytes(bytes, store, { ...opts, title, source: opts.source || 'human' });
 }
 
 // ── src/js/parse/xml.js ──
@@ -23270,6 +23280,15 @@ class App {
     if (!this.reposVfs) throw new Error('repos folder not mounted — mount it (read-only) in Settings → Courier, or pass docs:[{markdown}]');
     return readMountedDoc(this.reposVfs, repoDir, path);   // pure + node-tested (the read returns TEXT)
   }
+  // Read a BINARY file (a dropped PDF) from the read-only repos mount, by path relative to the mount
+  // root (SPEC-documents agent ingest: the librarian drops files under the mounted GitHub folder).
+  // Same no-verbatim-conduit idiom as readRepoDoc, with a traversal guard. Returns a Uint8Array.
+  async readRepoBlob(path) {
+    if (!this.reposVfs) throw new Error('repos folder not mounted — mount your GitHub folder (read-only) in Settings → Courier');
+    const safe = String(path || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!safe || /(^|\/)\.\.(\/|$)/.test(safe)) throw new Error('invalid path (no traversal)');
+    return this.reposVfs.readFile('/' + safe, 'bytes');
+  }
   renderReposSettings() {
     const loc = document.getElementById('set-repos-loc');
     const acts = document.getElementById('set-repos-actions');
@@ -23680,6 +23699,7 @@ class NotePane {
 // gated by Chromium's Local/Private Network Access, so we inject gcuFetch — the
 // shim then routes its HTTP long-poll transport through the @gcu/bridge extension,
 // exactly like weir's LLM client reaches Lemonade. (See gentropic/webmcp SPEC §4.1.)
+
 
 
 
@@ -25013,7 +25033,42 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { migrated: counts };
   }
 
-  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, listMine, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
+  // SPEC-documents: ingest PDF(s) the agent has DROPPED under the read-only repos mount (the
+  // librarian downloads freely + drops files; weir reads them by path — no bytes over the wire, no
+  // bridge-binary fetch). Each PDF → a first-class searchable `document` item (content-addressed
+  // blob + extracted text + page-offset map). Ingested LIVE + attributed (source:agent) — NOT gated
+  // in the review queue (a corpus the user asked for shouldn't flood it; provenance via listMine).
+  async function ingestDocument(input = {}, client) {
+    if (!app) throw new Error('ingestDocument is only available in the running app');
+    if (!app.readRepoBlob || !app.reposVfs) throw new Error('repos folder not mounted — mount your GitHub folder (read-only) in Settings → Courier, drop the PDFs under it, then pass their `paths`');
+    const list = Array.isArray(input.paths) ? input.paths : (input.path ? [input.path] : []);
+    if (!list.length) throw new Error('pass `paths`: PDF paths relative to the mounted folder, e.g. ["weir-desk/documents/ccg/declustering.pdf"] (optionally [{ path, title, author, url }])');
+    const p = agentProv(client);
+    const added = []; const failed = {};
+    for (const entry of list) {
+      const path = typeof entry === 'string' ? entry : (entry && entry.path);
+      if (!path) { failed[String(entry)] = 'no-path'; continue; }
+      const meta = (entry && typeof entry === 'object') ? entry : {};
+      let bytes;
+      try { bytes = await app.readRepoBlob(path); }
+      catch (e) { failed[path] = `read-error: ${e.message}`; continue; }
+      if (!bytes || !bytes.length) { failed[path] = 'empty'; continue; }
+      try {
+        const title = meta.title || String(path).split(/[/\\]/).pop().replace(/\.pdf$/i, '');
+        const r = await ingestPdfBytes(bytes, store, { title, author: meta.author, url: meta.url, source: p.source, added_by: p.by });
+        added.push({ id: r.id, path, title, pages: r.pageCount, chars: r.text.length });
+      } catch (e) { failed[path] = `ingest-error: ${e.message}`; }
+    }
+    await store.flush();
+    if (app.renderAll) app.renderAll();
+    return {
+      added: added.length, items: added,
+      failed: Object.keys(failed).length ? failed : undefined,
+      note: 'Ingested LIVE + attributed (source:agent) — searchable now, not gated in the review queue. Extraction is naive v0 (re-extractable in place when the reconstruction pass lands).',
+    };
+  }
+
+  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, ingestDocument, listMine, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -25287,6 +25342,17 @@ const TOOLS = [
       }, required: ['repo'],
     },
     annotations: { title: 'Ingest a repo as a source' },
+  },
+  {
+    name: 'weir_ingestDocument', fn: 'ingestDocument',
+    description: 'Ingest PDF document(s) you have DROPPED under the read-only repos folder Arthur mounted in weir (Settings → Courier) — the way to add binary documents at fidelity without a verbatim conduit or a bridge fetch. YOU (free to download from anywhere) save the PDFs under the mounted GitHub folder, then pass their `paths` (relative to the mount root, e.g. ["weir-desk/documents/ccg/declustering.pdf"], optionally [{ path, title?, author?, url? }]). weir reads each file, extracts its text (+ a per-page offset map for page-anchored weir_quote), and stores it as a first-class, content-addressed `document` item: full-text searchable, quotable, catalogable, relatable. Idempotent (same bytes → same id, updates in place). Ingested LIVE + attributed (source:agent + your identity) — NOT gated in the review queue (a corpus the user asked for shouldn\'t flood it; see your footprint via weir_listMine). NOTE: extraction is currently naive reading order (v0) — fine for single-column; two-column docs (CCG guidebooks) shuffle until the reconstruction pass ships, after which the corpus is re-extracted in place (the binary is the source of truth). Returns { added, items:[{id,path,title,pages,chars}], failed?:{path:reason} }.',
+    inputSchema: {
+      type: 'object', properties: {
+        paths: { type: 'array', description: 'PDF paths relative to the mounted folder root: ["weir-desk/documents/x.pdf", …] or [{ path, title?, author?, url? }]. weir reads the named files itself (no bytes through this call).', items: {} },
+        path: { type: 'string', description: 'Convenience: a single path (use `paths` for batches)' },
+      },
+    },
+    annotations: { title: 'Ingest dropped PDF documents' },
   },
   {
     name: 'weir_catalogItem', fn: 'catalogItem',
@@ -25688,7 +25754,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '8537b1f';          // short content hash of the bundle (build id)
+const COMMIT = 'ddcedbf';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
