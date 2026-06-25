@@ -754,6 +754,16 @@ answer).
 - **Sync** (the open question, SPEC §10). Lean on the FSA archive dir +
   syncthing/rclone, or a `@gcu/pointer`/Trystero CRDT for read-state. Deferred
   until the need is real (multi-device).
+- **WebXR mode — "walk your library" (for the fun of it; a lazy-afternoon someday).** The glass
+  catalog is unusually well-suited to a spatial view: the **0–9 call-number classification** is
+  already a shelving metaphor (stacks you walk), the **knowledge graph** (typed `related` edges,
+  GLASS §10) is a literal 3D node web you could fly through, **FRBR works** cluster their
+  expressions, and timestamped streams are a timeline you move along. A `[data-layout="xr"]`-style
+  mode (fits the new layout-mode resolver) that drops into WebXR (`navigator.xr`, immersive-vr/ar)
+  and renders the corpus as navigable space — Three.js or raw WebGL, vendored-as-source per the
+  zero-dep ethos (a real test of it — WebXR + a 3D lib in one self-contained HTML is the fun
+  constraint). Purely a visualization/exploration surface; reading/curation stay 2D. No commitment,
+  no timeline — parked here for the day visualization sounds like a good afternoon.
 
 ## Known limitations / tech debt
 
