@@ -289,4 +289,27 @@ assert.equal(syncShouldScan({ rev: 5, lastRev: 5, cycle: 3, forceEvery: 10, forc
   assert.equal(JSON.parse(await read(local, MANIFEST)).cursor, 'cTree', 'cursor set from listTree');
 }
 
+// ── masked-CORS-on-200: Dropbox `files/upload` returns 200 but NO Access-Control-Allow-Origin, so
+// the browser blocks the response and fetch THROWS even though the bytes landed. push() must CONFIRM
+// via metadata (content_hash match) and record the file — not re-push it forever (the all-day
+// console-error accumulation). ──
+{
+  const local = await mk();
+  await write(local, '/items/x.ndjson', '{"id":"i1"}');
+  const stored = new Map();
+  const remote = {
+    mkdir: async () => {},
+    // the upload SUCCEEDS server-side (bytes stored) but the CORS-blocked 200 makes fetch throw
+    writeFile: async (p, data) => { stored.set(p, data); throw new TypeError('Failed to fetch'); },
+    // get_metadata is RPC (CORS-readable) → returns the real content_hash for the confirm
+    stat: async (p) => { if (!stored.has(p)) throw new Error('ENOENT'); const d = stored.get(p); return { type: 'file', size: d.length, contentHash: await syncDropboxContentHash(d) }; },
+  };
+  const r = await new SyncEngine({ local, remote }).push();
+  assert.equal(r.pushed, 1, 'masked-CORS upload is CONFIRMED via metadata + recorded (not lost to the throw)');
+  assert.ok(stored.has('/items/x.ndjson'), 'the bytes did land on the remote');
+  // idempotent: a fresh engine reloads the persisted manifest → does NOT re-push (no daily accumulation)
+  const r2 = await new SyncEngine({ local, remote }).push();
+  assert.equal(r2.pushed, 0, 'after confirmation the file is not re-pushed');
+}
+
 console.log('sync (engine mirror) smoke ok');

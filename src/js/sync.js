@@ -235,13 +235,35 @@ class SyncEngine {
     // 429/Retry-After backoff in `_send` (vfs 0.3.0), so per-file at low concurrency is fine.
     await syncPool(toUpload, Math.min(this.concurrency, PUSH_CONCURRENCY), async ({ p, sig }) => {
       const data = await this.local.readFile(p, 'bytes');
-      await syncRetry(() => this.remote.writeFile(p, data));
+      await this._uploadConfirmed(p, data);
       man.files[p] = sig; pushed++; if (paths.length < 100) paths.push(p);   // sample for the activity readout
       if (pushed % CHECKPOINT === 0) await this._saveManifest();
       if (pushed % PROGRESS_EVERY === 0 || pushed === toUpload.length) this._progress('push', pushed, toUpload.length);
     });
     await this._saveManifest();
     return { pushed, skipped: scanned - toUpload.length, scanned, heldForRole, paths };
+  }
+
+  // Upload one file and CONFIRM it landed. Dropbox's content endpoint (`files/upload`, on
+  // content.dropboxapi.com) frequently returns 200 but WITHOUT an `Access-Control-Allow-Origin`
+  // header, so the browser blocks the response and `fetch` THROWS even though the bytes were stored.
+  // Left unhandled, the file is never recorded as synced and the 2-min auto-sync re-pushes it forever
+  // (thousands of console errors accumulate over a day). On a throw we verify out-of-band via
+  // `files/get_metadata` (RPC on api.dropboxapi.com, which IS CORS-readable): if the remote
+  // content_hash matches our bytes, the upload SUCCEEDED — accept it. Only a genuine miss/mismatch
+  // re-throws (→ syncRetry backs off for real rate-limits/transient failures). On non-Dropbox
+  // backends (memory/FSA) writeFile doesn't throw, so this is a no-op fast path.
+  async _uploadConfirmed(p, data) {
+    let expected = null;
+    await syncRetry(async () => {
+      try { await this.remote.writeFile(p, data); }
+      catch (e) {
+        if (expected == null) expected = await syncDropboxContentHash(data);   // computed once, cached across retries
+        let st = null; try { st = await this.remote.stat(p); } catch { /* not there */ }
+        if (!(st && st.contentHash && st.contentHash === expected)) throw e;   // genuine miss → retry/backoff
+        // else: masked-CORS-on-200 — the bytes are on Dropbox, the browser just couldn't read the 200
+      }
+    });
   }
 
   // remote → local. Three modes: incremental (have a cursor + a change feed), bootstrap (have a

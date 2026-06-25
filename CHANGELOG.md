@@ -6,6 +6,21 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — confirm uploads via metadata (the masked-CORS-on-200 root cause) — 2026-06-25
+
+- **The real reason the "CORS wall" kept accumulating** (thousands of console errors per day): Dropbox's
+  `files/upload` (on `content.dropboxapi.com`) returns **`200` but with no `Access-Control-Allow-Origin`
+  header**, so the browser blocks weir from reading the *successful* response and `fetch` throws — even
+  though the bytes landed. weir never recorded the file as synced, so the 2-min auto-sync re-pushed it
+  forever. (The earlier `Dropbox-API-Arg` escaping fixed unicode paths; it could not fix this, because
+  this isn't a malformed request — it's a successful upload the browser can't see.)
+- **Fix — confirm out-of-band.** `push()` now uploads via `_uploadConfirmed`: on a throw, it verifies
+  via **`files/get_metadata`** (RPC on `api.dropboxapi.com`, which *is* CORS-readable) — if the remote
+  `content_hash` matches the local bytes, the upload **succeeded**, so it records the file and advances
+  the manifest instead of retrying. Only a genuine miss/mismatch re-throws (→ real backoff). The
+  corpus drains in one pass and stops re-pushing; the daily error pile-up ends. Test:
+  `tools/smoke-sync.mjs` (masked-CORS upload → confirmed + recorded + not re-pushed).
+
 ### Documents — §3 base: geometry-aware extraction + reading-order reconstruction — 2026-06-24
 
 - The foundation the reconstruction (and a future `@gcu/pdf` toolkit) builds on. `extractPdfElements`
