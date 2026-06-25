@@ -4356,7 +4356,9 @@ class NotePane {
     this.app = app;
     this.noteId = noteId;        // stacks note id (editing, or after first save)
     this.target = target;        // { id, title, type } of the annotated item, or null
-    this.mode = app._noteMode || 'split';
+    // Default to single-column edit on the touch layouts (a split editor+preview is too cramped in
+    // the narrow tablet/reader pane); desktop keeps split. A saved per-session choice still wins.
+    this.mode = app._noteMode || (document.documentElement.dataset.layout === 'workspace' ? 'split' : 'edit');
     this.editor = null;
     this._pvTimer = null;
     this._inited = false;

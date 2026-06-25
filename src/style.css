@@ -696,15 +696,18 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
    is lifted out of the list flow into a fixed right pane. It can't be reparented (the row is
    position:relative for .iactions), so it's fixed and cleared from the topbar via --content-top
    (set in app.js — robust to the topbar wrapping). bottom:54px clears the bottom nav. ── */
-[data-layout="tablet"] .stream { margin-right: 56%; padding-right: 0; }   /* rows in the left ~44% */
-[data-layout="tablet"] .item.expanded .iexpand {
+/* Scoped to .ws-solo (the single stream panel). When a NOTE opens, the rails workspace goes
+   multi-panel (ws-solo off) → the master-detail steps aside and the note shows alongside the list
+   via the normal rails split, instead of the fixed pane overlaying it. */
+[data-layout="tablet"] .ws-solo .stream { margin-right: 56%; padding-right: 0; }   /* rows in the left ~44% */
+[data-layout="tablet"] .ws-solo .item.expanded .iexpand {
   position: fixed; top: var(--content-top, 52px); right: 0; bottom: 54px; width: 56%;
   margin-left: 0; overflow-y: auto; padding: 24px 30px 40px; z-index: 80;
   background: var(--sw-bg); border-left: 1px solid var(--au-border);
 }
 [data-layout="tablet"] .icontent { max-width: 70ch; }                    /* readable measure in the wide pane */
 /* empty-state in the reading pane when nothing is open */
-[data-layout="tablet"] .workspace:not(:has(.item.expanded))::after {
+[data-layout="tablet"] .workspace.ws-solo:not(:has(.item.expanded))::after {
   content: "Select an item to read"; position: fixed; top: var(--content-top, 52px); right: 0; bottom: 54px; width: 56%;
   display: flex; align-items: center; justify-content: center; z-index: 70;
   color: var(--au-fg-soft); font-family: var(--au-font-mono); font-size: 13px;

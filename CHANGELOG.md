@@ -6,6 +6,18 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Responsive — notes on tablet: fix + note-alongside (polish B) — 2026-06-24
+
+- **Fix:** opening a note on the tablet *broke* the master-detail — it assumed the workspace was
+  always the single stream panel (`ws-solo`), so a second (note) panel left a corrupted half-pane
+  state. The master-detail CSS (list margin, fixed reading pane, placeholder) is now scoped to
+  `.ws-solo`; when a note opens, the layout steps aside and the note shows **alongside the list**
+  via the normal rails split (stream | note tabs).
+- **Polish:** new note panes default to single-column **edit** mode (not the editor+preview *split*,
+  which is too cramped in the narrow pane) on the touch layouts; desktop keeps split. A saved
+  per-session mode choice still wins. Playwright-verified (master-detail intact when solo; note
+  opens clean when not).
+
 ### Responsive — in-pane reading toolbar (prev/next + actions) — 2026-06-24
 
 - A reading toolbar at the top of the opened item: **← prev / next →** (the reading-walk —
