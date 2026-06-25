@@ -303,6 +303,8 @@ async function boot() {
       console.log('[pdf] page 1 preview:', r.pages[0]?.text.slice(0, 400));
       return r;
     },
+    // Bytes-based extract (scriptable, for tests/Playwright) — same pipeline as testPdf, no picker.
+    extractPdf: (bytes) => extractPdfText(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)),
     // Dropbox upload CORS diagnostic: upload tiny files 3 ways to pinpoint the failure.
     // A CORS-blocked fetch THROWS ("Failed to fetch"); a readable one resolves with a status + ACAO.
     // So: ascii-ok? non-ascii-raw fails? non-ascii-ESCAPED ok? → tells us if it's the Dropbox-API-Arg

@@ -6,6 +6,23 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Documents — §3 base: geometry-aware extraction + reading-order reconstruction — 2026-06-24
+
+- The foundation the reconstruction (and a future `@gcu/pdf` toolkit) builds on. `extractPdfElements`
+  now captures the **flat positioned-element model** (per-run bbox + font in PDF user space — the
+  pdfgeologist/pdfplumber model) instead of discarding geometry; `reconstructText` (a **pure,
+  node-tested** function) rebuilds reading order from it — line grouping by baseline y, left→right
+  order, **x-gap space insertion**, paragraph breaks — replacing the naive item-join. `extractPdfText`
+  composes the two; `pageOffsets` now point exactly at each page's text start (weir_quote seed). Stamp
+  bumped to `pdfjs-geom-v1`.
+- **Verified on real CCG guidebooks** (via Playwright over the dev server + a new `__weir.extractPdf`
+  bytes hook): Vol 06 → 51 pages / 81k chars / 210 ms, and **body pages read cleanly** (correct order,
+  spacing, paragraph breaks). Finding: at least some CCG guidebooks are **single-column**, so the text
+  is already good — **column detection (XY-cut) is less urgent than assumed**; a pilot across a few
+  vols should decide, not the assumption. Test: `tools/smoke-reconstruct.mjs`.
+- Still deferred (next slices): column detection for genuinely two-column docs, de-hyphenation,
+  header/footer strip, the relational toolkit, tables.
+
 ### Documents — `weir_ingestDocument` MCP tool (mount-drop, live + attributed) — 2026-06-24
 
 - The **agent ingest path** for the CCG-guidebook firehose: the librarian (free to download from

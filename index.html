@@ -16290,12 +16290,15 @@ class SearchIndex {
 // index.html — it's dynamic-imported on first document use, so it never weighs on base-app
 // startup, and the cache-first service worker runtime-caches it (offline after first open).
 //
-// v0 reading order is NAIVE (join the text-layer items) — the column/de-hyphen/header-strip
-// reconstruction (SPEC §3) is the next slice, as a re-runnable `extract_algo` layer on top.
+// Reconstruction (SPEC §3 / docs/design/pdf-reconstruction.md) is layered as a re-runnable
+// `extract_algo` step over the geometry model. THIS slice — the base — captures per-item geometry
+// (the pdfgeologist/pdfplumber flat positioned-element model) and rebuilds reading order from it
+// (line grouping + x-gap spaces + paragraph breaks). Column detection (XY-cut), de-hyphenation, and
+// header-strip are the NEXT slices — so two-column pages still interleave until then.
 
-// Bump when the extraction pipeline changes (SPEC §3 reconstruction) — stamped on each document so a
-// later re-extract pass can find + re-process the stale ones (the binary is the source of truth).
-const EXTRACT_ALGO = 'pdfjs-naive-v0';
+// Bump when the extraction pipeline changes — stamped on each document so a later re-extract pass can
+// find + re-process the stale ones (the binary is the source of truth).
+const EXTRACT_ALGO = 'pdfjs-geom-v1';
 
 let _pdfjs = null;
 
@@ -16310,28 +16313,89 @@ async function loadPdfjs() {
   return lib;
 }
 
-// Extract per-page text from PDF bytes (Uint8Array). Returns
-//   { pageCount, pages:[{ page, text }], text, pageOffsets:[{ page, start }] }
-// pageOffsets map a char offset in `text` back to a page → the seed for page-anchored weir_quote.
-async function extractPdfText(bytes, { onProgress } = {}) {
+// Extract the flat positioned-element model from PDF bytes (Uint8Array) — the base the whole
+// reconstruction (and the future @gcu/pdf toolkit) builds on. One row per text run, with its bbox in
+// PDF user space (origin bottom-left, y INCREASES UPWARD — same convention as pdfminer/pdfgeologist):
+//   { page, x0, y0, x1, y1, str, size, font }   (y0 = baseline ≈ bottom, y1 = top)
+// Needs pdf.js (browser). Returns { pageCount, elements }.
+async function extractPdfElements(bytes, { onProgress } = {}) {
   const pdfjs = await loadPdfjs();
   const doc = await pdfjs.getDocument({ data: bytes }).promise;
-  const pages = []; const pageOffsets = []; let full = '';
+  const elements = [];
   try {
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);
       const tc = await page.getTextContent();
-      const text = tc.items.map((it) => (it.str || '')).join(' ').replace(/\s+/g, ' ').trim();
-      pageOffsets.push({ page: n, start: full.length });
-      pages.push({ page: n, text });
-      full += (full ? '\n\n' : '') + text;
+      for (const it of tc.items) {
+        const str = it.str || '';
+        if (!str) continue;
+        const t = it.transform || [1, 0, 0, 1, 0, 0];   // [a,b,c,d,e,f]; (e,f) = baseline-left x,y
+        const x0 = t[4], y0 = t[5];
+        const w = it.width || 0;
+        const h = it.height || Math.abs(t[3]) || Math.hypot(t[1], t[3]) || 0;
+        elements.push({ page: n, x0, y0, x1: x0 + w, y1: y0 + h, str, size: h, font: it.fontName || '' });
+      }
       try { page.cleanup(); } catch { /* */ }
       if (onProgress) onProgress(n, doc.numPages);
     }
   } finally {
     try { await doc.destroy(); } catch { /* */ }
   }
-  return { pageCount: pages.length, pages, text: full, pageOffsets };
+  return { pageCount: doc.numPages, elements };
+}
+
+// Reconstruct reading-order text from the element model — PURE (no pdf.js → node-testable). Groups
+// elements into lines by baseline y, orders lines top→bottom and items left→right, inserts spaces
+// across x-gaps, and breaks paragraphs on larger y-gaps. Tolerances scale to the page's median font
+// size (resolution-independent). Single-column reading order; columns are the next slice.
+function reconstructText(elements, pageCount) {
+  const pages = []; const pageOffsets = []; let full = '';
+  for (let n = 1; n <= pageCount; n++) {
+    const els = elements.filter((e) => e.page === n);
+    const text = els.length ? reconstructPage(els) : '';
+    if (full) full += '\n\n';
+    pageOffsets.push({ page: n, start: full.length });   // where THIS page's text begins in `full`
+    pages.push({ page: n, text });
+    full += text;
+  }
+  return { pageCount, pages, text: full, pageOffsets };
+}
+
+function reconstructPage(els) {
+  const sizes = els.map((e) => e.size).filter((s) => s > 0).sort((a, b) => a - b);
+  const med = sizes.length ? sizes[sizes.length >> 1] : 10;
+  const lineTol = med * 0.5;     // same line if baselines within half a font height
+  const gapSpace = med * 0.25;   // a space across an x-gap at least this wide (PDFs omit spaces)
+  const paraGap = med * 1.6;     // a blank line between lines farther apart than this
+  // top→bottom (y DESC in PDF space), then left→right
+  const sorted = [...els].sort((a, b) => (b.y0 - a.y0) || (a.x0 - b.x0));
+  const lines = []; let cur = null;
+  for (const e of sorted) {
+    if (cur && Math.abs(e.y0 - cur.y) <= lineTol) cur.items.push(e);
+    else { cur = { y: e.y0, items: [e] }; lines.push(cur); }
+  }
+  const out = []; let prevY = null;
+  for (const line of lines) {
+    const items = line.items.sort((a, b) => a.x0 - b.x0);
+    let s = ''; let prev = null;
+    for (const it of items) {
+      if (prev && (it.x0 - prev.x1) > gapSpace) s += ' ';
+      s += it.str; prev = it;
+    }
+    s = s.replace(/\s+/g, ' ').trim();
+    if (!s) continue;
+    if (prevY != null && (prevY - line.y) > paraGap) out.push('');   // paragraph break
+    out.push(s); prevY = line.y;
+  }
+  return out.join('\n');
+}
+
+// Extract per-page reading-order text from PDF bytes. Returns
+//   { pageCount, pages:[{ page, text }], text, pageOffsets:[{ page, start }] }
+// pageOffsets map a char offset in `text` back to a page → the seed for page-anchored weir_quote.
+async function extractPdfText(bytes, { onProgress } = {}) {
+  const { pageCount, elements } = await extractPdfElements(bytes, { onProgress });
+  return reconstructText(elements, pageCount);
 }
 
 // Ingest PDF BYTES → a first-class, searchable `document` item (SPEC-documents v0): extract text →
@@ -25754,7 +25818,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'ddcedbf';          // short content hash of the bundle (build id)
+const COMMIT = 'dbb778a';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
@@ -26025,6 +26089,8 @@ async function boot() {
       console.log('[pdf] page 1 preview:', r.pages[0]?.text.slice(0, 400));
       return r;
     },
+    // Bytes-based extract (scriptable, for tests/Playwright) — same pipeline as testPdf, no picker.
+    extractPdf: (bytes) => extractPdfText(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)),
     // Dropbox upload CORS diagnostic: upload tiny files 3 ways to pinpoint the failure.
     // A CORS-blocked fetch THROWS ("Failed to fetch"); a readable one resolves with a status + ACAO.
     // So: ascii-ok? non-ascii-raw fails? non-ascii-ESCAPED ok? → tells us if it's the Dropbox-API-Arg
