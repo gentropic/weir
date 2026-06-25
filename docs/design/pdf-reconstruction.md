@@ -46,6 +46,46 @@ the **geometry-as-table model + the relational toolkit are the reusable gold**; 
 auto-tables stay hard (hence the spec's stance: rule-based column pass for *search*, and *show the
 page-image region* where text fails rather than fabricate structure).
 
+## The rest of the constellation — four prior arts, four strategies
+
+A survey of the GCU repos turned up *three more* PDF implementations beyond pdfgeologist. The ideal
+toolkit converges all four — each contributes a different layer:
+
+| where | approach | what to harvest |
+|---|---|---|
+| **pdfgeologist** (`personal/reference/`, gitignored) | pdfminer + geometry reasoning, relational queries, table-stitch | the **deep geometry model** — the default tier |
+| **holocene** `src/holocene/research/pdf_handler.py` + `pdf_metadata_extractor.py` (Python) | **fallback chain** pypdf → pdfplumber → **pytesseract OCR**; + **LLM** metadata/summary; + (design `research_mode.md`) **vision-model figure/table** analysis | the **robustness ladder + enrichment** |
+| **weir** `documents.js` | pdf.js, content-addressed blob, re-runnable `extract_algo`, catalog-card output | the **browser-native runtime + architecture** |
+| **formatlegis-db** `verify.py` | pdfminer.six, **cross-checks extracted values against the source PDF** | **extraction-as-audit** |
+
+Two findings shape the design:
+- **Holocene already built the robustness pattern** (in Python): coverage-driven fallback to deeper
+  parsers then OCR, LLM-extracted metadata, and overnight multimodal figure reading. We port the
+  *patterns* (not the Python) — weir has the pieces (the cataloger LLM-as-service + canvas render).
+- **pdfgeologist → FormatLegis are the same domain** (environmental lab data, same collaborator):
+  extract analyte values from report PDFs → normalize the EDD → check against legislation limits. So
+  a GCU PDF toolkit + glass cataloging could host that **whole real pipeline**, not just the CCG
+  guidebooks — a much bigger payoff than a single corpus.
+
+### External references (gaps the prior art doesn't cover)
+- **pdfplumber** — the matured, open version of pdfgeologist's exact model (words/lines/rects as
+  objects; **lattice** vs **stream** tables). The API + table heuristics to aim at.
+- **camelot/tabula** — the ruled-vs-unruled (lattice/stream) table duality as an explicit mode.
+- **Docling / marker / Nougat / GROBID** — layout-ML / math / TEI extractors. Heavy/server-ish →
+  the **offline escape hatch** (run externally, ingest the markdown), *not* the in-browser default.
+- **tesseract.js** (WASM) — the scanned-page OCR rung. **pdf.js `getOperatorList`** — the vector
+  ops (lines/rects) for the table grid; **canvas render** — page images for OCR + annotation.
+
+## The robustness ladder + the audit move (cross-cutting)
+
+Beyond geometry, two things from the constellation belong in every extraction:
+- **Honest robustness ladder** (holocene): per-page **coverage metric** (chars vs. area) → if sparse,
+  a deeper geometry pass → if still sparse, **OCR** → else flag `text:'none'`. Emit a per-page
+  `text-layer | ocr | none` signal. **No silently-empty bodies** (auditable-by-construction).
+- **Extraction-as-audit** (formatlegis-db): because the binary is content-addressed and kept, an
+  extracted value / quote can be **re-verified against the source** — a GCU-native quality move that
+  pairs with page-bbox anchoring (`weir_quote`). "Trust, but the receipt is the binary."
+
 ## Mapping into weir §3 (sequence)
 
 1. **Step 0 — capture geometry in `extractPdfText`.** Per-item bbox + font from `getTextContent`
@@ -63,11 +103,24 @@ page-image region* where text fails rather than fabricate structure).
 Because extraction is a **re-runnable derived layer** stamped with `extract_algo` (the binary is the
 source of truth), the corpus can be ingested now (naive) and re-extracted in place as each step lands.
 
-## The bigger frame — a GCU PDF processing toolkit
+## The bigger frame — a `@gcu/pdf` toolkit (and how to get there)
 
 The geometry model isn't weir-specific. It wants to be a **GCU primitive** (a `@gcu/*` package,
 vendored-as-source per the zero-dep ethos — pure JS over `pdf.js`, no Python/server): the
-flat-element model + the relational toolkit + the reconstruction passes. **weir's §3 is the first
-consumer; FormatLegis** (the same collaborator's legislation-extraction project — `formatlegis-db`
-already uses pdfminer) is a natural **second consumer**. Designing the reconstruction as a shared
-toolkit rather than weir-internal pays off across the constellation.
+flat-element model + the relational toolkit + the reconstruction passes + the robustness ladder.
+
+**Spec status (surveyed 2026-06-24):** *no GCU PDF toolkit is specced anywhere.* **Auditable** —
+where the `@gcu/*` primitives live (vfs, librarian, …) — has **nothing PDF**; its specs are
+language/geometry/crypto/UI. The only existing spec is **weir's `SPEC-documents.md`** (§3 extraction
+queued) + holocene's design notes. So the toolkit is unclaimed territory; this note is the brief.
+
+**The build path — don't spec the primitive abstractly first.** Build **§3 inside weir** (geometry
+capture → reading order → robustness ladder), prove it on the CCG corpus, **then extract the reusable
+core to `@gcu/pdf` in `auditable/ext/`** — exactly how cursor-scan search graduated into
+`@gcu/librarian`. A real consumer (weir, then FormatLegis + the lab-data pipeline) validates the API
+before it's frozen, instead of guessing it upfront.
+
+**Consumers** (the constellation payoff): **weir §3** (first), then **FormatLegis** / the
+environmental-lab-data pipeline (same domain as pdfgeologist — extract → normalize EDD → check vs
+legislation limits), and any GCU surface that needs to ground answers in PDFs. Designing it as a
+shared, graduated primitive — rather than weir-internal — is what makes that whole pipeline possible.
