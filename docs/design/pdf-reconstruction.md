@@ -109,6 +109,16 @@ The geometry model isn't weir-specific. It wants to be a **GCU primitive** (a `@
 vendored-as-source per the zero-dep ethos — pure JS over `pdf.js`, no Python/server): the
 flat-element model + the relational toolkit + the reconstruction passes + the robustness ladder.
 
+**Design constraint — sealed-environment deployable.** A first-class requirement: the toolkit must run
+where there is **no install, no network, and a strict CSP** (`connect-src 'none'`) — a single-file,
+pure-JS, browser-sandbox build target with all deps vendored. This is the GCU ethos stated as a
+*deployment* property, and it's load-bearing: it's exactly why the **geometry-JS default is
+non-negotiable** (the Docling/GROBID/Nougat escape hatches need network or install, so they're
+unavailable in such environments — the native path is the *only* path there), and why
+**extraction-as-audit + page-bbox provenance** matter most (output must be *inspectable, not trusted
+blind* where you can't see the machine). Designing to this limit makes the toolkit stronger for every
+consumer.
+
 **Spec status (surveyed 2026-06-24):** *no GCU PDF toolkit is specced anywhere.* **Auditable** —
 where the `@gcu/*` primitives live (vfs, librarian, …) — has **nothing PDF**; its specs are
 language/geometry/crypto/UI. The only existing spec is **weir's `SPEC-documents.md`** (§3 extraction
