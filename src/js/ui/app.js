@@ -4,6 +4,7 @@
 // state, content is cached to avoid re-reading on every keystroke.
 
 import { createRails } from '../../../vendor/rails.js';   // dev-time clarity; build inlines rails.js → global createRails
+import { ingestPdfFile } from '../documents.js';   // SPEC-documents: pick a PDF → first-class searchable item
 import { relativeTime, isoTitle, escapeHtml, fmtDuration, fmtCount, fmtBytes, dailyCounts, sparkPoints } from './format.js';
 import { parseOpml, buildOpml } from '../opml.js';
 import { detectImport, isWrappedUrl, isSkippedUrl } from '../importers.js';
@@ -640,6 +641,27 @@ export class App {
   _syncContentTop() {
     const ws = document.querySelector('.workspace');
     if (ws) document.documentElement.style.setProperty('--content-top', Math.round(ws.getBoundingClientRect().top) + 'px');
+  }
+
+  // SPEC-documents §2a: pick PDF(s) → extract text → store as first-class searchable `document`
+  // items (content-addressed blob + item + searchable body) → show the last one.
+  async addDocument() {
+    if (!window.showOpenFilePicker) { this._catStatus('document import needs a Chromium browser (File System Access)'); return; }
+    let handles;
+    try { handles = await window.showOpenFilePicker({ multiple: true, types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }] }); }
+    catch { return; }   // user cancelled the picker
+    let last = null;
+    for (const h of handles) {
+      const file = await h.getFile();
+      this._catStatus(`ingesting ${file.name}…`);
+      try {
+        const r = await ingestPdfFile(file, this.store);
+        last = r.id;
+        this._catStatus(`added “${file.name}” — ${r.pageCount} pages, ${r.text.length.toLocaleString()} chars`);
+      } catch (e) { console.error('document ingest', e); this._catStatus(`failed: ${file.name} — ${e.message}`); }
+    }
+    this.renderAll();
+    if (last) { this.select(last); this.expand(last); }
   }
 
   setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
@@ -2629,6 +2651,7 @@ export class App {
       { label: 'Tag all shown items…', kind: 'Command', run: () => this.openBulkTagEditor() },
       { label: 'Manage tags…', kind: 'Command', run: () => this.openTagManager() },
       { label: 'New note / jot…', kind: 'Command', hint: 'stacks', run: () => this.openNoteEditor() },
+      { label: 'Add document (PDF)…', kind: 'Command', hint: 'library', run: () => this.addDocument() },
       { label: 'Rescan stacks folder', kind: 'Command', run: () => this.rescanStacks() },
       { label: 'Stacks filing rules…', kind: 'Command', run: () => this.openRules('stacks') },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },

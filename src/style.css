@@ -245,6 +245,7 @@ body {
 .pill.video, .pill.status { background: var(--au-info-soft); color: var(--au-info); }
 .pill.release, .pill.commit { background: var(--au-success-soft); color: var(--au-success); }
 .pill.paper { background: var(--au-selected-soft); color: var(--au-selected); }
+.pill.document, .pill.doc { background: var(--au-selected-soft); color: var(--au-selected); }
 .pill.book { background: var(--au-success-soft, rgba(120,180,120,0.15)); color: var(--au-success); }
 .pill.track, .pill.issue { background: var(--au-error-soft); color: var(--au-error); }
 .pill.podcast { background: var(--au-warn-soft); color: var(--au-warn); }

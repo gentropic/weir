@@ -634,6 +634,42 @@ export class Store {
 
   getItem(id) { return this.items.get(String(id)) || null; }
 
+  // SPEC-documents: ingest a binary document (PDF) as a first-class, searchable item. The BINARY is
+  // a content-addressed VFS file (/documents/blobs/<sha256>.<ext> — the /content lazy precedent, one
+  // tier up); the extracted TEXT rides the normal lazy-content path (so it's searched + quotable);
+  // the item record + page-offset map live in IDB. Content-addressed id → re-ingesting the same file
+  // updates in place (idempotent). `text`/`pageOffsets` come from the caller (documents.js extraction).
+  async addDocument({ bytes, ext = 'pdf', title, author, url, text = '', pageCount, pageOffsets, source, added_by } = {}) {
+    if (!bytes || !bytes.length) throw new Error('addDocument: no bytes');
+    const buf = await crypto.subtle.digest('SHA-256', bytes);
+    const sha = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const id = `document:${sha}`;
+    // synthetic, non-polled source (like 'stacks'/repos) so the items have a home (upsertItems needs it)
+    if (!this.feeds.get('documents')) {
+      await this.putFeed({
+        id: 'documents', name: 'Documents', adapter: 'document', url: '',
+        category: 'library', next_poll_at: 8.64e15,
+        retention: { unread_days: 'forever', read_days: 'forever' },
+      });
+    }
+    // binary → content-addressed VFS file (dedup + idempotent); resolves to FSAA/OPFS/IDB per the mount
+    await this._ensureDir('/documents/blobs');
+    await this.vfs.writeFile(`/documents/blobs/${sha}.${ext}`, bytes);
+    // item + searchable text (text rides the lazy /content pack via upsertItems → search indexes it)
+    await this.upsertItems([{
+      id, feed_id: 'documents', type: 'document',
+      title: title || `document ${sha.slice(0, 8)}`,
+      author: author || undefined, url: url || undefined,
+      content: text, published_at: now(), tags: ['document'],
+      structured: { doc_kind: ext === 'pdf' ? 'pdf' : ext, blob: { sha256: sha, ext, bytes: bytes.length, pages: pageCount }, pageOffsets },
+      added_src: source || 'human', added_by: added_by || undefined,
+    }]);
+    return id;
+  }
+
+  // Read a document's binary back (for viewing / re-extract). Returns a Uint8Array.
+  async getDocumentBlob(sha256, ext = 'pdf') { return this.vfs.readFile(`/documents/blobs/${sha256}.${ext}`, 'bytes'); }
+
   async getContent(id) {
     const rec = this.items.get(String(id));
     if (!rec || !rec.has_content) return null;

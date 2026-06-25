@@ -734,6 +734,7 @@ body {
 .pill.video, .pill.status { background: var(--au-info-soft); color: var(--au-info); }
 .pill.release, .pill.commit { background: var(--au-success-soft); color: var(--au-success); }
 .pill.paper { background: var(--au-selected-soft); color: var(--au-selected); }
+.pill.document, .pill.doc { background: var(--au-selected-soft); color: var(--au-selected); }
 .pill.book { background: var(--au-success-soft, rgba(120,180,120,0.15)); color: var(--au-success); }
 .pill.track, .pill.issue { background: var(--au-error-soft); color: var(--au-error); }
 .pill.podcast { background: var(--au-warn-soft); color: var(--au-warn); }
@@ -1969,6 +1970,22 @@ class Backend {
   createReadStream() { return null; }
   createWriter() { return null; }
 
+  // Resolve a path to its NATIVE source without decoding — a `File` the consumer
+  // can run its own stream/parse over and `postMessage`-transfer into a worker
+  // ("phonebook, then get out of the pipe"; spec_inbox/vfs-streaming-spec.md §1).
+  // Base fallback reads + wraps — works everywhere but is NOT lazy, so `nativeFile`
+  // stays false here; handle/OPFS override with the lazy native handle.
+  async toFile(p) {
+    const bytes = await this.readFile(p, 'bytes');
+    return new File([bytes], p.split('/').pop() || 'file');
+  }
+  // The backend-native file handle (FSAA `FileSystemFileHandle`, …), or null.
+  async resolveHandle() { return null; }
+  // Read a byte range WITHOUT reading the whole file. null ⇒ this backend can't
+  // seek — the caller checks `rangeReadable` and falls back knowingly; we never
+  // silently read a multi-GB file here (that would defeat the point).
+  async readRange() { return null; }
+
   // Worker-replication: return a structured-cloneable config that a worker
   // can pass back to the constructor (alongside the type string from
   // BACKEND_TYPES) to instantiate a peer backend that talks to the same
@@ -1989,6 +2006,8 @@ class Backend {
   get persistent() { return false; }
   get streamable() { return false; }
   get estimatable() { return false; }
+  get nativeFile() { return false; }    // toFile yields a lazy native handle (no full read)
+  get rangeReadable() { return false; } // readRange seeks (no full read)
   get exportable() { return true; }
   get portable() { return false; }
   get symlinks() { return false; }
@@ -2107,6 +2126,13 @@ class MemoryBackend extends Backend {
     }
     if (content instanceof Uint8Array) return new TextDecoder().decode(content);
     return content;
+  }
+
+  // Resident bytes → a range is a cheap subarray (no re-read).
+  get rangeReadable() { return true; }
+  async readRange(p, offset, length) {
+    const b = await this.readFile(p, 'bytes');
+    return b.subarray(offset, offset + length);
   }
 
   async writeFile(p, content) {
@@ -3292,6 +3318,17 @@ class HandleBackend extends Backend {
   get persistent() { return true; }
   get streamable() { return true; }
   get estimatable() { return true; }
+  get nativeFile() { return true; }
+  get rangeReadable() { return true; }
+
+  // Native File / handle off the FSA file handle — lazy (no read), transferable.
+  async toFile(p) { return (await this._resolveFile(p)).getFile(); }
+  async resolveHandle(p) { return this._resolveFile(p); }
+  // Blob.slice is lazy; .arrayBuffer() reads ONLY the slice (a true seek).
+  async readRange(p, offset, length) {
+    const file = await (await this._resolveFile(p)).getFile();
+    return new Uint8Array(await file.slice(offset, offset + length).arrayBuffer());
+  }
   get recursiveRemove() { return true; }   // removeEntry({recursive}) — see _rmDir
 
   async estimate() {
@@ -3386,6 +3423,18 @@ class OPFSBackend extends HandleBackend {
     if (this._fallback) return this._fallback.createReadStream(p);
     return super.createReadStream(p);
   }
+  async toFile(p) {
+    if (this._fallback) return this._fallback.toFile(p);
+    return super.toFile(p);
+  }
+  async resolveHandle(p) {
+    if (this._fallback) return this._fallback.resolveHandle ? this._fallback.resolveHandle(p) : null;
+    return super.resolveHandle(p);
+  }
+  async readRange(p, offset, length) {
+    if (this._fallback) return this._fallback.readRange ? this._fallback.readRange(p, offset, length) : null;
+    return super.readRange(p, offset, length);
+  }
   async createWriter(p) {
     if (this._fallback) return this._fallback.createWriter(p);
     return super.createWriter(p);
@@ -3418,6 +3467,8 @@ class OPFSBackend extends HandleBackend {
   get persistent() { return this._fallback ? !!this._fallback.persistent : true; }
   get streamable() { return this._fallback ? !!this._fallback.streamable : true; }
   get estimatable() { return this._fallback ? !!this._fallback.estimatable : true; }
+  get nativeFile() { return this._fallback ? !!this._fallback.nativeFile : true; }
+  get rangeReadable() { return this._fallback ? !!this._fallback.rangeReadable : true; }
   get readonly() { return this._fallback ? !!this._fallback.readonly : false; }
   get portable() { return this._fallback ? !!this._fallback.portable : false; }
   get symlinks() { return this._fallback ? !!this._fallback.symlinks : false; }
@@ -4811,6 +4862,8 @@ class VFS extends EventEmitter {
       writable: !backend.readonly,
       streamable: !!backend.streamable,
       estimatable: !!backend.estimatable,
+      nativeFile: !!backend.nativeFile,
+      rangeReadable: !!backend.rangeReadable,
       exportable: backend.exportable !== false,
       portable: !!backend.portable,
       symlinks: !!backend.symlinks,
@@ -5159,6 +5212,43 @@ class VFS extends EventEmitter {
     return backend.createReadStream(subpath, opts);
   }
 
+  // Resolve a path to a native `File` without decoding — the streaming escape
+  // hatch (vfs = phonebook, the consumer owns the pipe). `capabilities(p).nativeFile`
+  // tells you whether it's lazy (FSAA/OPFS) or a wrap-of-resident-bytes fallback.
+  async toFile(p, opts) {
+    checkPermission('readFile', p, opts?.principal);
+    const { backend, subpath } = this.resolve(p);
+    return backend.toFile(subpath);
+  }
+
+  // The backend-native handle (FSAA `FileSystemFileHandle`), or null.
+  async resolveHandle(p, opts) {
+    checkPermission('readFile', p, opts?.principal);
+    const { backend, subpath } = this.resolve(p);
+    return backend.resolveHandle ? backend.resolveHandle(subpath) : null;
+  }
+
+  // Read a byte range without reading the whole file. null where the backend
+  // can't seek (check `capabilities(p).rangeReadable`).
+  async readRange(p, offset, length, opts) {
+    checkPermission('readFile', p, opts?.principal);
+    const { backend, subpath } = this.resolve(p);
+    return backend.readRange ? backend.readRange(subpath, offset, length) : null;
+  }
+
+  // Assert this path can be read WITHOUT buffering the whole file — a forward
+  // stream OR a lazy native File. The "this huge file must never be fully read —
+  // fail loud, don't silently OOM" guard (spec §3): a consumer calls it before
+  // committing a multi-GB file to a mount / entering its hot path. Throws ENOTSUP
+  // (with the mount + type) otherwise; returns the capabilities on success.
+  requireStreamable(p) {
+    const { backend, mount } = this.resolve(p);
+    if (!(backend.streamable || backend.nativeFile)) {
+      throw vfsError('ENOTSUP', p, `mount '${mount}' (${backend.constructor?.type || 'custom'}) can't stream — reading would buffer the whole file`);
+    }
+    return this.capabilities(p);
+  }
+
   async createWriter(p, opts) {
     const { backend, subpath } = this.resolve(p);
     this._checkWrite(backend, p);
@@ -5170,7 +5260,10 @@ class VFS extends EventEmitter {
     this._checkWrite(backend, p);
     const writer = backend.createWriter?.(subpath);
     if (writer) {
-      for await (const chunk of iterable) writer.write(chunk);
+      // AWAIT each write — the sink's promise reflects readiness (FSAA's
+      // FileSystemWritableFileStream is backpressured). Fire-and-forget here
+      // would re-introduce OOM on the write side for a multi-GB export (spec §4).
+      for await (const chunk of iterable) await writer.write(chunk);
       await writer.close();
     } else {
       // Fallback: collect and writeFile
@@ -11785,6 +11878,7 @@ const ITEM_TYPES = [
   'article', 'video', 'release', 'paper', 'status', 'track', 'podcast', 'commit', 'issue', 'book',
   'note', 'file',   // stacks entries (STACKS.md): authored notes + dropped files
   'doc',            // a repo's own doc ingested as a source (SPEC-repos-as-source): README/SPEC/docs
+  'document',       // a binary document (PDF; EPUB later) ingested as a first-class item (SPEC-documents)
   'event',          // derived events from exotic/gauge sources (USGS quakes, …) — ROADMAP: weir-as-gauge
 ];
 
@@ -13788,6 +13882,42 @@ class Store {
   }
 
   getItem(id) { return this.items.get(String(id)) || null; }
+
+  // SPEC-documents: ingest a binary document (PDF) as a first-class, searchable item. The BINARY is
+  // a content-addressed VFS file (/documents/blobs/<sha256>.<ext> — the /content lazy precedent, one
+  // tier up); the extracted TEXT rides the normal lazy-content path (so it's searched + quotable);
+  // the item record + page-offset map live in IDB. Content-addressed id → re-ingesting the same file
+  // updates in place (idempotent). `text`/`pageOffsets` come from the caller (documents.js extraction).
+  async addDocument({ bytes, ext = 'pdf', title, author, url, text = '', pageCount, pageOffsets, source, added_by } = {}) {
+    if (!bytes || !bytes.length) throw new Error('addDocument: no bytes');
+    const buf = await crypto.subtle.digest('SHA-256', bytes);
+    const sha = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const id = `document:${sha}`;
+    // synthetic, non-polled source (like 'stacks'/repos) so the items have a home (upsertItems needs it)
+    if (!this.feeds.get('documents')) {
+      await this.putFeed({
+        id: 'documents', name: 'Documents', adapter: 'document', url: '',
+        category: 'library', next_poll_at: 8.64e15,
+        retention: { unread_days: 'forever', read_days: 'forever' },
+      });
+    }
+    // binary → content-addressed VFS file (dedup + idempotent); resolves to FSAA/OPFS/IDB per the mount
+    await this._ensureDir('/documents/blobs');
+    await this.vfs.writeFile(`/documents/blobs/${sha}.${ext}`, bytes);
+    // item + searchable text (text rides the lazy /content pack via upsertItems → search indexes it)
+    await this.upsertItems([{
+      id, feed_id: 'documents', type: 'document',
+      title: title || `document ${sha.slice(0, 8)}`,
+      author: author || undefined, url: url || undefined,
+      content: text, published_at: now(), tags: ['document'],
+      structured: { doc_kind: ext === 'pdf' ? 'pdf' : ext, blob: { sha256: sha, ext, bytes: bytes.length, pages: pageCount }, pageOffsets },
+      added_src: source || 'human', added_by: added_by || undefined,
+    }]);
+    return id;
+  }
+
+  // Read a document's binary back (for viewing / re-extract). Returns a Uint8Array.
+  async getDocumentBlob(sha256, ext = 'pdf') { return this.vfs.readFile(`/documents/blobs/${sha256}.${ext}`, 'bytes'); }
 
   async getContent(id) {
     const rec = this.items.get(String(id));
@@ -16198,6 +16328,21 @@ async function extractPdfText(bytes, { onProgress } = {}) {
     try { await doc.destroy(); } catch { /* */ }
   }
   return { pageCount: pages.length, pages, text: full, pageOffsets };
+}
+
+// Ingest a picked PDF File → a first-class, searchable `document` item (SPEC-documents v0 §2a):
+// read bytes → extract text → store.addDocument (content-addressed blob + item + searchable text).
+// Returns { id, pageCount, ... } from the extraction. The binary is the source of truth; the text
+// is a re-runnable derived layer (the column/de-hyphen reconstruction is the next slice).
+async function ingestPdfFile(file, store, { onProgress } = {}) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const extracted = await extractPdfText(bytes, { onProgress });
+  const title = (file.name || 'document').replace(/\.pdf$/i, '');
+  const id = await store.addDocument({
+    bytes, ext: 'pdf', title, text: extracted.text,
+    pageCount: extracted.pageCount, pageOffsets: extracted.pageOffsets, source: 'human',
+  });
+  return { id, ...extracted };
 }
 
 // ── src/js/parse/xml.js ──
@@ -19064,6 +19209,7 @@ class Poller {
 
 
 
+
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue', 'doc']);
 const RENDER_CAP = 300;
@@ -19675,6 +19821,27 @@ class App {
   _syncContentTop() {
     const ws = document.querySelector('.workspace');
     if (ws) document.documentElement.style.setProperty('--content-top', Math.round(ws.getBoundingClientRect().top) + 'px');
+  }
+
+  // SPEC-documents §2a: pick PDF(s) → extract text → store as first-class searchable `document`
+  // items (content-addressed blob + item + searchable body) → show the last one.
+  async addDocument() {
+    if (!window.showOpenFilePicker) { this._catStatus('document import needs a Chromium browser (File System Access)'); return; }
+    let handles;
+    try { handles = await window.showOpenFilePicker({ multiple: true, types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }] }); }
+    catch { return; }   // user cancelled the picker
+    let last = null;
+    for (const h of handles) {
+      const file = await h.getFile();
+      this._catStatus(`ingesting ${file.name}…`);
+      try {
+        const r = await ingestPdfFile(file, this.store);
+        last = r.id;
+        this._catStatus(`added “${file.name}” — ${r.pageCount} pages, ${r.text.length.toLocaleString()} chars`);
+      } catch (e) { console.error('document ingest', e); this._catStatus(`failed: ${file.name} — ${e.message}`); }
+    }
+    this.renderAll();
+    if (last) { this.select(last); this.expand(last); }
   }
 
   setCategory(cat) { this.catFilter = cat == null ? null : cat; this.view = null; this.feedFilter = null; this.route = null; this.smartView = null; this.catalog = null; this.stackFilter = null; this.stackPath = null; this.selectedId = null; this.expandedId = null; this.renderAll(); }
@@ -21664,6 +21831,7 @@ class App {
       { label: 'Tag all shown items…', kind: 'Command', run: () => this.openBulkTagEditor() },
       { label: 'Manage tags…', kind: 'Command', run: () => this.openTagManager() },
       { label: 'New note / jot…', kind: 'Command', hint: 'stacks', run: () => this.openNoteEditor() },
+      { label: 'Add document (PDF)…', kind: 'Command', hint: 'library', run: () => this.addDocument() },
       { label: 'Rescan stacks folder', kind: 'Command', run: () => this.rescanStacks() },
       { label: 'Stacks filing rules…', kind: 'Command', run: () => this.openRules('stacks') },
       { label: 'Resolve saved links now', kind: 'Command', run: () => this.resolveLinksNow() },
@@ -25520,7 +25688,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '0da6250';          // short content hash of the bundle (build id)
+const COMMIT = '8537b1f';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

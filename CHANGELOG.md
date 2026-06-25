@@ -6,6 +6,21 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Documents — drop a PDF, get a searchable item (SPEC-documents v0 §2a) — 2026-06-24
+
+- Beyond the extraction spike: a PDF is now a **first-class, searchable `document` item**.
+  `store.addDocument({ bytes, text, … })` writes the binary as a **content-addressed VFS file**
+  (`/documents/blobs/<sha256>.pdf` — the `/content` lazy precedent, one tier up; resolves to
+  FSAA/OPFS/IDB per the mount), creates a `document` item (new `ITEM_TYPES` entry + pill), stores the
+  extracted text as the **searchable lazy body** + keeps the **page-offset map** (the `weir_quote`
+  seed), under a synthetic `documents` source. Content-addressed id (`document:<sha256>`) →
+  **idempotent** re-ingest. `getDocumentBlob()` reads the binary back.
+- Ingest entry point: **`ingestPdfFile(file, store)`** (read → `extractPdfText` → `addDocument`) +
+  an **"Add document (PDF)…" command palette** entry (`app.addDocument()` — multi-file picker).
+- Verified: `tools/smoke-documents.mjs` (storage path, node) + Playwright (item/content/blob/search/
+  idempotent end-to-end in Chromium). Still naive reading order; the column/de-hyphen/header-strip
+  **reconstruction** (SPEC §3) + cataloger/quote/`weir_ingestDocument` are the next slices.
+
 ### Responsive — notes on tablet: fix + note-alongside (polish B) — 2026-06-24
 
 - **Fix:** opening a note on the tablet *broke* the master-detail — it assumed the workspace was

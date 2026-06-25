@@ -7,6 +7,7 @@ export const ITEM_TYPES = [
   'article', 'video', 'release', 'paper', 'status', 'track', 'podcast', 'commit', 'issue', 'book',
   'note', 'file',   // stacks entries (STACKS.md): authored notes + dropped files
   'doc',            // a repo's own doc ingested as a source (SPEC-repos-as-source): README/SPEC/docs
+  'document',       // a binary document (PDF; EPUB later) ingested as a first-class item (SPEC-documents)
   'event',          // derived events from exotic/gauge sources (USGS quakes, …) — ROADMAP: weir-as-gauge
 ];
 

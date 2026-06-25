@@ -767,6 +767,15 @@ answer).
   inventory + 884 ML favorites). The **RFID inventory/locate** vision (UHF wand → WebSerial → weir →
   propose-location-then-ratify; two tiers handheld→ambient) is the **later sensing layer** that keeps
   the location facet honest; the LIS design only leaves the seam (`epc` field + location-as-authority).
+- **PDF annotation — pen/ink + highlights on documents (tablet-first).** Once the `document` item
+  type lands (SPEC-documents), let the reader **annotate PDFs**: highlights + margin notes, and —
+  since the reasonable-excuse tablet is a **Galaxy Tab S10 FE *with an S-Pen*** — **handwritten ink**
+  over the page. Ties into the existing **W3C-annotation / satellite-notes** model (annotations are
+  already first-class library items) — a PDF annotation is just an annotation whose target carries a
+  page + bbox (the `pageOffsets`/bbox map from extraction is the anchor). Ink strokes stored as
+  vector overlays (SVG/InkML-ish) keyed to page+bbox, syncing as small metadata alongside the binary.
+  Pointer Events already expose pen pressure/tilt. Deferred until `document` + the reading pane exist;
+  noted in `docs/design/responsive-reader.md` (annotation polish) + SPEC-documents (deferred tier).
 - **WebXR mode — "walk your library" (for the fun of it; a lazy-afternoon someday).** The glass
   catalog is unusually well-suited to a spatial view: the **0–9 call-number classification** is
   already a shelving metaphor (stacks you walk), the **knowledge graph** (typed `related` edges,
