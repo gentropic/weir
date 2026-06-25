@@ -6,6 +6,15 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Responsive — in-pane reading toolbar (prev/next + actions) — 2026-06-24
+
+- A reading toolbar at the top of the opened item: **← prev / next →** (the reading-walk —
+  `moveSelection`, opens the adjacent item in place) plus **save · mark-read · note · open · close**.
+  Sticky to the top of the tablet reading pane; shown in reader + tablet (touch layouts where the
+  row actions/footer aren't at hand); **hidden on desktop** (it has hover row actions). Buttons are
+  `data-act` → the existing `doAct` (new acts: `prev`/`next`/`collapse`); no new dispatch path.
+  Playwright-verified.
+
 ### Responsive — tablet master-detail tier (list + reading pane) — 2026-06-24
 
 - The `tablet` layout is now its **own** two-pane master-detail, not a big phone: the stream is a

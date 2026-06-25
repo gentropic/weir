@@ -710,3 +710,19 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
   color: var(--au-fg-soft); font-family: var(--au-font-mono); font-size: 13px;
   background: var(--sw-bg); border-left: 1px solid var(--au-border);
 }
+
+/* Reading toolbar (top of the expanded item) — prev/next + quick actions. Hidden on desktop (the
+   row has hover actions); shown in the touch layouts; sticky to the pane top on tablet. */
+.ireadbar { display: none; }
+:is([data-layout="reader"], [data-layout="tablet"]) .ireadbar {
+  display: flex; align-items: center; gap: 6px; margin: 0 0 12px; padding: 6px 0 10px;
+  border-bottom: 1px solid var(--au-border);
+}
+[data-layout="tablet"] .ireadbar { position: sticky; top: 0; z-index: 5; background: var(--sw-bg); }
+.ireadbar .ireadbar-gap { flex: 1; }
+.ireadbar button {
+  width: 36px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--sw-bg-bright); color: var(--au-fg-muted); border: 1px solid var(--au-border);
+  border-radius: var(--au-radius); font-size: 15px; line-height: 1; cursor: pointer;
+}
+.ireadbar button:hover { color: var(--au-action); border-color: var(--au-action); }

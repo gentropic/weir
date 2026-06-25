@@ -69,10 +69,11 @@ for (const c of cases) {
     out.placeholder = ws ? getComputedStyle(ws, '::after').content : 'NO-WS';
     const stream = document.getElementById('stream');
     if (stream) {
-      stream.insertAdjacentHTML('beforeend', '<article class="item expanded"><div class="iexpand">body</div></article>');
+      stream.insertAdjacentHTML('beforeend', '<article class="item expanded"><div class="iexpand"><div class="ireadbar"><button data-act="prev">a</button></div>body</div></article>');
       const ix = stream.querySelector('.item.expanded .iexpand');
       out.iexpandPos = getComputedStyle(ix).position;
       out.iexpandWidthPct = Math.round((ix.getBoundingClientRect().width / window.innerWidth) * 100);
+      out.readbar = getComputedStyle(stream.querySelector('.ireadbar')).display;
     }
     return out;
   });
@@ -81,8 +82,25 @@ for (const c of cases) {
     assert.match(r.placeholder, /Select an item/, `tablet empty-state placeholder (got ${r.placeholder})`);
     assert.equal(r.iexpandPos, 'fixed', 'tablet expanded .iexpand is a fixed reading pane');
     assert.ok(r.iexpandWidthPct >= 50 && r.iexpandWidthPct <= 62, `tablet reading pane ~56% wide (got ${r.iexpandWidthPct}%)`);
-    console.log(`  ok  tablet master-detail      → pane fixed @ ${r.iexpandWidthPct}%, placeholder present`);
+    assert.equal(r.readbar, 'flex', 'tablet reading toolbar is shown');
+    console.log(`  ok  tablet master-detail      → pane fixed @ ${r.iexpandWidthPct}%, toolbar + placeholder present`);
   } catch (e) { failed++; console.error(`  FAIL tablet master-detail: ${e.message}`); }
+}
+
+// Desktop: the reading toolbar is hidden (the row has hover actions).
+{
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  await page.goto(url);
+  await page.waitForTimeout(200);
+  const disp = await page.evaluate(() => {
+    const s = document.getElementById('stream');
+    if (!s) return 'NO-STREAM';
+    s.insertAdjacentHTML('beforeend', '<article class="item expanded"><div class="iexpand"><div class="ireadbar"><button>a</button></div></div></article>');
+    return getComputedStyle(s.querySelector('.ireadbar')).display;
+  });
+  await page.close();
+  try { assert.equal(disp, 'none', 'desktop hides the reading toolbar'); console.log('  ok  desktop toolbar hidden    → reading toolbar display:none'); }
+  catch (e) { failed++; console.error(`  FAIL desktop toolbar: ${e.message}`); }
 }
 
 await browser.close();

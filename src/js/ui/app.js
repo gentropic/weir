@@ -1741,7 +1741,19 @@ export class App {
 
   expandedHtml(it) {
     if (it.feed_id === 'stacks') return this._stacksExpandedHtml(it);
-    let inner = '';
+    // Reading toolbar — sticky top of the pane: prev/next (reading-walk) + quick actions, so the
+    // touch layouts don't have to reach the list row or scroll to the footer. CSS shows it only in
+    // reader/tablet (desktop has hover row actions). Buttons are data-act → onStreamClick → doAct.
+    let inner = `<div class="ireadbar">`
+      + `<button data-act="prev" title="Previous (k)">←</button>`
+      + `<button data-act="next" title="Next (j)">→</button>`
+      + `<span class="ireadbar-gap"></span>`
+      + `<button data-act="save" title="${it.saved ? 'Unsave' : 'Save'} (s)">${it.saved ? '★' : '☆'}</button>`
+      + `<button data-act="read" title="Mark ${it.read ? 'unread' : 'read'} (r)">${it.read ? '○' : '●'}</button>`
+      + `<button data-act="note" title="Note">✎</button>`
+      + (it.url ? `<button data-act="open" title="Open original (o)">↗</button>` : '')
+      + `<button data-act="collapse" title="Close">✕</button>`
+      + `</div>`;
     if (it.type === 'podcast' && it.media?.audio_url) inner += `<audio class="player" controls preload="none" src="${escapeHtml(it.media.audio_url)}"></audio>`;
     if (it.structured && Array.isArray(it.structured.coords) && it.structured.coords.length >= 2) inner += this._miniMapHtml(it);
 
@@ -1885,6 +1897,9 @@ export class App {
   doAct(act, id) {
     const it = this.store.getItem(id);
     if (!it) return;
+    if (act === 'prev') { this.moveSelection(-1); return; }   // reading-walk from the in-pane toolbar
+    if (act === 'next') { this.moveSelection(1); return; }
+    if (act === 'collapse') { this.collapse(); return; }
     if (act === 'open') { if (it.url) window.open(it.url, '_blank', 'noopener'); return; }
     if (act === 'editnote') { this.openNoteEditor(id); return; }
     if (act === 'note') { this.annotateItem(id); return; }
