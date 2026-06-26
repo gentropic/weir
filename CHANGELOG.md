@@ -6,6 +6,22 @@ All notable changes to `@gcu/weir` are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Sync — stop feed-poll churn: split volatile poll state out of the synced record — 2026-06-26
+
+- **The other half of the upload-volume problem.** Every poll rewrote `/feeds/<id>.json` because it
+  bumped `next_poll_at` / `last_polled_at` / `feed_health` (+ `etag`/`last_modified`) — so the feed
+  file re-synced on *every* poll even with zero new items (≈ hundreds of pointless feed-file uploads a
+  day across ~79 feeds → constant `too_many_write_operations` pressure).
+- Those fields are **device-local hub runtime state** (a reader never polls), so they now live in a
+  **`/poll-state.json`** that's **excluded from sync** (like `settings.json`). `/feeds/<id>.json` holds
+  only the durable record (name/url/category/config/…), and feed writes are now **idempotent** — a
+  poll that changed only volatile fields does **not** rewrite the file. So feed files sync only on a
+  real edit. (Volatile state is hydrated back onto the in-memory feeds at boot; the first poll after
+  updating migrates each feed file to the durable-only form once, then goes quiet.)
+- Together with the masked-CORS verify fix, upload volume now tracks **actual content changes** only.
+  Test: `tools/smoke-store.mjs` (volatile fields absent from the feed file, present in poll-state,
+  volatile-only change doesn't rewrite, round-trips through hydrate).
+
 ### Sync — confirm uploads via metadata (the masked-CORS-on-200 root cause) — 2026-06-25
 
 - **The real reason the "CORS wall" kept accumulating** (thousands of console errors per day): Dropbox's

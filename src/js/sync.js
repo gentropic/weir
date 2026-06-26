@@ -13,7 +13,7 @@
 // Deferred (SYNC.md §8): per-instance state/note delta-merge (2e) for clean concurrent
 // read-state; cross-device deletion via tombstones (push never deletes remote today).
 
-const SYNC_EXCLUDE = new Set(['/settings.json', '/usage.json', '/.health', '/sync-state.json']);
+const SYNC_EXCLUDE = new Set(['/settings.json', '/usage.json', '/.health', '/sync-state.json', '/poll-state.json']);
 // Content is stored as per-feed PACKS (/content/<feed>.ndjson) — those DO sync: hundreds of
 // files, offline-readable on the tablet. What stays OUT is any LEGACY per-item file
 // (/content/<feed>/<item>.html — nested, pre-pack), so a feed that hasn't migrated yet can't

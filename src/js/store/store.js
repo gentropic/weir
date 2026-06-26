@@ -68,6 +68,40 @@ export class Store {
   feedKey(feedId) { return fsKey(feedId); }
   _shardPath(feedId) { return `/items/${this.feedKey(feedId)}.ndjson`; }
   _feedPath(feedId) { return `/feeds/${this.feedKey(feedId)}.json`; }
+  // Volatile/operational feed fields — poll scheduling + HTTP conditional-GET validators + health.
+  // They change on (nearly) every poll but are DEVICE-LOCAL hub runtime state (a reader never polls),
+  // so they live in /poll-state.json (excluded from sync), NOT in the synced /feeds/<id>.json. Keeping
+  // them in the feed record made every poll rewrite + RE-SYNC the feed file for zero new content.
+  _durableFeed(feed) {
+    const VOL = { next_poll_at: 1, last_polled_at: 1, etag: 1, last_modified: 1, feed_health: 1 };
+    const out = {}; for (const k in feed) if (!VOL[k]) out[k] = feed[k]; return out;
+  }
+  // Write the DURABLE feed record, idempotently — skip the write entirely when the durable content is
+  // unchanged, so a poll that only bumped volatile fields doesn't churn the file (and re-sync it).
+  async _writeFeedFile(feed) {
+    this._feedJson = this._feedJson || new Map();
+    const durable = JSON.stringify(this._durableFeed(feed), null, 2);
+    if (this._feedJson.get(feed.id) === durable) return;
+    await this._ensureDir('/feeds');
+    await this.vfs.writeFile(this._feedPath(feed.id), durable);
+    this._feedJson.set(feed.id, durable);
+  }
+  // Persist all feeds' volatile poll state to one device-local file (excluded from sync).
+  async _savePollState() {
+    const KEYS = ['next_poll_at', 'last_polled_at', 'etag', 'last_modified', 'feed_health'];
+    const st = {};
+    for (const f of this.feeds.values()) {
+      let v = null; for (const k of KEYS) if (f[k] !== undefined) (v || (v = {}))[k] = f[k];
+      if (v) st[f.id] = v;
+    }
+    try { await this.vfs.writeFile('/poll-state.json', JSON.stringify(st)); } catch { /* best effort */ }
+  }
+  // Debounced poll-state save (a poll burst writes the file once); unref'd so it never holds node open.
+  _schedulePollState() {
+    if (this._pollStateTimer) return;
+    this._pollStateTimer = setTimeout(() => { this._pollStateTimer = null; this._savePollState(); }, 3000);
+    if (this._pollStateTimer && this._pollStateTimer.unref) this._pollStateTimer.unref();
+  }
   _contentDir(feedId) { return `/content/${this.feedKey(feedId)}`; }
   _contentPath(feedId, itemId) { return `${this._contentDir(feedId)}/${fsKey(itemId)}.html`; }   // legacy per-item file (pre-pack; read only by migration)
   _contentShardPath(feedId) { return `/content/${this.feedKey(feedId)}.ndjson`; }                 // per-feed content pack
@@ -140,6 +174,10 @@ export class Store {
       const feed = await this._readJSON(`/feeds/${f}`, null);
       if (feed && feed.id) { this.feeds.set(feed.id, makeFeed(feed)); this._feedSet(feed.id); }
     });
+    // Restore the volatile poll state (device-local; not synced) onto the in-memory feeds. The first
+    // poll then migrates each feed file to the durable-only form (one-time), and stays idempotent after.
+    const pollState = await this._readJSON('/poll-state.json', {});
+    for (const f of this.feeds.values()) { const v = pollState[f.id]; if (v && typeof v === 'object') Object.assign(f, v); }
     await this._pool([...this.feeds.keys()], (fid) => this._loadShard(fid));
     await this._loadCatalog();
     await this._loadVocab();
@@ -265,8 +303,8 @@ export class Store {
     const feed = makeFeed(raw);
     this.feeds.set(feed.id, feed);
     this._feedSet(feed.id);
-    await this._ensureDir('/feeds');
-    await this.vfs.writeFile(this._feedPath(feed.id), JSON.stringify(feed, null, 2));
+    await this._writeFeedFile(feed);     // durable record only (idempotent); volatile poll state ↓
+    this._schedulePollState();           // device-local, debounced — never re-syncs the feed file
     this.emit('feed', { id: feed.id });
     return feed;
   }
@@ -279,7 +317,8 @@ export class Store {
     if (!cur) return null;
     const feed = { ...cur, ...patch };
     this.feeds.set(id, feed);
-    await this.vfs.writeFile(this._feedPath(id), JSON.stringify(feed, null, 2));
+    await this._writeFeedFile(feed);
+    this._schedulePollState();
     this.emit('feed', { id });
     return feed;
   }
@@ -292,7 +331,7 @@ export class Store {
       const cid = channelIdOf(feed.url);
       if (cid && scoreMap[cid] != null && feed.affinity !== scoreMap[cid]) {
         feed.affinity = scoreMap[cid];
-        await this.vfs.writeFile(this._feedPath(feed.id), JSON.stringify(feed, null, 2));
+        await this._writeFeedFile(feed);
         matched++;
       }
     }
@@ -392,8 +431,7 @@ export class Store {
     for (const n of this.notifications) n.id = rekey(n.id);
 
     // 6. Persist the new layout, then drop the now-empty old files (relocation).
-    await this._ensureDir('/feeds');
-    await this.vfs.writeFile(this._feedPath(newId), JSON.stringify(moved, null, 2));
+    await this._writeFeedFile(moved);
     this._dirtyFeeds.delete(oldId);
     this._markFeedDirty(newId);
     await this.flush();

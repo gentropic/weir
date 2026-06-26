@@ -461,4 +461,30 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.deepEqual(mergeStateDeltas([null, {}]), {}, 'tolerates null/empty deltas');
 }
 
+// ── poll-state split: volatile poll/HTTP/health fields live in device-local /poll-state.json, NOT in
+// the synced /feeds/<id>.json — so a poll doesn't rewrite + re-sync the feed file (the Dropbox churn fix). ──
+{
+  const sp = new Store(await VFS.create()); await sp._hydrate();
+  await sp.putFeed({ id: 'pf', name: 'PF', adapter: 'feed', url: 'http://pf',
+    next_poll_at: 123456, last_polled_at: 123000, etag: 'W/"abc"', last_modified: 'Mon', feed_health: { consecutive_failures: 2 } });
+  const feedFile = JSON.parse(await sp.vfs.readFile(sp._feedPath('pf'), 'utf8'));
+  assert.equal(feedFile.id, 'pf', 'feed record persists durable fields');
+  for (const k of ['next_poll_at', 'last_polled_at', 'etag', 'last_modified', 'feed_health']) {
+    assert.equal(feedFile[k], undefined, `volatile field ${k} is NOT in the synced feed file`);
+  }
+  await sp._savePollState();
+  const ps = JSON.parse(await sp.vfs.readFile('/poll-state.json', 'utf8'));
+  assert.equal(ps.pf.next_poll_at, 123456, 'next_poll_at lives in device-local poll-state');
+  assert.deepEqual(ps.pf.feed_health, { consecutive_failures: 2 }, 'feed_health lives in poll-state');
+  // idempotent: bumping ONLY volatile fields (the poll path — passes the full feed) must NOT rewrite the file
+  const before = await sp.vfs.readFile(sp._feedPath('pf'), 'utf8');
+  const f = sp.getFeed('pf'); f.next_poll_at = 999999; f.last_polled_at = 999000;
+  await sp.putFeed(f);
+  assert.equal(await sp.vfs.readFile(sp._feedPath('pf'), 'utf8'), before, 'a volatile-only change does NOT rewrite the feed file (no churn)');
+  // round-trip: a fresh store hydrates the volatile state back onto the feed (survives reload)
+  await sp._savePollState();
+  const sp2 = new Store(sp.vfs); await sp2._hydrate();
+  assert.equal(sp2.getFeed('pf').next_poll_at, 999999, 'poll-state restored onto the feed at hydrate');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));
