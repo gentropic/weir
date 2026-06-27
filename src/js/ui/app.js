@@ -4347,15 +4347,21 @@ export class App {
     this.renderAll();
   }
 
-  // Probe the bridge; update the status-bar label and decide the banner. The
-  // banner shows only when fetches are actually failing (_fetchFails) AND the
-  // bridge isn't detected — so it never false-alarms a CORS-friendly setup.
+  // Probe Accountable; update the status-bar label and decide the banner. The
+  // banner shows when fetches are actually failing (_fetchFails) — covering BOTH
+  // "not installed" and "installed but this site isn't granted" (vN.1: the ping
+  // succeeds but fetches return `accountable: sender-not-granted` until you grant
+  // reads in the popup). It never false-alarms a CORS-friendly setup, since a
+  // successful fetch resets _fetchFails to 0.
   async checkBridge() {
     let detected = false, version = null;
     try { detected = !!(await hasAccountable()); if (detected) version = await accountableVersion(); } catch { detected = false; }
+    const failing = (this._fetchFails || 0) >= 1;
     const el = document.getElementById('bridge-status');
-    if (el) el.textContent = detected ? `accountable: ${version ? 'v' + version : 'connected'}` : 'accountable: not detected';
-    this._setBridgeBanner(!detected && (this._fetchFails || 0) >= 1);
+    if (el) el.textContent = !detected ? 'accountable: not detected'
+      : failing ? 'accountable: needs grant'
+      : `accountable: ${version ? 'v' + version : 'connected'}`;
+    this._setBridgeBanner(failing);
     return detected;
   }
 

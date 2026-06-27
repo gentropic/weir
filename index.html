@@ -1356,9 +1356,9 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
   <button class="btn-link" id="update-dismiss">later</button>
 </div>
 
-<!-- Bridge-down banner — shown when fetches are failing AND the bridge isn't active -->
+<!-- Accountable-down banner — shown when fetches are failing (not installed, or installed but this site isn't granted) -->
 <div class="toast toast-warn" id="bridge-toast">
-  <span>⚠ Accountable not active — feeds &amp; the AI cataloger can't fetch. Enable <b>@gcu/accountable</b>, then reload the tab.</span>
+  <span>⚠ Accountable can't fetch for this site — feeds &amp; the cataloger are blocked. Click the <b>Accountable</b> toolbar icon, turn on <b>Allow reads</b> (install it first if needed), then reload.</span>
   <button class="btn" id="bridge-recheck">Re-check</button>
   <button class="btn-link" id="bridge-dismiss">dismiss</button>
 </div>
@@ -23661,15 +23661,21 @@ class App {
     this.renderAll();
   }
 
-  // Probe the bridge; update the status-bar label and decide the banner. The
-  // banner shows only when fetches are actually failing (_fetchFails) AND the
-  // bridge isn't detected — so it never false-alarms a CORS-friendly setup.
+  // Probe Accountable; update the status-bar label and decide the banner. The
+  // banner shows when fetches are actually failing (_fetchFails) — covering BOTH
+  // "not installed" and "installed but this site isn't granted" (vN.1: the ping
+  // succeeds but fetches return `accountable: sender-not-granted` until you grant
+  // reads in the popup). It never false-alarms a CORS-friendly setup, since a
+  // successful fetch resets _fetchFails to 0.
   async checkBridge() {
     let detected = false, version = null;
     try { detected = !!(await hasAccountable()); if (detected) version = await accountableVersion(); } catch { detected = false; }
+    const failing = (this._fetchFails || 0) >= 1;
     const el = document.getElementById('bridge-status');
-    if (el) el.textContent = detected ? `accountable: ${version ? 'v' + version : 'connected'}` : 'accountable: not detected';
-    this._setBridgeBanner(!detected && (this._fetchFails || 0) >= 1);
+    if (el) el.textContent = !detected ? 'accountable: not detected'
+      : failing ? 'accountable: needs grant'
+      : `accountable: ${version ? 'v' + version : 'connected'}`;
+    this._setBridgeBanner(failing);
     return detected;
   }
 
@@ -25878,7 +25884,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'c156d54';          // short content hash of the bundle (build id)
+const COMMIT = '4d3bcce';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
