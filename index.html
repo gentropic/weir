@@ -23155,6 +23155,13 @@ class App {
     catch (e) { const lab = document.getElementById('set-webmcp-state'); if (lab) lab.textContent = e.message; }
   }
 
+  // Load a channel's persisted folder handle from storage (for the diag tool + boot) —
+  // lets weir_mcpDiag read a channel's folder without Settings being open.
+  loadWebmcpHandle(id = 'default') {
+    const key = (this.webmcp && this.webmcp.fsHandleKey) ? this.webmcp.fsHandleKey(id) : (id && id !== 'default' ? 'webmcp-fs-' + id : 'webmcp-fs');
+    return loadHandle(key);
+  }
+
   // fs transport: pick the shared exchange folder (its own handle, distinct from the
   // store and the Courier), then connect with a bare machine token.
   async pickWebmcpFolder(id = 'default') {
@@ -25326,10 +25333,12 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
         clientId: (ch && ch.clientId) || null,
         token: (wm && wm.storedFs && wm.storedFs(id)) ? 'set' : 'missing',
       };
-      const h = handles[id];
+      let h = handles[id];
+      if (!h && app && app.loadWebmcpHandle) { try { h = await app.loadWebmcpHandle(id); } catch { h = null; } }
       row.hasHandle = !!h;
       row.folder = h ? h.name : null;
       if (h) {
+        try { row.permission = h.queryPermission ? await h.queryPermission({ mode: 'read' }) : 'unknown'; } catch { row.permission = 'unknown'; }
         try {
           const fh = await h.getFileHandle('bridge.live');
           const ann = JSON.parse(await (await fh.getFile()).text());
@@ -25339,7 +25348,7 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
         try { const ns = []; for await (const [n] of h.entries()) ns.push(n); row.entries = ns.sort(); }
         catch (e) { row.entries = 'unreadable: ' + (e && e.message); }
       } else {
-        row.note = 'no folder handle cached — open weir Settings → Connections once, then re-run';
+        row.note = 'no folder picked/persisted for this channel';
       }
       channels.push(row);
     }
@@ -26039,7 +26048,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '9c40046';          // short content hash of the bundle (build id)
+const COMMIT = '0c14a73';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

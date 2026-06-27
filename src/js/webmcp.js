@@ -1402,10 +1402,12 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
         clientId: (ch && ch.clientId) || null,
         token: (wm && wm.storedFs && wm.storedFs(id)) ? 'set' : 'missing',
       };
-      const h = handles[id];
+      let h = handles[id];
+      if (!h && app && app.loadWebmcpHandle) { try { h = await app.loadWebmcpHandle(id); } catch { h = null; } }
       row.hasHandle = !!h;
       row.folder = h ? h.name : null;
       if (h) {
+        try { row.permission = h.queryPermission ? await h.queryPermission({ mode: 'read' }) : 'unknown'; } catch { row.permission = 'unknown'; }
         try {
           const fh = await h.getFileHandle('bridge.live');
           const ann = JSON.parse(await (await fh.getFile()).text());
@@ -1415,7 +1417,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
         try { const ns = []; for await (const [n] of h.entries()) ns.push(n); row.entries = ns.sort(); }
         catch (e) { row.entries = 'unreadable: ' + (e && e.message); }
       } else {
-        row.note = 'no folder handle cached — open weir Settings → Connections once, then re-run';
+        row.note = 'no folder picked/persisted for this channel';
       }
       channels.push(row);
     }

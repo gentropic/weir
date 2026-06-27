@@ -3759,6 +3759,13 @@ export class App {
     catch (e) { const lab = document.getElementById('set-webmcp-state'); if (lab) lab.textContent = e.message; }
   }
 
+  // Load a channel's persisted folder handle from storage (for the diag tool + boot) —
+  // lets weir_mcpDiag read a channel's folder without Settings being open.
+  loadWebmcpHandle(id = 'default') {
+    const key = (this.webmcp && this.webmcp.fsHandleKey) ? this.webmcp.fsHandleKey(id) : (id && id !== 'default' ? 'webmcp-fs-' + id : 'webmcp-fs');
+    return loadHandle(key);
+  }
+
   // fs transport: pick the shared exchange folder (its own handle, distinct from the
   // store and the Courier), then connect with a bare machine token.
   async pickWebmcpFolder(id = 'default') {
