@@ -25304,7 +25304,49 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     };
   }
 
-  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, ingestDocument, listMine, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash };
+  // Transport diagnostics for the numen fs channels. Per channel: connection state +
+  // clientId, token presence, the folder-handle NAME it points at, what weir actually
+  // READS from that folder's bridge.live (present? session, age, fresh<90s?), and the
+  // folder's top-level entries. Splits a FOLDER MISMATCH (weir + the bridge on different
+  // dirs → bridgeLive absent/stale though the bridge announces) from a STALE HANDSHAKE
+  // (bridgeLive fresh but no clientId). Handles come from the app cache (Settings →
+  // Connections populates them); a channel with hasHandle:false just needs that opened once.
+  async function mcpDiag() {
+    const wm = app && app.webmcp;
+    const known = (wm && wm.knownChannels) ? wm.knownChannels() : [];
+    const live = (wm && wm.channels) ? wm.channels() : [];
+    const handles = (app && app._webmcpFsHandles) || {};
+    const now = Date.now();
+    const channels = [];
+    for (const { id, identity } of known) {
+      const ch = live.find((c) => c.id === id) || null;
+      const row = {
+        id, identity,
+        state: ch ? ch.state : 'not-connected',
+        clientId: (ch && ch.clientId) || null,
+        token: (wm && wm.storedFs && wm.storedFs(id)) ? 'set' : 'missing',
+      };
+      const h = handles[id];
+      row.hasHandle = !!h;
+      row.folder = h ? h.name : null;
+      if (h) {
+        try {
+          const fh = await h.getFileHandle('bridge.live');
+          const ann = JSON.parse(await (await fh.getFile()).text());
+          const b = JSON.parse(ann.payload);
+          row.bridgeLive = { present: true, session: b.session, ageMs: now - b.ts, fresh: (now - b.ts) < 90000 };
+        } catch { row.bridgeLive = { present: false }; }
+        try { const ns = []; for await (const [n] of h.entries()) ns.push(n); row.entries = ns.sort(); }
+        catch (e) { row.entries = 'unreadable: ' + (e && e.message); }
+      } else {
+        row.note = 'no folder handle cached — open weir Settings → Connections once, then re-run';
+      }
+      channels.push(row);
+    }
+    return { now: new Date(now).toISOString(), shimState: (wm && wm.state) ? wm.state() : 'unavailable', channels };
+  }
+
+  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, ingestDocument, listMine, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash, mcpDiag };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -25871,6 +25913,12 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Entry path to delete' } }, required: ['path'] },
     annotations: { title: 'Delete a stacks entry', destructiveHint: true },
   },
+  {
+    name: 'weir_mcpDiag', fn: 'mcpDiag',
+    description: "Diagnostics for weir's numen fs channels (transport debugging — for tracking down why a channel won't connect). No input. Per known channel returns: connection state + clientId, whether a token is set, the folder-handle NAME it points at, what weir reads from that folder's bridge.live (present? session, ageMs, fresh under 90s?), and the folder's top-level entries. Reading: bridgeLive absent or stale while the bridge insists it is announcing ⇒ FOLDER MISMATCH (weir and the bridge are on different directories); bridgeLive fresh but clientId null ⇒ STALE HANDSHAKE (re-dial / token). If a channel shows hasHandle:false, open weir Settings → Connections once to cache the handle, then re-run.",
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { title: 'Diagnose numen fs channels', readOnlyHint: true },
+  },
 ];
 
 // Register the tools on navigator.modelContext (polyfilled by the shim) and wire
@@ -25991,7 +26039,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '26bf05e';          // short content hash of the bundle (build id)
+const COMMIT = '9c40046';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
