@@ -1472,6 +1472,11 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
       </div>
       <div class="set-pane" data-pane="connections" hidden>
       <section class="set-group">
+        <h4>Accountable (network access)</h4>
+        <div class="set-row"><span>status: <b id="set-acc-state">—</b></span><button class="btn-link" id="set-acc-setup" type="button">open settings…</button></div>
+        <div class="hint">The browser extension that brokers weir's cross-origin fetches (feeds, the cataloger, recovery). Open its settings to grant this site reads, approve write / LLM targets, revoke access, or read the activity log. weir can't grant the permission itself — the button opens Accountable's own page, where you confirm with a click.</div>
+      </section>
+      <section class="set-group">
         <h4>YouTube watch data</h4>
         <div class="set-row"><span id="affinity-status">no watch data loaded</span><button class="btn-link" id="set-import-affinity" type="button">import digest…</button></div>
         <input type="file" id="affinity-file" accept=".json,application/json" hidden>
@@ -19629,6 +19634,7 @@ class App {
     document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
     document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
     document.getElementById('bridge-setup')?.addEventListener('click', async () => { await openAccountableSetup(); });
+    document.getElementById('set-acc-setup')?.addEventListener('click', async () => { await openAccountableSetup(); setTimeout(() => this.checkBridge(), 400); });
     document.getElementById('bridge-recheck')?.addEventListener('click', () => this.checkBridge());
     document.getElementById('bridge-dismiss')?.addEventListener('click', () => { this._bridgeDismissed = true; this._setBridgeBanner(false); });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
@@ -23694,10 +23700,9 @@ class App {
     let detected = false, version = null;
     try { detected = !!(await hasAccountable()); if (detected) version = await accountableVersion(); } catch { detected = false; }
     const failing = (this._fetchFails || 0) >= 1;
-    const el = document.getElementById('bridge-status');
-    if (el) el.textContent = !detected ? 'accountable: not detected'
-      : failing ? 'accountable: needs grant'
-      : `accountable: ${version ? 'v' + version : 'connected'}`;
+    const label = !detected ? 'not detected' : failing ? 'needs grant' : (version ? 'v' + version : 'connected');
+    const el = document.getElementById('bridge-status'); if (el) el.textContent = 'accountable: ' + label;
+    const sel = document.getElementById('set-acc-state'); if (sel) sel.textContent = label;
     this._setBridgeBanner(failing);
     return detected;
   }
@@ -25907,7 +25912,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '68d6f29';          // short content hash of the bundle (build id)
+const COMMIT = '5c6857c';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

@@ -247,6 +247,11 @@
       </div>
       <div class="set-pane" data-pane="connections" hidden>
       <section class="set-group">
+        <h4>Accountable (network access)</h4>
+        <div class="set-row"><span>status: <b id="set-acc-state">—</b></span><button class="btn-link" id="set-acc-setup" type="button">open settings…</button></div>
+        <div class="hint">The browser extension that brokers weir's cross-origin fetches (feeds, the cataloger, recovery). Open its settings to grant this site reads, approve write / LLM targets, revoke access, or read the activity log. weir can't grant the permission itself — the button opens Accountable's own page, where you confirm with a click.</div>
+      </section>
+      <section class="set-group">
         <h4>YouTube watch data</h4>
         <div class="set-row"><span id="affinity-status">no watch data loaded</span><button class="btn-link" id="set-import-affinity" type="button">import digest…</button></div>
         <input type="file" id="affinity-file" accept=".json,application/json" hidden>

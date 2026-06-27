@@ -293,6 +293,7 @@ export class App {
     document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
     document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
     document.getElementById('bridge-setup')?.addEventListener('click', async () => { await openAccountableSetup(); });
+    document.getElementById('set-acc-setup')?.addEventListener('click', async () => { await openAccountableSetup(); setTimeout(() => this.checkBridge(), 400); });
     document.getElementById('bridge-recheck')?.addEventListener('click', () => this.checkBridge());
     document.getElementById('bridge-dismiss')?.addEventListener('click', () => { this._bridgeDismissed = true; this._setBridgeBanner(false); });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
@@ -4358,10 +4359,9 @@ export class App {
     let detected = false, version = null;
     try { detected = !!(await hasAccountable()); if (detected) version = await accountableVersion(); } catch { detected = false; }
     const failing = (this._fetchFails || 0) >= 1;
-    const el = document.getElementById('bridge-status');
-    if (el) el.textContent = !detected ? 'accountable: not detected'
-      : failing ? 'accountable: needs grant'
-      : `accountable: ${version ? 'v' + version : 'connected'}`;
+    const label = !detected ? 'not detected' : failing ? 'needs grant' : (version ? 'v' + version : 'connected');
+    const el = document.getElementById('bridge-status'); if (el) el.textContent = 'accountable: ' + label;
+    const sel = document.getElementById('set-acc-state'); if (sel) sel.textContent = label;
     this._setBridgeBanner(failing);
     return detected;
   }
