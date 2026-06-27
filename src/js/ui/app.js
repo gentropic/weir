@@ -28,7 +28,7 @@ import { WORLD_PATH, WORLD_VIEWBOX } from '../../../vendor/worldmap.js';
 import { getKey, hasKey, saveKey } from '../llmkeys.js';
 import { fetchUsageGauge, listModels } from '../llm.js';
 import { catalogStoreItem } from '../cataloger.js';
-import { hasBridge, bridgeVersion } from '../../../vendor/bridge-client.js';
+import { hasAccountable, accountableVersion } from '../../../vendor/accountable-client.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue', 'doc']);
@@ -4352,9 +4352,9 @@ export class App {
   // bridge isn't detected — so it never false-alarms a CORS-friendly setup.
   async checkBridge() {
     let detected = false, version = null;
-    try { detected = !!(await hasBridge()); if (detected) version = await bridgeVersion(); } catch { detected = false; }
+    try { detected = !!(await hasAccountable()); if (detected) version = await accountableVersion(); } catch { detected = false; }
     const el = document.getElementById('bridge-status');
-    if (el) el.textContent = detected ? `bridge: ${version ? 'v' + version : 'connected'}` : 'bridge: not detected';
+    if (el) el.textContent = detected ? `accountable: ${version ? 'v' + version : 'connected'}` : 'accountable: not detected';
     this._setBridgeBanner(!detected && (this._fetchFails || 0) >= 1);
     return detected;
   }

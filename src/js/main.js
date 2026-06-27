@@ -8,7 +8,7 @@
 // Dev workflow: edit src/, run `node build.js`, open index.html.
 
 import '../../vendor/vfs.js';            // → VFS, IDBBackend, OPFSBackend, FSAABackend, path, …
-import '../../vendor/bridge-client.js';  // → gcuFetch, hasBridge, bridgeVersion, clearBridgeCache
+import '../../vendor/accountable-client.js';  // → gcuFetch, hasAccountable, accountableVersion, clearAccountableCache
 import '../../vendor/webmcp-fs-channel.js'; // → globalThis.GcuFsChannel (fs-transport core; load before the shim)
 import '../../vendor/webmcp-shim.js';    // → window.gcuWebMCP + navigator.modelContext polyfill (IIFE; fs transport via GcuFsChannel)
 import '../../vendor/librarian.js';      // → Librarian (BM25F/CSR search engine; before search.js)

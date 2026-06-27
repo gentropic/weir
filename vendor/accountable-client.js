@@ -1,14 +1,14 @@
-// @gcu/bridge — page-side client
+// @gcu/accountable — page-side client
 // Drop-in helper for GCU tools that want to fetch through the bridge when
 // available, with graceful fallback when not.
 //
 // Usage:
-//   import { gcuFetch, hasBridge } from './bridge-client.js';
+//   import { gcuFetch, hasAccountable } from './accountable-client.js';
 //   const res = await gcuFetch('https://feeds.example.com/atom.xml');
 //   const text = await res.text();
 //
 // Resolution order:
-//   1. @gcu/bridge extension installed + this origin is allowed
+//   1. @gcu/accountable extension installed + this origin is allowed
 //        → brokered fetch (no CORS).
 //   2. Direct fetch() — works if the endpoint sends permissive CORS.
 //   3. If window.GCU_PROXY is set, fall back to that proxy URL.
@@ -61,21 +61,21 @@ async function serializeRequestBody(body) {
   throw new TypeError('gcuFetch: unsupported body type: ' + (body?.constructor?.name ?? typeof body));
 }
 
-let bridgeDetection = null;   // cached POSITIVE detection (a marker/version promise)
+let accDetection = null;   // cached POSITIVE detection (a marker/version promise)
 let lastNegativeAt = 0;       // when the last ping resolved false (for the re-detect cooldown)
 const NEGATIVE_COOLDOWN = 4000;
 
-function detectBridge() {
+function detectAccountable() {
   // Fast path FIRST, on EVERY call: the content script sets this marker on
   // documentElement at document_start, so it's authoritative + synchronous. Checking
   // it ahead of the cache means a stale negative can't strand the page once the CS has
   // injected (e.g. a gcuFetch that raced ahead of injection on a fast cache-served PWA).
   try {
-    const marker = document.documentElement?.dataset?.gcuBridge;
-    if (marker) { bridgeDetection = Promise.resolve(marker); return bridgeDetection; }
+    const marker = document.documentElement?.dataset?.gcuAcc;
+    if (marker) { accDetection = Promise.resolve(marker); return accDetection; }
   } catch { /* no document (e.g. worker scope) — fall through to the ping path */ }
 
-  if (bridgeDetection) return bridgeDetection;   // a prior POSITIVE — never a cached negative
+  if (accDetection) return accDetection;   // a prior POSITIVE — never a cached negative
 
   // A NEGATIVE is NOT cached as the detection promise: a flaky 200ms ping against a
   // cold MV3 service worker can resolve false, and caching that would silently strand
@@ -93,25 +93,25 @@ function detectBridge() {
       }, PING_TIMEOUT);
       function handler(e) {
         if (e.source !== window) return;
-        if (e.data?.type !== 'gcu-bridge-pong' || e.data?.id !== id) return;
+        if (e.data?.type !== 'gcu-acc-pong' || e.data?.id !== id) return;
         clearTimeout(timer);
         window.removeEventListener('message', handler);
         resolve(e.data.version || true);
       }
       window.addEventListener('message', handler);
-      window.postMessage({ type: 'gcu-bridge-ping', id }, '*');
+      window.postMessage({ type: 'gcu-acc-ping', id }, '*');
     });
   })();
-  bridgeDetection = pending;
+  accDetection = pending;
   pending.then((res) => {
     // Only keep the cache if it confirmed the bridge; a negative clears it (and starts
     // the cooldown) so the next call re-detects once the SW is warm / CS has injected.
-    if (bridgeDetection === pending && !res) { bridgeDetection = null; lastNegativeAt = Date.now(); }
+    if (accDetection === pending && !res) { accDetection = null; lastNegativeAt = Date.now(); }
   });
   return pending;
 }
 
-async function viaBridge(url, opts = {}) {
+async function viaAccountable(url, opts = {}) {
   const id = crypto.randomUUID();
   // Serialize the body before constructing the message — failures here
   // (FormData / streams) need to reject the gcuFetch promise, not get
@@ -121,11 +121,11 @@ async function viaBridge(url, opts = {}) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       window.removeEventListener('message', handler);
-      reject(new Error('bridge request timed out'));
+      reject(new Error('Accountable request timed out'));
     }, REQUEST_TIMEOUT);
     function handler(e) {
       if (e.source !== window) return;
-      if (e.data?.type !== 'gcu-bridge-response' || e.data?.id !== id) return;
+      if (e.data?.type !== 'gcu-acc-response' || e.data?.id !== id) return;
       clearTimeout(timer);
       window.removeEventListener('message', handler);
       // Reject ONLY on a genuine bridge/relay error (origin denied, the SW's fetch
@@ -166,7 +166,7 @@ async function viaBridge(url, opts = {}) {
     }
     window.addEventListener('message', handler);
     window.postMessage({
-      type: 'gcu-bridge-request',
+      type: 'gcu-acc-request',
       id,
       url,
       method: opts.method || 'GET',
@@ -177,12 +177,12 @@ async function viaBridge(url, opts = {}) {
   });
 }
 
-export async function hasBridge() {
-  return !!(await detectBridge());
+export async function hasAccountable() {
+  return !!(await detectAccountable());
 }
 
-export async function bridgeVersion() {
-  const v = await detectBridge();
+export async function accountableVersion() {
+  const v = await detectAccountable();
   return typeof v === 'string' ? v : null;
 }
 
@@ -190,24 +190,24 @@ export async function bridgeVersion() {
 // that entry; without, drops everything. Resolves with the count cleared,
 // or 0 if no bridge is installed. Rejects if the bridge is installed but
 // refuses (e.g. origin not allowed).
-export async function clearBridgeCache(url) {
-  if (!(await detectBridge())) return 0;
+export async function clearAccountableCache(url) {
+  if (!(await detectAccountable())) return 0;
   return new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => {
       window.removeEventListener('message', handler);
-      reject(new Error('bridge cache clear timed out'));
+      reject(new Error('Accountable cache clear timed out'));
     }, REQUEST_TIMEOUT);
     function handler(e) {
       if (e.source !== window) return;
-      if (e.data?.type !== 'gcu-bridge-cache-clear-response' || e.data?.id !== id) return;
+      if (e.data?.type !== 'gcu-acc-cache-clear-response' || e.data?.id !== id) return;
       clearTimeout(timer);
       window.removeEventListener('message', handler);
       if (e.data.ok) resolve(e.data.cleared ?? 0);
       else reject(new Error(e.data.error));
     }
     window.addEventListener('message', handler);
-    const msg = { type: 'gcu-bridge-cache-clear', id };
+    const msg = { type: 'gcu-acc-cache-clear', id };
     if (url) msg.url = url;
     window.postMessage(msg, '*');
   });
@@ -238,21 +238,21 @@ function diagPush(entry) {
 
 export async function gcuFetch(url, opts = {}) {
   rejectUnsupportedBody(opts.body);
-  const detected = await detectBridge();
+  const detected = await detectAccountable();
   if (detected) {
     try {
-      const r = await viaBridge(url, opts);
+      const r = await viaAccountable(url, opts);
       diagPush({ url, detected, path: 'bridge', status: r.status });
       return r;
     } catch (e1) {
       // A cold MV3 service worker can drop the first relayed request(s) while it
       // wakes — the content script's chrome.runtime.sendMessage throws and the relay
-      // returns "bridge unavailable", so viaBridge rejects fast. This is common on a
+      // returns "Accountable unavailable", so viaAccountable rejects fast. This is common on a
       // burst (e.g. a feed poll cycle) against an idle SW. The first attempt woke it,
       // so retry once before giving up to a (CORS-doomed) direct fetch.
       try {
         await new Promise((r) => setTimeout(r, 250));
-        const r = await viaBridge(url, opts);
+        const r = await viaAccountable(url, opts);
         diagPush({ url, detected, path: 'bridge-retry', status: r.status });
         return r;
       } catch (e2) {

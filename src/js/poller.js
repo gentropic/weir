@@ -131,10 +131,10 @@ export class Poller {
       let res = await this.fetch(feed.url, opts);
 
       // Unchanged? A real 304 (direct path), or the bridge serving its cache
-      // (it masks 304 as 200 + x-gcu-bridge-cache: hit|fresh). Skip the parse —
+      // (it masks 304 as 200 + x-gcu-acc-cache: hit|fresh). Skip the parse —
       // but only if we actually hold this feed's items (else a stale bridge
       // "fresh" hit could mask an empty store, e.g. after a data reset).
-      const cacheTag = res.headers?.get?.('x-gcu-bridge-cache');
+      const cacheTag = res.headers?.get?.('x-gcu-acc-cache');
       const hasItems = (this.store.byFeed?.get(feed.id)?.size || 0) > 0;
       if (!force && hasItems && (res.status === 304 || cacheTag === 'hit' || cacheTag === 'fresh')) {
         this._stats.unchanged++;

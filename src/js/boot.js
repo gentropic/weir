@@ -28,7 +28,7 @@ import { youtubeAdapter } from './adapters/youtube.js';
 import { githubAdapter } from './adapters/github.js';
 import { usgsAdapter } from './adapters/usgs.js';
 import { fmtBytes } from './ui/format.js';
-import { hasBridge, bridgeVersion, gcuFetch } from '../../vendor/bridge-client.js';
+import { hasAccountable, accountableVersion, gcuFetch } from '../../vendor/accountable-client.js';
 
 const VERSION = '__WEIR_VERSION__';        // replaced at build time
 const BUILD_DATE = '__WEIR_BUILD_DATE__';  // replaced at build time
@@ -39,10 +39,10 @@ const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
 
 async function probeBridge() {
   try {
-    if (!(await hasBridge())) { setText('bridge-status', 'bridge: not detected'); return; }
-    const v = await bridgeVersion();
-    setText('bridge-status', v ? `bridge: v${v}` : 'bridge: connected');
-  } catch { setText('bridge-status', 'bridge: probe failed'); }
+    if (!(await hasAccountable())) { setText('bridge-status', 'accountable: not detected'); return; }
+    const v = await accountableVersion();
+    setText('bridge-status', v ? `accountable: v${v}` : 'accountable: connected');
+  } catch { setText('bridge-status', 'accountable: probe failed'); }
 }
 
 async function boot() {

@@ -95,7 +95,7 @@ const cgFetch = async (url, opts = {}) => {
   seen.push(opts.headers || {});
   if (phase === 0) return mkRes({ status: 200, body: RSS, headers: { etag: 'W/"v1"', 'last-modified': 'Mon, 01 Jun 2026 00:00:00 GMT' } });
   if (phase === 1) return mkRes({ status: 304, ct: 'text/plain' });             // server: not modified
-  return mkRes({ status: 200, ct: 'text/plain', headers: { 'x-gcu-bridge-cache': 'hit' } });   // bridge cache hit
+  return mkRes({ status: 200, ct: 'text/plain', headers: { 'x-gcu-acc-cache': 'hit' } });   // bridge cache hit
 };
 const cg = new Poller(store, { adapters: [feedAdapter], fetch: cgFetch });
 
@@ -111,7 +111,7 @@ assert.equal(seen[1]['If-None-Match'], 'W/"v1"', 'sent If-None-Match from stored
 assert.equal(seen[1]['If-Modified-Since'], 'Mon, 01 Jun 2026 00:00:00 GMT', 'sent If-Modified-Since');
 
 phase = 2; const c2 = await cg.pollFeed(store.getFeed('cg'));
-assert.equal(c2.unchanged, true, 'bridge x-gcu-bridge-cache: hit → unchanged');
+assert.equal(c2.unchanged, true, 'bridge x-gcu-acc-cache: hit → unchanged');
 
 const cgStats = cg.stats();
 assert.equal(cgStats.fetches, 3, 'three fetches');
@@ -127,8 +127,8 @@ assert.ok(Math.abs(cgStats.ratio - 2 / 3) < 1e-9, 'ratio = unchanged/fetches');
   await store.putFeed({ id: 'fp', name: 'FP', adapter: 'feed', url: 'http://x/feed', next_poll_at: NOW - 1000 });
   const hdrs = [];
   // Always a cache HIT that still carries the body (the bridge masks 304 as
-  // 200 + x-gcu-bridge-cache: hit, body included).
-  const fpFetch = async (url, opts = {}) => { hdrs.push(opts.headers || {}); return mkRes({ status: 200, body: RSS, headers: { 'x-gcu-bridge-cache': 'hit', etag: 'W/"keep"' } }); };
+  // 200 + x-gcu-acc-cache: hit, body included).
+  const fpFetch = async (url, opts = {}) => { hdrs.push(opts.headers || {}); return mkRes({ status: 200, body: RSS, headers: { 'x-gcu-acc-cache': 'hit', etag: 'W/"keep"' } }); };
   const fp = new Poller(store, { adapters: [feedAdapter], fetch: fpFetch });
   // Seed items (first poll has no stored items → hasItems false → it parses).
   const s0 = await fp.pollFeed(store.getFeed('fp'));

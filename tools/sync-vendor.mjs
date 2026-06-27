@@ -21,8 +21,8 @@ if (!fs.existsSync(path.join(aud, 'ext'))) {
 
 // upstream (in auditable) → vendored name (in weir/vendor/). Standalone ESM only
 // (zero relative imports), so the build can inline them directly.
-// NOTE: vfs.js / switchboard / bridge-client.js are vendored separately (vfs from
-// a built bundle, bridge from the ../bridge repo) — see vendor/PROVENANCE.md.
+// NOTE: vfs.js / switchboard / accountable-client.js are vendored separately (vfs from
+// a built bundle, accountable from the ../accountable repo) — see vendor/PROVENANCE.md.
 // Add `['ext/librarian/index.js', 'librarian.js']` here once librarian v2 lands.
 // [src, dest, wrap?] — `wrap` is the single export symbol to expose; when set,
 // the module body is enclosed in an IIFE so its (generic) internal names don't
