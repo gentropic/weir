@@ -1981,7 +1981,7 @@ export function initWebmcp({ store, app, fetch }) {
   const fsKey = (id) => (id && id !== 'default') ? (LS_FS + ':' + id) : LS_FS;
   const readFs = (id) => { try { return localStorage.getItem(fsKey(id || 'default')) || ''; } catch { return ''; } };
   const defaultIdentity = (id) => (!id || id === 'default') ? 'claude:librarian' : ('claude:' + id);
-  const KNOWN_FS = ['default', 'dev'];   // the supported channel ids (cap small, per spec §5)
+  const KNOWN_FS = ['default', 'dev', 'cowork'];   // the supported channel ids (cap small, per spec §5)
   const api = {
     available: !!wm,
     state: () => (wm ? wm.state : 'unavailable'),
@@ -1990,6 +1990,7 @@ export function initWebmcp({ store, app, fetch }) {
     storedFs: readFs,                       // storedFs(id) → that channel's token ('default' if omitted)
     fsHandleKey: (id) => (id && id !== 'default') ? ('webmcp-fs-' + id) : 'webmcp-fs',   // no ':' — showDirectoryPicker id rejects it
     channels: () => (wm ? wm.channels : []),
+    knownChannels: () => KNOWN_FS.map((id) => ({ id, identity: defaultIdentity(id) })),   // supported fs channels (id + agent identity) — the single source the Settings UI renders from
     set onChannelState(fn) { if (wm) wm.onChannelState = fn; },
     // localhost transport — a port:token string (ws/http via the bridge extension).
     connect(connStr) {

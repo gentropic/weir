@@ -247,12 +247,8 @@ export class App {
       document.getElementById('rail-toggle')?.addEventListener('click', () => root?.classList.toggle('rail-open'));
       document.getElementById('rail-scrim')?.addEventListener('click', close);
       document.querySelector('.rail')?.addEventListener('click', (e) => { if (e.target.closest('.navrow, [data-feed], [data-cat]')) close(); }); }
-    document.getElementById('set-webmcp-fs-pick')?.addEventListener('click', () => this.pickWebmcpFolder('default'));
-    document.getElementById('set-webmcp-fs-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder('default'));
-    document.getElementById('set-webmcp-fs2-pick')?.addEventListener('click', () => this.pickWebmcpFolder('dev'));
-    document.getElementById('set-webmcp-fs2-toggle')?.addEventListener('click', () => this.toggleWebmcpFolder('dev'));
-    document.getElementById('set-webmcp-fs-reset')?.addEventListener('click', () => this.resetWebmcpChannel('default'));
-    document.getElementById('set-webmcp-fs2-reset')?.addEventListener('click', () => this.resetWebmcpChannel('dev'));
+    // fs-channel rows (pick / connect / reset + token per channel) are built and wired
+    // dynamically from the shim's KNOWN_FS by _buildWebmcpFsChannels() on each settings render.
     const sv = document.getElementById('smart-views');
     sv?.addEventListener('click', (e) => { const r = e.target.closest('[data-view-id]'); if (r) this.setSmartView(r.dataset.viewId); });
     sv?.addEventListener('contextmenu', (e) => { const r = e.target.closest('[data-view-id]'); if (r) { e.preventDefault(); this.smartViewMenu(r.dataset.viewId, e.clientX, e.clientY); } });
@@ -3681,6 +3677,33 @@ export class App {
     return h < 36 ? h + 'h' : Math.round(h / 24) + 'd';
   }
 
+  // Build the per-channel fs rows (folder + pick/connect/reset + token) from the shim's
+  // KNOWN_FS — N agents at once, folder = identity. Ids are set-webmcp-ch-<id>-*. Rebuilt
+  // (innerHTML replaced + listeners re-wired) on each settings render; adding a channel is
+  // then a one-line KNOWN_FS edit in the shim, nothing here.
+  _buildWebmcpFsChannels() {
+    const host = document.getElementById('set-webmcp-fs-channels');
+    if (!host || !this.webmcp || !this.webmcp.knownChannels) return;
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const resetTitle = "Bridge wedged after a crash? Clears this channel's stale bridge.live + orphan session dirs (transport scratch only — not your data), then re-dials. You still restart the bridge process itself.";
+    const chans = this.webmcp.knownChannels();
+    host.innerHTML = chans.map(({ id, identity }) => {
+      const label = id === 'default' ? 'folder' : esc(id) + ' folder';
+      const pre = id === 'default' ? 'or ' : '';
+      const ph = id === 'default' ? 'machine token (no port — fs transport)' : ('fs channel — ' + esc(identity || ('claude:' + id)));
+      return `<div class="set-row"><span>${pre}${label}: <b id="set-webmcp-ch-${id}-folder">—</b></span>`
+        + `<button class="btn-link" id="set-webmcp-ch-${id}-pick" type="button">pick…</button>`
+        + `<button class="btn-link" id="set-webmcp-ch-${id}-toggle" type="button">connect over folder</button>`
+        + `<button class="btn-link" id="set-webmcp-ch-${id}-reset" type="button" title="${esc(resetTitle)}">reset</button></div>`
+        + `<label class="set-row">${label} token<input type="text" id="set-webmcp-ch-${id}-token" class="field" autocomplete="off" spellcheck="false" placeholder="${esc(ph)}"></label>`;
+    }).join('');
+    for (const { id } of chans) {
+      document.getElementById(`set-webmcp-ch-${id}-pick`)?.addEventListener('click', () => this.pickWebmcpFolder(id));
+      document.getElementById(`set-webmcp-ch-${id}-toggle`)?.addEventListener('click', () => this.toggleWebmcpFolder(id));
+      document.getElementById(`set-webmcp-ch-${id}-reset`)?.addEventListener('click', () => this.resetWebmcpChannel(id));
+    }
+  }
+
   async renderWebmcpChannels() {
     const chans = (this.webmcp && this.webmcp.channels) ? this.webmcp.channels() : [];
     const live = await this._bridgeLiveness().catch(() => ({}));
@@ -3689,8 +3712,7 @@ export class App {
     const eff = (c) => (c.state === 'connecting' && live[c.id] && live[c.id].stale) ? 'offline' : c.state;
     const upish = (id) => { const c = chans.find((x) => x.id === id); if (!c) return false; const e = eff(c); return e === 'connected' || e === 'connecting'; };
     const btn = (id, elId) => { const b = document.getElementById(elId); if (b) b.textContent = upish(id) ? 'disconnect' : 'connect over folder'; };
-    btn('default', 'set-webmcp-fs-toggle');
-    btn('dev', 'set-webmcp-fs2-toggle');
+    for (const { id } of (this.webmcp && this.webmcp.knownChannels ? this.webmcp.knownChannels() : [])) btn(id, `set-webmcp-ch-${id}-toggle`);
     const cl = document.getElementById('set-webmcp-channels');
     if (cl) cl.textContent = chans.length ? chans.map((c) => {
       const e = eff(c); const lv = live[c.id];
@@ -3747,7 +3769,7 @@ export class App {
     catch (e) { if (e && e.name === 'AbortError') return; if (msg) msg.textContent = e.message; return; }
     this._webmcpFsHandles = this._webmcpFsHandles || {};
     this._webmcpFsHandles[id] = h;
-    const lab = document.getElementById(id === 'default' ? 'set-webmcp-fs-folder' : 'set-webmcp-fs2-folder');
+    const lab = document.getElementById(`set-webmcp-ch-${id}-folder`);
     if (lab) lab.textContent = handleName(h);
   }
 
@@ -3761,7 +3783,7 @@ export class App {
     this._webmcpFsHandles = this._webmcpFsHandles || {};
     let handle = this._webmcpFsHandles[id];
     if (!handle) { try { handle = await loadHandle(key); } catch { /* none yet */ } }   // reuse a previously-picked folder
-    const tokEl = document.getElementById(id === 'default' ? 'set-webmcp-fs-token' : 'set-webmcp-fs2-token');
+    const tokEl = document.getElementById(`set-webmcp-ch-${id}-token`);
     const tok = (tokEl || {}).value || '';
     try {
       if (handle) await saveHandle(handle, key);            // persist so boot can reconnect silently
@@ -3817,9 +3839,10 @@ export class App {
     this.renderCatUsage();
     { const c = document.getElementById('set-webmcp-conn'); if (c && this.webmcp) c.value = this.webmcp.stored() || ''; }
     this._webmcpFsHandles = this._webmcpFsHandles || {};
-    for (const [cid, tokId, folId] of [['default', 'set-webmcp-fs-token', 'set-webmcp-fs-folder'], ['dev', 'set-webmcp-fs2-token', 'set-webmcp-fs2-folder']]) {
-      { const ft = document.getElementById(tokId); if (ft && this.webmcp) ft.value = (this.webmcp.storedFs && this.webmcp.storedFs(cid)) || ''; }
-      { const fl = document.getElementById(folId); if (fl && this.webmcp) loadHandle(this.webmcp.fsHandleKey(cid)).then((h) => { fl.textContent = h ? handleName(h) : '—'; if (h && !this._webmcpFsHandles[cid]) this._webmcpFsHandles[cid] = h; }).catch(() => {}); }
+    this._buildWebmcpFsChannels();   // (re)render the per-channel rows from KNOWN_FS, then fill their values
+    for (const { id: cid } of (this.webmcp && this.webmcp.knownChannels ? this.webmcp.knownChannels() : [])) {
+      { const ft = document.getElementById(`set-webmcp-ch-${cid}-token`); if (ft) ft.value = (this.webmcp.storedFs && this.webmcp.storedFs(cid)) || ''; }
+      { const fl = document.getElementById(`set-webmcp-ch-${cid}-folder`); if (fl) loadHandle(this.webmcp.fsHandleKey(cid)).then((h) => { fl.textContent = h ? handleName(h) : '—'; if (h && !this._webmcpFsHandles[cid]) this._webmcpFsHandles[cid] = h; }).catch(() => {}); }
     }
     this.renderWebmcpStatus();
     this.renderWebmcpChannels();

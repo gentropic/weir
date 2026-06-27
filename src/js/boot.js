@@ -175,7 +175,7 @@ async function boot() {
   // Settings, which has the user gesture). Multichannel: 'default' (librarian) + optional
   // 'dev' run at once (SPEC-numen-multichannel.md). Mirrors the Courier's boot reconnect.
   if (webmcp && webmcp.connectFolder) {
-    for (const id of ['default', 'dev']) {
+    for (const id of (webmcp.knownChannels ? webmcp.knownChannels().map((c) => c.id) : ['default', 'dev'])) {
       const tok = webmcp.storedFs && webmcp.storedFs(id);
       if (!tok) continue;
       try {
