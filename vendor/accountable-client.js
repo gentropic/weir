@@ -1,6 +1,6 @@
-// @gcu/accountable — page-side client
-// Drop-in helper for GCU tools that want to fetch through the bridge when
-// available, with graceful fallback when not.
+// @gcu/accountable — page-side client · CC0-1.0 (public domain) — vendor freely.
+// Drop-in helper for GCU tools that want to fetch through Accountable when available,
+// with graceful fallback when not. Supports { stream: true } and { receipt: true }.
 //
 // Usage:
 //   import { gcuFetch, hasAccountable } from './accountable-client.js';
@@ -162,6 +162,7 @@ async function viaAccountable(url, opts = {}) {
       if (e.data.url) {
         try { Object.defineProperty(res, 'url', { value: e.data.url, configurable: true }); } catch { /* read-only env — leave '' */ }
       }
+      if (e.data.receipt) res.receipt = e.data.receipt; // provenance receipt (when {receipt:true})
       resolve(res);
     }
     window.addEventListener('message', handler);
@@ -172,7 +173,8 @@ async function viaAccountable(url, opts = {}) {
       method: opts.method || 'GET',
       headers: opts.headers || {},
       body,
-      bodyEncoding
+      bodyEncoding,
+      receipt: !!opts.receipt
     }, '*');
   });
 }
@@ -199,7 +201,11 @@ async function viaAccountableStream(url, opts = {}) {
       if (d.type === 'gcu-acc-stream-head') {
         gotHead = true; clearTimeout(headTimer);
         const nullBody = d.status === 204 || d.status === 205 || d.status === 304;
-        const stream = nullBody ? null : new ReadableStream({ start(c) { controller = c; } });
+        const stream = nullBody ? null : new ReadableStream({
+          start(c) { controller = c; },
+          // consumer cancelled → tell the SW to stop fetching (it aborts on port disconnect)
+          cancel() { window.removeEventListener('message', onMsg); window.postMessage({ type: 'gcu-acc-stream-cancel', id }, '*'); }
+        });
         if (nullBody) window.removeEventListener('message', onMsg);
         const res = new Response(stream, { status: d.status, statusText: d.statusText, headers: d.headers });
         if (d.url) { try { Object.defineProperty(res, 'url', { value: d.url, configurable: true }); } catch { /* read-only */ } }
@@ -314,6 +320,10 @@ export async function gcuFetch(url, opts = {}) {
       diagPush({ url, detected, path: opts.stream ? 'bridge-stream' : 'bridge', status: r.status });
       return r;
     } catch (e1) {
+      // A real access DECISION (origin/target denied) must SURFACE — never silently fall
+      // back to a CORS-doomed direct fetch, which hides the reason and defeats the grant
+      // flow (the caller should see it and can openAccountableSetup()).
+      if (String(e1?.message || '').startsWith('accountable:')) throw e1;
       // A cold MV3 service worker can drop the first relayed request(s) while it
       // wakes — the content script's chrome.runtime.sendMessage throws and the relay
       // returns "Accountable unavailable", so viaAccountable rejects fast. This is common on a
