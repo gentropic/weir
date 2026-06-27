@@ -213,6 +213,27 @@ export async function clearAccountableCache(url) {
   });
 }
 
+// Ask Accountable to open its options/grant page. A page can't request host
+// permissions itself — only the extension can, on a user gesture there — so this
+// is how a consumer (weir's settings) summons the grant surface. Resolves true if
+// the broker acknowledged, false if it isn't installed / didn't answer.
+export async function openAccountableSetup() {
+  if (!(await detectAccountable())) return false;
+  return new Promise((resolve) => {
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => { window.removeEventListener('message', handler); resolve(false); }, 2000);
+    function handler(e) {
+      if (e.source !== window) return;
+      if (e.data?.type !== 'gcu-acc-open-setup-response' || e.data?.id !== id) return;
+      clearTimeout(timer);
+      window.removeEventListener('message', handler);
+      resolve(!!e.data.ok);
+    }
+    window.addEventListener('message', handler);
+    window.postMessage({ type: 'gcu-acc-open-setup', id }, '*');
+  });
+}
+
 // Reject body types we can't carry across the bridge wire — *before*
 // the bridge-vs-direct decision, so behavior doesn't depend on whether
 // the extension happens to be installed. (fetch() handles FormData and

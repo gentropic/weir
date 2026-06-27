@@ -28,7 +28,7 @@ import { WORLD_PATH, WORLD_VIEWBOX } from '../../../vendor/worldmap.js';
 import { getKey, hasKey, saveKey } from '../llmkeys.js';
 import { fetchUsageGauge, listModels } from '../llm.js';
 import { catalogStoreItem } from '../cataloger.js';
-import { hasAccountable, accountableVersion } from '../../../vendor/accountable-client.js';
+import { hasAccountable, accountableVersion, openAccountableSetup } from '../../../vendor/accountable-client.js';
 
 const VIEW_LABELS = { inbox: 'Inbox', saved: 'Saved', archived: 'Archived' };
 const TEXT_TYPES = new Set(['article', 'paper', 'release', 'track', 'status', 'commit', 'issue', 'doc']);
@@ -292,6 +292,7 @@ export class App {
     document.getElementById('set-repos-actions')?.addEventListener('click', (e) => this.onReposAction(e));
     document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
     document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
+    document.getElementById('bridge-setup')?.addEventListener('click', async () => { await openAccountableSetup(); });
     document.getElementById('bridge-recheck')?.addEventListener('click', () => this.checkBridge());
     document.getElementById('bridge-dismiss')?.addEventListener('click', () => { this._bridgeDismissed = true; this._setBridgeBanner(false); });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());

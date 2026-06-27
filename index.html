@@ -1359,6 +1359,7 @@ li[aria-selected] .cm-completionDetail { color: var(--sw-bg); opacity: 0.8; }
 <!-- Accountable-down banner — shown when fetches are failing (not installed, or installed but this site isn't granted) -->
 <div class="toast toast-warn" id="bridge-toast">
   <span>⚠ Accountable can't fetch for this site — feeds &amp; the cataloger are blocked. Click the <b>Accountable</b> toolbar icon, turn on <b>Allow reads</b> (install it first if needed), then reload.</span>
+  <button class="btn" id="bridge-setup">Set up</button>
   <button class="btn" id="bridge-recheck">Re-check</button>
   <button class="btn-link" id="bridge-dismiss">dismiss</button>
 </div>
@@ -5689,6 +5690,27 @@ async function clearAccountableCache(url) {
     const msg = { type: 'gcu-acc-cache-clear', id };
     if (url) msg.url = url;
     window.postMessage(msg, '*');
+  });
+}
+
+// Ask Accountable to open its options/grant page. A page can't request host
+// permissions itself — only the extension can, on a user gesture there — so this
+// is how a consumer (weir's settings) summons the grant surface. Resolves true if
+// the broker acknowledged, false if it isn't installed / didn't answer.
+async function openAccountableSetup() {
+  if (!(await detectAccountable())) return false;
+  return new Promise((resolve) => {
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => { window.removeEventListener('message', handler); resolve(false); }, 2000);
+    function handler(e) {
+      if (e.source !== window) return;
+      if (e.data?.type !== 'gcu-acc-open-setup-response' || e.data?.id !== id) return;
+      clearTimeout(timer);
+      window.removeEventListener('message', handler);
+      resolve(!!e.data.ok);
+    }
+    window.addEventListener('message', handler);
+    window.postMessage({ type: 'gcu-acc-open-setup', id }, '*');
   });
 }
 
@@ -19606,6 +19628,7 @@ class App {
     document.getElementById('set-repos-actions')?.addEventListener('click', (e) => this.onReposAction(e));
     document.getElementById('mount-reconnect')?.addEventListener('click', () => this.reconnectFolder());
     document.getElementById('mount-dismiss')?.addEventListener('click', () => document.getElementById('mount-toast')?.classList.remove('on'));
+    document.getElementById('bridge-setup')?.addEventListener('click', async () => { await openAccountableSetup(); });
     document.getElementById('bridge-recheck')?.addEventListener('click', () => this.checkBridge());
     document.getElementById('bridge-dismiss')?.addEventListener('click', () => { this._bridgeDismissed = true; this._setBridgeBanner(false); });
     document.getElementById('set-check-update')?.addEventListener('click', () => this.checkUpdates());
@@ -25884,7 +25907,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '4d3bcce';          // short content hash of the bundle (build id)
+const COMMIT = '68d6f29';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
