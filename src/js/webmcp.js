@@ -456,6 +456,19 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       if (app && app.renderStream) app.renderStream();
       return projItem(store, store.getItem(it.id), true);
     }
+    // bulk over an EXPLICIT id list — one in-page pass + ONE flush, so e.g. archiving 45 specific
+    // items is a single atomic write, not 45 racy round-trips (the dedup-cleanup lesson). Unknown
+    // ids are reported, not fatal.
+    if (Array.isArray(input.ids) && input.ids.length) {
+      let matched = 0; const missing = [];
+      for (const raw of input.ids) {
+        const it = store.getItem(String(raw));
+        if (it) { store.setState(it.id, patch); matched++; } else missing.push(String(raw));
+      }
+      await store.flush();
+      if (app && app.renderAll) app.renderAll();
+      return { matched, patch, ...(missing.length ? { missing } : {}) };
+    }
     // bulk over a query — require a scoping filter so a whole-corpus mutation is never
     // accidental. `saved` here is the ACTION, not a scope, so drop it from the query.
     const scope = buildQuery(input); delete scope.saved;
@@ -1623,10 +1636,11 @@ const TOOLS = [
   },
   {
     name: 'weir_setState', fn: 'setState',
-    description: "Set read / saved / archived (each a boolean; pass only the ones to change) — on ONE item (`id`) or every item matching a query (pass q/feed/category/type/view/unread/saved — e.g. archive a dead feed, mark a folder read). A bulk call REQUIRES a scoping filter (no accidental whole-corpus change). All reversible — archive never deletes (weir_unarchiveAll reverses a sweep). Returns the item (id mode) or { matched, patch } (query mode).",
+    description: "Set read / saved / archived (each a boolean; pass only the ones to change) — on ONE item (`id`), a LIST of specific items (`ids`: an array — applied in one atomic pass, the right way to flip many known items at once), or every item matching a query (pass q/feed/category/type/view/unread/saved — e.g. archive a dead feed, mark a folder read). A query bulk call REQUIRES a scoping filter (no accidental whole-corpus change). All reversible — archive never deletes (weir_unarchiveAll reverses a sweep). Returns the item (id mode) or { matched, patch, missing? } (ids/query mode).",
     inputSchema: {
       type: 'object', properties: {
-        id: { type: 'string', description: 'A single item id; omit to bulk over a query' },
+        id: { type: 'string', description: 'A single item id; omit to bulk over `ids` or a query' },
+        ids: { type: 'array', items: { type: 'string' }, description: 'An explicit list of item ids — flip them all in one atomic write (preferred over many single-id calls). Unknown ids come back in `missing`.' },
         read: { type: 'boolean', description: 'Mark read/unread' },
         saved: { type: 'boolean', description: 'Save/unsave (star)' },
         archived: { type: 'boolean', description: 'Archive/unarchive (non-destructive)' },

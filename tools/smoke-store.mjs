@@ -487,4 +487,23 @@ assert.match(await reopened.getContent('arxiv:2026.001'), /abstract/, 'content s
   assert.equal(sp2.getFeed('pf').next_poll_at, 999999, 'poll-state restored onto the feed at hydrate');
 }
 
+// ── flush serialization: concurrent flushes don't interleave their shard writes (the 45-archive
+// lost-update race). Without the chain, 4 in-flight flushes each await _writeShard at once. ──
+{
+  const fs2 = new Store(await VFS.create()); await fs2._hydrate();
+  await fs2.putFeed({ id: 'fa', name: 'A', adapter: 'feed', url: 'http://a/f' });
+  await fs2.putFeed({ id: 'fb', name: 'B', adapter: 'feed', url: 'http://b/f' });
+  await fs2.upsertItems([{ id: 'a1', feed_id: 'fa', type: 'article', title: 'a1' }, { id: 'b1', feed_id: 'fb', type: 'article', title: 'b1' }]);
+  let live = 0, maxLive = 0;
+  const orig = fs2._writeShard.bind(fs2);
+  fs2._writeShard = async (fid) => { live++; maxLive = Math.max(maxLive, live); await new Promise((r) => setTimeout(r, 3)); try { return await orig(fid); } finally { live--; } };
+  fs2.setState('a1', { archived: true }); fs2.setState('b1', { archived: true });   // marks both feeds dirty
+  await Promise.all([fs2.flush(), fs2.flush(), fs2.flush(), fs2.flush()]);            // concurrent flushes
+  assert.equal(maxLive, 1, 'concurrent flushes serialized — _writeShard never overlapped (>1 if unserialized)');
+  fs2._writeShard = orig;
+  const re = new Store(fs2.vfs); await re._hydrate();
+  assert.equal(re.getItem('a1').archived, true, 'a1 archive persisted');
+  assert.equal(re.getItem('b1').archived, true, 'b1 archive persisted — no lost write under concurrent flush');
+}
+
 console.log('store smoke ok:', JSON.stringify(reopened.counts()));

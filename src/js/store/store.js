@@ -773,9 +773,9 @@ export class Store {
     return m;
   }
   _touchContent(fid) { const i = this._contentLRU.indexOf(fid); if (i >= 0) this._contentLRU.splice(i, 1); this._contentLRU.push(fid); }
-  _evictContent() {   // drop LRU clean packs over the cap (never evict an unsaved one)
+  _evictContent() {   // drop LRU clean packs over the cap (never evict an unsaved or mid-flush one)
     while (this._contentShards.size > CONTENT_CACHE_MAX) {
-      const fid = this._contentLRU.find((f) => !this._dirtyContent.has(f));
+      const fid = this._contentLRU.find((f) => !this._dirtyContent.has(f) && !(this._flushingContent && this._flushingContent.has(f)));
       if (fid === undefined) break;
       this._contentLRU.splice(this._contentLRU.indexOf(fid), 1);
       this._contentShards.delete(fid);
@@ -1178,20 +1178,36 @@ export class Store {
   // whether a full FS re-scan is needed. Called by flush() (corpus) + direct writers (notes).
   touchSync() { this._mutations++; }
 
+  // SERIALIZED. Only ONE _flushOnce body runs at a time; concurrent callers (parallel MCP writes,
+  // or multiple agent seats — librarian/dev/cowork — on one store) chain behind the in-flight flush
+  // and await it, instead of interleaving their async shard writes and LOSING an update (the
+  // 45-archive race). The chain self-heals past a failed flush (the onRejected handler still runs
+  // the next _flushOnce).
   async flush() {
     if (this._flushTimer) { clearTimeout(this._flushTimer); this._flushTimer = null; }
-    const wrote = this._dirtyFeeds.size || this._dirtyCards.size || this._dirtyVocab.size || this._dirtyContent.size || this._archivedDirty;
-    for (const fid of this._dirtyFeeds) await this._writeShard(fid);
-    this._dirtyFeeds.clear();
-    for (const b of this._dirtyCards) await this._writeCardShard(b);
-    this._dirtyCards.clear();
-    for (const f of this._dirtyVocab) await this._writeVocab(f);
-    this._dirtyVocab.clear();
-    for (const fid of this._dirtyContent) await this._writeContentShard(fid);
-    this._dirtyContent.clear();
-    if (this._archivedDirty) {
+    this._flushChain = (this._flushChain || Promise.resolve()).then(() => this._flushOnce(), () => this._flushOnce());
+    return this._flushChain;
+  }
+
+  // One serialized flush pass. Snapshot + RESET each dirty set synchronously up front, so a mark
+  // made during the (async) writes lands in the fresh set and the next flush catches it — never
+  // dropped by a clear-at-end. In-flight content packs are pinned against LRU eviction (an evicted
+  // pack reads empty → _writeContentShard would unlink it = content loss).
+  async _flushOnce() {
+    const feeds = this._dirtyFeeds; this._dirtyFeeds = new Set();
+    const cards = this._dirtyCards; this._dirtyCards = new Set();
+    const vocab = this._dirtyVocab; this._dirtyVocab = new Set();
+    const content = this._dirtyContent; this._dirtyContent = new Set();
+    const archived = this._archivedDirty; this._archivedDirty = false;
+    const wrote = feeds.size || cards.size || vocab.size || content.size || archived;
+    for (const fid of feeds) await this._writeShard(fid);
+    for (const b of cards) await this._writeCardShard(b);
+    for (const f of vocab) await this._writeVocab(f);
+    this._flushingContent = content;   // pin these packs against eviction while we write them
+    try { for (const fid of content) await this._writeContentShard(fid); }
+    finally { this._flushingContent = null; }
+    if (archived) {
       await this.vfs.writeFile('/archived_index.ndjson', this.tombstones.map((t) => JSON.stringify(t)).join('\n'));
-      this._archivedDirty = false;
     }
     if (wrote) this.touchSync();
   }

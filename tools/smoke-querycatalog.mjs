@@ -89,6 +89,14 @@ assert.deepEqual([...store.descendantTerms('spatial', ['japan'])].sort(), ['japa
 assert.deepEqual([...store.descendantTerms('spatial', ['europe'])].sort(), ['europe', 'france', 'lyon'], 'gazetteer built the france→europe + lyon→france chain');
 assert.equal(store.linkGazetteer({ kyoto: 'japan' }, 'spatial').linked, 0, 'idempotent — re-linking an existing edge is a no-op');
 
+// ── setState bulk-by-ids: flip a LIST of specific items in one atomic pass (Level-1 batch) ──
+{
+  const sr = await tools.setState({ ids: ['i1', 'i3', 'no-such-id'], read: true });
+  assert.equal(sr.matched, 2, 'bulk-by-ids flipped the 2 real ids');
+  assert.deepEqual(sr.missing, ['no-such-id'], 'an unknown id comes back in `missing`, not fatal');
+  assert.ok(store.getItem('i1').read && store.getItem('i3').read, 'both items now read');
+}
+
 // ── validation: facets is required ──
 await assert.rejects(tools.queryCatalog({}), /facets/, 'missing facets throws a helpful error');
 
