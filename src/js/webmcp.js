@@ -867,13 +867,16 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
         .sort((a, b) => b.inbox - a.inbox || a.name.localeCompare(b.name));
       return { category: cat || '(ungrouped)', count: rows.length, feeds: rows };
     }
-    const folders = new Map(); const tally = { failing: 0, stale: 0, suspect: 0, slow: 0 }; const troubled = [];
+    const folders = new Map(); const tally = { failing: 0, stale: 0, suspect: 0, slow: 0, archived: 0 }; const troubled = [];
     for (const f of feeds) {
       const cat = f.category || '';
       const g = folders.get(cat) || folders.set(cat, { category: cat || '(ungrouped)', feeds: 0, inbox: 0 }).get(cat);
       g.feeds++; g.inbox += stats.byFeed[f.id] || 0;
       const h = feedHealth(f);
-      if (h.state) { if (tally[h.state] !== undefined) tally[h.state]++; troubled.push({ id: f.id, name: f.name, category: cat || '(ungrouped)', ...h }); }
+      if (h.state) {
+        if (tally[h.state] !== undefined) tally[h.state]++;
+        if (h.state !== 'archived') troubled.push({ id: f.id, name: f.name, category: cat || '(ungrouped)', ...h });   // archived = deliberately retired, not "troubled"
+      }
     }
     const health = {}; for (const k in tally) if (tally[k]) health[k] = tally[k];
     troubled.sort((a, b) => (b.fails || 0) - (a.fails || 0) || a.name.localeCompare(b.name));
@@ -979,7 +982,14 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       patch.next_poll_at = Date.now();
       patch.state = 'healthy'; patch.feed_health = { ...(f.feed_health || {}), consecutive_failures: 0, last_error: undefined };
     }
-    if (!Object.keys(patch).length) throw new Error('nothing to update — pass url/name/category/retention/poll_interval_minutes/images_allowed/fetch_full_content');
+    if (input.archived !== undefined) {
+      // Archive / unarchive — RETIRE to (or restore from) the 'archived' state: the poller skips
+      // it, the health tally excludes it from failing/stale, and its items are kept. Never a
+      // delete (the never-delete ethos). Reversible — unarchive re-polls from now + clears fails.
+      if (input.archived) { patch.state = 'archived'; patch.next_poll_at = 0; }
+      else { patch.state = 'healthy'; patch.next_poll_at = Date.now(); patch.feed_health = { ...(f.feed_health || {}), consecutive_failures: 0, last_error: undefined }; }
+    }
+    if (!Object.keys(patch).length) throw new Error('nothing to update — pass url/name/category/retention/poll_interval_minutes/images_allowed/fetch_full_content/archived');
     await store.updateFeed(f.id, patch);
     let repoll;
     if (patch.url && app && app.poller) { try { repoll = await app.poller.pollFeed(store.getFeed(f.id)); } catch (e) { repoll = { error: String(e && e.message || e) }; } }
@@ -1472,10 +1482,11 @@ const TOOLS = [
   },
   {
     name: 'weir_updateFeed', fn: 'updateFeed',
-    description: 'Curate a feed: change its URL (e.g. fix a moved/404 feed — items stay, validators reset, it re-polls now), rename, recategorize (folder), set retention ("forever" or a day count), poll interval (minutes), image policy, or full-text auto-fetch. Identify it by `id` (from weir_listSources). Not destructive — no unsubscribe here (that lives in the UI). Returns the applied patch (+ `repoll` result when the URL changed).',
+    description: 'Curate a feed: ARCHIVE/unarchive it (retire a dead/dormant feed off the health warning — items kept, poller skips it, fully reversible — the never-delete alternative to removing), change its URL (e.g. fix a moved/404 feed — items stay, validators reset, it re-polls now), rename, recategorize (folder), set retention ("forever" or a day count), poll interval (minutes), image policy, or full-text auto-fetch. Identify it by `id` (from weir_listSources). Not destructive. Returns the applied patch (+ `repoll` result when the URL changed).',
     inputSchema: {
       type: 'object', properties: {
         id: { type: 'string', description: 'Feed id (from weir_listSources)' },
+        archived: { type: 'boolean', description: 'true = retire the feed (off the failing/stale warning, poller skips it, items kept); false = restore + re-poll. Reversible, never deletes.' },
         url: { type: 'string', description: 'New feed URL (fixes a moved/dead feed; re-polls immediately)' },
         name: { type: 'string', description: 'Rename the feed' },
         category: { type: 'string', description: 'Move to a folder ("" = ungrouped)' },

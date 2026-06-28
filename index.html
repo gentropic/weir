@@ -13757,6 +13757,19 @@ class Store {
     return feed;
   }
 
+  // Archive / unarchive a feed — a deliberate RETIRE, never a delete (the never-delete
+  // ethos: items stay, the feed just leaves the active board). The poller skips state
+  // 'archived' and the health tally excludes it, so an archived feed is off the warning
+  // without losing anything. Reversible: unarchive re-polls from now + clears failure marks.
+  async setFeedArchived(id, archived) {
+    const f = this.feeds.get(id);
+    if (!f) return null;
+    const patch = archived
+      ? { state: 'archived', next_poll_at: 0 }
+      : { state: 'healthy', next_poll_at: Date.now(), feed_health: { ...(f.feed_health || {}), consecutive_failures: 0, last_error: undefined } };
+    return this.updateFeed(id, patch);
+  }
+
   // Stamp watch-affinity scores onto matching YouTube feeds (from a Takeout
   // digest). Returns how many feeds matched.
   async applyAffinity(scoreMap) {
@@ -18930,6 +18943,13 @@ function repeatedToken(titles) {
 // Assess one feed. `items` is that feed's stored item records (any order).
 // Returns { status, score, reasons } — reasons are short human strings.
 function assessFeed(feed, items, now = Date.now(), opts = {}) {
+  // Archived = deliberately retired (the poller skips it). Terminal + benign: never a warning,
+  // never stale — the items stay put, it's just off the active board. Reversible (unarchive →
+  // re-polls). Wins over every other signal, incl. failing.
+  if (feed && feed.state === 'archived') {
+    return { status: 'archived', score: 0, reasons: ['archived'] };
+  }
+
   // Network-dead trumps content checks — the poller already knows.
   if (feed && feed.state === 'failing') {
     return { status: 'failing', score: 0, reasons: [feed.feed_health?.last_error || 'repeated fetch failures'] };
@@ -21564,6 +21584,7 @@ class App {
       { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: () => this.store.updateFeed(feedId, { fetch_full_content: !feed.fetch_full_content }) },
       { label: 'Recover history…', onClick: () => this.recoverHistory(feedId) },
       { sep: true },
+      { label: feed.state === 'archived' ? '⊙ Unarchive feed (resume polling)' : '⊙ Archive feed (retire — keeps items, off the warning)', onClick: async () => { await this.store.setFeedArchived(feedId, feed.state !== 'archived'); this.renderAll(); } },
       { label: 'Remove feed', danger: true, onClick: () => { if (confirm(`Remove "${feed.name}" and its items?`)) { this.store.removeFeed(feedId); if (this.feedFilter === feedId) this.feedFilter = null; this.renderAll(); } } },
     ].filter(Boolean));
   }
@@ -24901,13 +24922,16 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
         .sort((a, b) => b.inbox - a.inbox || a.name.localeCompare(b.name));
       return { category: cat || '(ungrouped)', count: rows.length, feeds: rows };
     }
-    const folders = new Map(); const tally = { failing: 0, stale: 0, suspect: 0, slow: 0 }; const troubled = [];
+    const folders = new Map(); const tally = { failing: 0, stale: 0, suspect: 0, slow: 0, archived: 0 }; const troubled = [];
     for (const f of feeds) {
       const cat = f.category || '';
       const g = folders.get(cat) || folders.set(cat, { category: cat || '(ungrouped)', feeds: 0, inbox: 0 }).get(cat);
       g.feeds++; g.inbox += stats.byFeed[f.id] || 0;
       const h = feedHealth(f);
-      if (h.state) { if (tally[h.state] !== undefined) tally[h.state]++; troubled.push({ id: f.id, name: f.name, category: cat || '(ungrouped)', ...h }); }
+      if (h.state) {
+        if (tally[h.state] !== undefined) tally[h.state]++;
+        if (h.state !== 'archived') troubled.push({ id: f.id, name: f.name, category: cat || '(ungrouped)', ...h });   // archived = deliberately retired, not "troubled"
+      }
     }
     const health = {}; for (const k in tally) if (tally[k]) health[k] = tally[k];
     troubled.sort((a, b) => (b.fails || 0) - (a.fails || 0) || a.name.localeCompare(b.name));
@@ -25013,7 +25037,14 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       patch.next_poll_at = Date.now();
       patch.state = 'healthy'; patch.feed_health = { ...(f.feed_health || {}), consecutive_failures: 0, last_error: undefined };
     }
-    if (!Object.keys(patch).length) throw new Error('nothing to update — pass url/name/category/retention/poll_interval_minutes/images_allowed/fetch_full_content');
+    if (input.archived !== undefined) {
+      // Archive / unarchive — RETIRE to (or restore from) the 'archived' state: the poller skips
+      // it, the health tally excludes it from failing/stale, and its items are kept. Never a
+      // delete (the never-delete ethos). Reversible — unarchive re-polls from now + clears fails.
+      if (input.archived) { patch.state = 'archived'; patch.next_poll_at = 0; }
+      else { patch.state = 'healthy'; patch.next_poll_at = Date.now(); patch.feed_health = { ...(f.feed_health || {}), consecutive_failures: 0, last_error: undefined }; }
+    }
+    if (!Object.keys(patch).length) throw new Error('nothing to update — pass url/name/category/retention/poll_interval_minutes/images_allowed/fetch_full_content/archived');
     await store.updateFeed(f.id, patch);
     let repoll;
     if (patch.url && app && app.poller) { try { repoll = await app.poller.pollFeed(store.getFeed(f.id)); } catch (e) { repoll = { error: String(e && e.message || e) }; } }
@@ -25506,10 +25537,11 @@ const TOOLS = [
   },
   {
     name: 'weir_updateFeed', fn: 'updateFeed',
-    description: 'Curate a feed: change its URL (e.g. fix a moved/404 feed — items stay, validators reset, it re-polls now), rename, recategorize (folder), set retention ("forever" or a day count), poll interval (minutes), image policy, or full-text auto-fetch. Identify it by `id` (from weir_listSources). Not destructive — no unsubscribe here (that lives in the UI). Returns the applied patch (+ `repoll` result when the URL changed).',
+    description: 'Curate a feed: ARCHIVE/unarchive it (retire a dead/dormant feed off the health warning — items kept, poller skips it, fully reversible — the never-delete alternative to removing), change its URL (e.g. fix a moved/404 feed — items stay, validators reset, it re-polls now), rename, recategorize (folder), set retention ("forever" or a day count), poll interval (minutes), image policy, or full-text auto-fetch. Identify it by `id` (from weir_listSources). Not destructive. Returns the applied patch (+ `repoll` result when the URL changed).',
     inputSchema: {
       type: 'object', properties: {
         id: { type: 'string', description: 'Feed id (from weir_listSources)' },
+        archived: { type: 'boolean', description: 'true = retire the feed (off the failing/stale warning, poller skips it, items kept); false = restore + re-poll. Reversible, never deletes.' },
         url: { type: 'string', description: 'New feed URL (fixes a moved/dead feed; re-polls immediately)' },
         name: { type: 'string', description: 'Rename the feed' },
         category: { type: 'string', description: 'Move to a folder ("" = ungrouped)' },
@@ -26152,7 +26184,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '973e63c';          // short content hash of the bundle (build id)
+const COMMIT = 'df6a3c4';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

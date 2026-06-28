@@ -2065,6 +2065,7 @@ export class App {
       { label: feed.fetch_full_content ? 'Don’t auto-fetch full text' : 'Auto-fetch full text', onClick: () => this.store.updateFeed(feedId, { fetch_full_content: !feed.fetch_full_content }) },
       { label: 'Recover history…', onClick: () => this.recoverHistory(feedId) },
       { sep: true },
+      { label: feed.state === 'archived' ? '⊙ Unarchive feed (resume polling)' : '⊙ Archive feed (retire — keeps items, off the warning)', onClick: async () => { await this.store.setFeedArchived(feedId, feed.state !== 'archived'); this.renderAll(); } },
       { label: 'Remove feed', danger: true, onClick: () => { if (confirm(`Remove "${feed.name}" and its items?`)) { this.store.removeFeed(feedId); if (this.feedFilter === feedId) this.feedFilter = null; this.renderAll(); } } },
     ].filter(Boolean));
   }

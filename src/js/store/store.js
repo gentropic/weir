@@ -323,6 +323,19 @@ export class Store {
     return feed;
   }
 
+  // Archive / unarchive a feed — a deliberate RETIRE, never a delete (the never-delete
+  // ethos: items stay, the feed just leaves the active board). The poller skips state
+  // 'archived' and the health tally excludes it, so an archived feed is off the warning
+  // without losing anything. Reversible: unarchive re-polls from now + clears failure marks.
+  async setFeedArchived(id, archived) {
+    const f = this.feeds.get(id);
+    if (!f) return null;
+    const patch = archived
+      ? { state: 'archived', next_poll_at: 0 }
+      : { state: 'healthy', next_poll_at: Date.now(), feed_health: { ...(f.feed_health || {}), consecutive_failures: 0, last_error: undefined } };
+    return this.updateFeed(id, patch);
+  }
+
   // Stamp watch-affinity scores onto matching YouTube feeds (from a Takeout
   // digest). Returns how many feeds matched.
   async applyAffinity(scoreMap) {

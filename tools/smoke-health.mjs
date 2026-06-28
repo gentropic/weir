@@ -67,4 +67,8 @@ assert.equal(assessFeed({ site_url: 'https://realblog.dev/', url: 'https://realb
 // ── 7) empty feed (no items yet) → OK, not stale ──
 assert.equal(assessFeed({ url: 'https://new.example/feed' }, [], NOW).status, 'ok', 'no items → ok (not stale)');
 
+// ── 8) archived feed → ARCHIVED (deliberate retire): benign, never stale/failing ──
+assert.equal(assessFeed({ url: 'https://retired.example/feed', state: 'archived' }, old, NOW).status, 'archived', 'archived wins over stale-old items');
+assert.equal(assessFeed({ url: 'https://x/f', state: 'archived', feed_health: { last_error: 'HTTP 404' } }, [], NOW).status, 'archived', 'archived beats failing too');
+
 console.log('smoke-health: ok');

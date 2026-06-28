@@ -56,6 +56,13 @@ export function repeatedToken(titles) {
 // Assess one feed. `items` is that feed's stored item records (any order).
 // Returns { status, score, reasons } — reasons are short human strings.
 export function assessFeed(feed, items, now = Date.now(), opts = {}) {
+  // Archived = deliberately retired (the poller skips it). Terminal + benign: never a warning,
+  // never stale — the items stay put, it's just off the active board. Reversible (unarchive →
+  // re-polls). Wins over every other signal, incl. failing.
+  if (feed && feed.state === 'archived') {
+    return { status: 'archived', score: 0, reasons: ['archived'] };
+  }
+
   // Network-dead trumps content checks — the poller already knows.
   if (feed && feed.state === 'failing') {
     return { status: 'failing', score: 0, reasons: [feed.feed_health?.last_error || 'repeated fetch failures'] };
