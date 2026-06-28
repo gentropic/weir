@@ -1694,6 +1694,21 @@ export class Store {
     }
     return out;
   }
+  // Populate containment from a flat { term → broader } gazetteer (build-time generated from the
+  // CC0 factbook + a curated supplement — GLASS §7 / ROADMAP spatial hierarchy). Declares each term
+  // skos:broader its parent, building the continent ⊃ country ⊃ city tree that the faceted-browse
+  // roll-up (descendantTerms) reads. Idempotent (a dup edge no-ops). Returns { linked, total }.
+  linkGazetteer(gaz, facet = 'spatial') {
+    let linked = 0;
+    for (const [term, broader] of Object.entries(gaz || {})) {
+      const t = String(term).toLowerCase().trim(), b = String(broader).toLowerCase().trim();
+      if (!t || !b || t === b) continue;
+      const had = ((this.getConcept(facet, t) || {}).broader || []).includes(b);
+      this.setVocabRelation(facet, t, 'broader', [b]);
+      if (!had) linked++;
+    }
+    return { linked, total: Object.keys(gaz || {}).length, facet };
+  }
   // SKOS JSON-LD export — proves the shape is a standard, not a bespoke format.
   vocabExportSkos(facet) {
     const facets = facet ? [facet] : Object.keys(this.vocab);

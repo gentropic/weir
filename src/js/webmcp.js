@@ -14,6 +14,7 @@
 
 import { stripToText } from './cataloger.js';
 import { facetsOf, FACETS, buildCard } from './glass.js';
+import { GAZETTEER } from './gazetteer.js';   // spatial containment (generated; weir_buildGazetteer)
 import { listModels } from './llm.js';
 import { getKey } from './llmkeys.js';
 import { formatItem, citeKey, buildBibliography } from './cite.js';
@@ -728,6 +729,18 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     if (!touched) throw new Error('pass at least one of broader / narrower / related / alt');
     await store.flush();
     return { facet: String(input.facet), term: String(input.term).toLowerCase().trim(), concept: store.getConcept(String(input.facet), String(input.term)) };
+  }
+
+  // Bulk-populate spatial containment from the vendored gazetteer (GLASS §7 / ROADMAP spatial
+  // hierarchy): the CC0 factbook backbone (country→continent, capital→country) + a curated
+  // supplement (US states, major cities). Deterministic + idempotent. The edges feed the
+  // faceted-browse roll-up so selecting a parent catches its subtree.
+  async function buildGazetteer(input = {}) {
+    const facet = input.facet ? String(input.facet) : 'spatial';
+    const r = store.linkGazetteer(GAZETTEER, facet);
+    await store.flush();
+    if (app && app.catalog && app.renderAll) app.renderAll();
+    return { ...r, note: `Linked ${r.linked} new ${facet} containment edge(s) from ${r.total} gazetteer entries. Selecting a parent term now rolls up to its subtree in the faceted browser + weir_queryCatalog.` };
   }
 
   // ── the knowledge graph: typed `related` edges between items (GLASS §10) ──
@@ -1445,7 +1458,7 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
     return { now: new Date(now).toISOString(), shimState: (wm && wm.state) ? wm.state() : 'unavailable', channels };
   }
 
-  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, ingestDocument, listMine, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash, mcpDiag };
+  return { queryItems, getItem, getItems, search, listFacets, queryCatalog, quote, cite, listSources, addFeed, updateFeed, resolveLinks, resolverLog, reEnrich, setState, tag, unarchiveAll, catalogItem, catalogControl, reviewQueue, reviewItem, ratify, mergeFacetTerm, vocab, relateTerm, buildGazetteer, relatedTo, relate, works, listProviderModels, setCatalog, removeFeed, renameFeed, repoll, recover, addBooks, addLink, ingestRepo, ingestDocument, listMine, provenanceMigrate, stacksList, stacksRead, stacksWrite, stacksEdit, stacksMove, stacksTag, stacksTrash, mcpDiag };
 }
 
 // Tool schemas. Names are `weir_*` (MCP tool names are [A-Za-z0-9_-]; no dots) —
@@ -1858,6 +1871,12 @@ const TOOLS = [
       }, required: ['facet', 'term'],
     },
     annotations: { title: 'Declare a thesaurus relation' },
+  },
+  {
+    name: 'weir_buildGazetteer', fn: 'buildGazetteer',
+    description: 'Bulk-populate SPATIAL containment from the vendored gazetteer (GLASS §7 thesaurus): the CC0 CIA World Factbook backbone (country→continent, capital→country) + a curated supplement (US states, major cities). Declares the broader/narrower edges so the faceted browser + weir_queryCatalog roll up — selecting a parent (e.g. japan) catches its subtree (tokyo, osaka). Deterministic + idempotent (re-running links only what is new). Inspect with weir_vocab({facet:"spatial"}). Returns { linked, total }.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { title: 'Populate spatial containment (gazetteer)' },
   },
   {
     name: 'weir_works', fn: 'works',

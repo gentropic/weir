@@ -82,6 +82,13 @@ assert.ok(!(r.vocabularyNotes || []).some((n) => n.term === 'japan' && /0 items/
 r = await tools.queryCatalog({ facets: { spatial: ['asia'] } });
 assert.deepEqual(r.items.map((x) => x.id).sort(), ['i1', 'i2'], 'spatial:asia rolls up transitively (asia→japan→tokyo/osaka)');
 
+// ── gazetteer bulk-link: deterministic containment from a flat { term → broader } map ──
+const gr = store.linkGazetteer({ kyoto: 'japan', lyon: 'france', france: 'europe' }, 'spatial');
+assert.ok(gr.linked >= 3, 'linkGazetteer reports the new edges');
+assert.deepEqual([...store.descendantTerms('spatial', ['japan'])].sort(), ['japan', 'kyoto', 'osaka', 'tokyo'], 'gazetteer added kyoto under japan (alongside the existing seed)');
+assert.deepEqual([...store.descendantTerms('spatial', ['europe'])].sort(), ['europe', 'france', 'lyon'], 'gazetteer built the france→europe + lyon→france chain');
+assert.equal(store.linkGazetteer({ kyoto: 'japan' }, 'spatial').linked, 0, 'idempotent — re-linking an existing edge is a no-op');
+
 // ── validation: facets is required ──
 await assert.rejects(tools.queryCatalog({}), /facets/, 'missing facets throws a helpful error');
 
