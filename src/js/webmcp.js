@@ -1993,6 +1993,7 @@ const TOOLS = [
   },
   {
     name: 'weir_mcpDiag', fn: 'mcpDiag',
+    scopeIdentities: ['claude:dev'],   // dev-only: the librarian + generic seats don't see/run this
     description: "Diagnostics for weir's numen fs channels (transport debugging — for tracking down why a channel won't connect). No input. Per known channel returns: connection state + clientId, whether a token is set, the folder-handle NAME it points at, what weir reads from that folder's bridge.live (present? session, ageMs, fresh under 90s?), and the folder's top-level entries. Reading: bridgeLive absent or stale while the bridge insists it is announcing ⇒ FOLDER MISMATCH (weir and the bridge are on different directories); bridgeLive fresh but clientId null ⇒ STALE HANDSHAKE (re-dial / token). If a channel shows hasHandle:false, open weir Settings → Connections once to cache the handle, then re-run.",
     inputSchema: { type: 'object', properties: {} },
     annotations: { title: 'Diagnose numen fs channels', readOnlyHint: true },
@@ -2014,7 +2015,7 @@ export function initWebmcp({ store, app, fetch }) {
     ensureCards: async () => { if (app && app.loadCardFacets && (!app._cardFacets || app._cardFacets.size === 0)) await app.loadCardFacets(); },
   });
   for (const t of TOOLS) {
-    mc.registerTool({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations, execute: (input, client) => tools[t.fn](input || {}, client) });
+    mc.registerTool({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations, scopeIdentities: t.scopeIdentities, execute: (input, client) => tools[t.fn](input || {}, client) });
   }
 
   if (wm) {

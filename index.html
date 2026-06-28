@@ -5921,6 +5921,10 @@ const GcuFsChannel = (function () {
     this._warn = opts.onWarn || opts.log || function () {};
     this.session = null;
     this.epoch = null;
+    // Page pinned to ONE bridge session — the host (shim) discovered it via listAnnounces and
+    // runs one channel per live bridge (N bridges, one folder). When set, the page skips
+    // self-discovery. docs/multichannel-shared-folder.md.
+    this._pinnedSession = opts.session || null;
     this.state = 'connecting';
     this._outSeq = 0;
     this._lastIn = -1;                 // highest inbound seq delivered (replay/order guard)
@@ -5955,8 +5959,47 @@ const GcuFsChannel = (function () {
     var ts = this._now();
     var payload = JSON.stringify({ v: FS_VERSION, session: this.session, ts: ts });
     var sig = await this._hmac(canon(this.session, '-', 'announce', 0, ts, payload.length, payload));
-    await this._dir.write('bridge.live', JSON.stringify({ payload: payload, sig: sig }));  // sign the RAW string
+    var rec = JSON.stringify({ payload: payload, sig: sig });   // sign the RAW string
+    // Per-bridge announce: each bridge owns `live/<session>.json`, so N bridges share one
+    // folder (docs/multichannel-shared-folder.md). We ALSO mirror to the legacy single
+    // `bridge.live` so an un-upgraded page (reads only bridge.live) still connects; a folder
+    // with >1 live bridge merely flaps that legacy file, which multi-bridge pages ignore.
+    try { await this._dir.mkdirp('live'); } catch (e) { /* best effort */ }
+    await this._dir.write('live/' + this.session + '.json', rec);
+    await this._dir.write('bridge.live', rec);
     this._lastAnnounce = ts;
+  };
+
+  // Read + verify EVERY announce in the folder (`live/<session>.json` + legacy `bridge.live`),
+  // deduped by session; forged/garbage are skipped (warned). Each result is
+  // `{ session, ts, stale }` (stale = heartbeat older than the liveness window).
+  FsChannel.prototype._readAnnounces = async function () {
+    var files = [], seen = {}, out = [], names = [];
+    try { names = await this._dir.list('live'); } catch (e) { names = []; }
+    for (var i = 0; i < names.length; i++) if (/\.json$/.test(names[i])) files.push('live/' + names[i]);
+    files.push('bridge.live');                                  // legacy single-bridge announce
+    for (var k = 0; k < files.length; k++) {
+      var raw = await this._dir.read(files[k]);
+      if (raw == null) continue;
+      var ann; try { ann = JSON.parse(raw); } catch (e) { continue; }
+      if (!ann || typeof ann.payload !== 'string') continue;
+      var b; try { b = JSON.parse(ann.payload); } catch (e) { continue; }
+      if (!b || b.v !== FS_VERSION || typeof b.session !== 'string' || !SEG_RE.test(b.session)) continue;
+      if (seen[b.session]) continue;                            // live/ + bridge.live may carry the same session
+      var expect = await this._hmac(canon(b.session, '-', 'announce', 0, b.ts, ann.payload.length, ann.payload));
+      if (!ctEq(expect, ann.sig)) { this._warn('bad announce HMAC (forged announce?) — ignored'); continue; }
+      seen[b.session] = true;
+      out.push({ session: b.session, ts: b.ts, stale: (this._now() - b.ts > LIVENESS_MS) });
+    }
+    return out;
+  };
+
+  // Public (page): every LIVE bridge session in this folder, freshest first. The host (shim)
+  // runs one channel PINNED to each — N bridges, one folder — instead of the single-bridge
+  // _discover. docs/multichannel-shared-folder.md.
+  FsChannel.prototype.listAnnounces = async function () {
+    var all = await this._readAnnounces();
+    return all.filter(function (a) { return !a.stale; }).sort(function (a, b) { return b.ts - a.ts; });
   };
 
   // bridge: adopt a (re)connecting page's epoch — but ONLY one whose hello (to-bridge/0)
@@ -5988,17 +6031,12 @@ const GcuFsChannel = (function () {
   // (still dialing), or 'stale' if a valid announce exists but its heartbeat is old
   // (→ the bridge PROCESS is presumed down — distinct from "no bridge yet").
   FsChannel.prototype._discover = async function () {
-    var raw = await this._dir.read('bridge.live');
-    if (raw == null) return false;
-    var ann; try { ann = JSON.parse(raw); } catch (e) { return false; }
-    if (!ann || typeof ann.payload !== 'string') return false;
-    var b; try { b = JSON.parse(ann.payload); } catch (e) { return false; }
-    if (!b || b.v !== FS_VERSION) return false;
-    if (typeof b.session !== 'string' || !SEG_RE.test(b.session)) { this._warn('announce has an unsafe session id — ignored'); return false; }
-    var expect = await this._hmac(canon(b.session, '-', 'announce', 0, b.ts, ann.payload.length, ann.payload));
-    if (!ctEq(expect, ann.sig)) { this._warn('bad announce HMAC (forged bridge.live?) — ignored'); return false; }
-    if (this._now() - b.ts > LIVENESS_MS) { this._log('bridge.live stale — bridge presumed down'); return 'stale'; }
-    if (this.session !== b.session) {            // first sight or a bridge restart → fresh connection
+    var all = await this._readAnnounces();
+    if (!all.length) return false;                                   // no/forged announce → still dialing
+    var live = all.filter(function (a) { return !a.stale; }).sort(function (a, b) { return b.ts - a.ts; });
+    if (!live.length) { this._log('announce(s) stale — bridge presumed down'); return 'stale'; }
+    var b = live[0];                                                 // adopt the freshest live bridge
+    if (this.session !== b.session) {            // first sight or a bridge restart/switch → fresh connection
       this.session = b.session;
       this.epoch = this._rand();
       this._resetConn();
@@ -6101,9 +6139,18 @@ const GcuFsChannel = (function () {
       if (this._now() - this._lastAnnounce > ANNOUNCE_INTERVAL_MS) await this._announce();  // slow refresh — the only periodic write
       await this._adoptEpoch();
       if (!this.epoch) return;                                           // no page has dialled yet
+    } else if (this._pinnedSession) {                                    // host pinned us to one bridge (multi-bridge folder)
+      if (this.session !== this._pinnedSession) {                        // first tick → mint the epoch, dial in
+        this.session = this._pinnedSession;
+        this.epoch = this._rand();
+        this._resetConn();
+        await this._dir.mkdirp(this._epochDir('to-bridge'));
+        await this._dir.mkdirp(this._epochDir('to-page'));
+      }
+      this._setState('open');                                           // liveness is the host's job (it drops us when the announce goes stale)
     } else {
       var ok = await this._discover();
-      if (ok === 'stale') { this._setState('offline'); return; }         // bridge.live present but heartbeat dead → bridge process down (not just dialing)
+      if (ok === 'stale') { this._setState('offline'); return; }         // announce present but heartbeat dead → bridge process down (not just dialing)
       if (!ok) { this._setState('connecting'); return; }                 // no/forged announce → still dialing
       this._setState('open');                                            // the bridge is announcing
     }
@@ -6194,19 +6241,29 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     }
   }
 
-  function _serializeTools() {
+  // The wire tool list for a given caller identity. A tool may carry `scopeIdentities` (an
+  // array, NOT serialized to the wire) — then it's visible ONLY to channels whose identity is
+  // in it (e.g. dev-only debug tools for claude:dev). Unscoped tools go to everyone. The gate
+  // in _handleInvoke enforces the same at call time (visibility alone isn't a security boundary).
+  function _serializeTools(identity) {
     var tools = [];
     _tools.forEach(function (tool) {
+      if (tool.scopeIdentities && tool.scopeIdentities.indexOf(identity || null) === -1) return;
       tools.push({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema || undefined, annotations: tool.annotations || undefined });
     });
     return tools;
   }
 
-  // Push the current tool list to every live transport (the ws/http one + each fs channel).
+  // Push the current tool list to every live transport — the ws/http one, and each fs SUB-channel
+  // (one per bridge in a folder, multichannel-shared-folder.md), with the list scoped to that
+  // channel's identity.
   function _broadcastToolsChanged() {
-    var payload = { type: 'tools_changed', tools: _serializeTools() };
-    if (_transport && _state === 'connected') _send(payload);
-    _fsChannels.forEach(function (e) { if (e.channel && e.state === 'connected') e.channel.send(payload); });
+    if (_transport && _state === 'connected') _send({ type: 'tools_changed', tools: _serializeTools(_identity) });
+    _fsChannels.forEach(function (e) {
+      e.subs.forEach(function (sub) {
+        if (sub.channel && sub.state === 'connected') sub.channel.send({ type: 'tools_changed', tools: _serializeTools(e.identity) });
+      });
+    });
   }
 
   function _derivedName() {
@@ -6397,18 +6454,12 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     _setState(any ? 'connected' : connecting ? 'connecting' : 'disconnected');
   }
 
-  // Per-channel state/identity context — onWelcome/onError scoped to one fs channel.
-  function _fsCtx(entry) {
-    return {
-      identity: entry.identity,
-      onWelcome: function (id) { entry.clientId = id; entry.state = 'connected'; _emitChannel(entry); _recomputeFsState(); },
-      onError: function () { entry.state = 'error'; _emitChannel(entry); _recomputeFsState(); },
-    };
-  }
-
-  // Add (or replace, idempotent on id) one fs channel over a folder handle. Each
-  // channel runs its own poll loop and shares the page's _tools registry; replies +
-  // identity route per channel via _fsCtx. opts: { id, handle, token, identity }.
+  // Add (or replace, idempotent on id) one fs channel FOLDER. A folder may host MULTIPLE
+  // bridges at once (shared-folder multichannel, docs/multichannel-shared-folder.md): each poll
+  // tick we enumerate the folder's announces (`live/<session>.json`) and run one page SUB-CHANNEL
+  // pinned to each live bridge — all carrying the folder's identity (folder = identity), each its
+  // own clientId. The single-bridge case is just N=1, byte-identical in behaviour. opts:
+  // { id, handle, token, identity }.
   async function _addFolder(opts) {
     var FsChannel = _fsChannelCtor();
     if (!FsChannel) throw new Error('fs transport needs fs-channel.js (global GcuFsChannel) on the page');
@@ -6418,39 +6469,65 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     if (!opts || !opts.handle) throw new Error('addFolder needs a directory handle');
     if (!token) throw new Error('addFolder needs the machine token');
     _removeFolder(id);   // idempotent: re-adding an id replaces it
-    var entry = { id: id, handle: opts.handle, token: token, identity: opts.identity || null, channel: null, clientId: null, state: 'connecting', timer: null, polling: true };
+    var hmac = await _fsHmac(token, _effectiveName());
+    var dir = _fsaDir(opts.handle);
+    var now = function () { return Date.now(); };
+    var rand = function () { return _randHex(8); };
+    var warn = function (m) { if (typeof console !== 'undefined') console.warn('[numen] fs[' + id + ']:', m); };
+    var entry = { id: id, handle: opts.handle, token: token, identity: opts.identity || null, subs: new Map(), clientId: null, state: 'connecting', timer: null, polling: true };
     _fsChannels.set(id, entry);
     _emitChannel(entry); _recomputeFsState();
-    var hmac = await _fsHmac(token, _effectiveName());
-    var channel = new FsChannel({
-      role: 'page', dir: _fsaDir(opts.handle), hmac: hmac,
-      now: function () { return Date.now(); },
-      randomId: function () { return _randHex(8); },
-      onMessage: function (msg) { _handleMessage(msg, function (o) { channel.send(o); }, _fsCtx(entry)); },
-      onState: function (s) {
-        // entry.state is normally driven by the app-level handshake (onWelcome→connected /
-        // onError→error); the channel transport states we surface are: 'closed'→disconnected,
-        // and 'offline' (bridge.live heartbeat stale → bridge process down) so the host can show
-        // it honestly instead of an eternal "connecting". 'open' after 'offline' = the bridge
-        // returned → back to handshaking ('connecting'; onWelcome will re-confirm 'connected').
-        var next = s === 'closed' ? 'disconnected'
-          : s === 'offline' ? 'offline'
-          : (s === 'open' && entry.state === 'offline') ? 'connecting'
-          : null;
-        if (next && next !== entry.state) { entry.state = next; _emitChannel(entry); _recomputeFsState(); }
-      },
-      onWarn: function (m) { if (typeof console !== 'undefined') console.warn('[numen] fs[' + id + ']:', m); },
-    });
-    entry.channel = channel;
-    channel.send({ type: 'hello', protocol: PROTOCOL, title: (typeof document !== 'undefined' && document.title) || 'Untitled', name: _effectiveName(), path: (typeof location !== 'undefined' && location.href) || '' });
-    channel.send({ type: 'tools_changed', tools: _serializeTools() });
-    await channel.start();
+
+    // a page channel used ONLY to enumerate the folder's live bridges (no session, never ticked)
+    var scanner = new FsChannel({ role: 'page', dir: dir, hmac: hmac, now: now, randomId: rand, onWarn: warn });
+
+    // Aggregate the sub-channels into the entry's state (one row per folder for the host UI):
+    // connected if ANY bridge connected; offline if the only announce(s) are stale (bridge down);
+    // else connecting. Emit only on a real change (mirrors the pre-multichannel behaviour).
+    function reaggregate(staleOnly) {
+      var any = false; entry.clientId = null;
+      entry.subs.forEach(function (s) { if (s.state === 'connected') { any = true; if (!entry.clientId) entry.clientId = s.clientId; } });
+      var next = any ? 'connected' : (entry.subs.size ? 'connecting' : (staleOnly ? 'offline' : 'connecting'));
+      if (next !== entry.state) { entry.state = next; _emitChannel(entry); _recomputeFsState(); }
+    }
+
+    function makeSub(session) {
+      var sub = { session: session, channel: null, clientId: null, state: 'connecting' };
+      var channel = new FsChannel({
+        role: 'page', dir: dir, hmac: hmac, session: session, now: now, randomId: rand,
+        onMessage: function (msg) { _handleMessage(msg, function (o) { channel.send(o); }, {
+          identity: entry.identity,
+          onWelcome: function (cid) { sub.clientId = cid; sub.state = 'connected'; reaggregate(); },
+          onError: function () { sub.state = 'error'; reaggregate(); },
+        }); },
+        onWarn: warn,
+      });
+      sub.channel = channel;
+      channel.send({ type: 'hello', protocol: PROTOCOL, title: (typeof document !== 'undefined' && document.title) || 'Untitled', name: _effectiveName(), path: (typeof location !== 'undefined' && location.href) || '' });
+      channel.send({ type: 'tools_changed', tools: _serializeTools(entry.identity) });
+      channel.start();   // page start is a noop; the pinned channel mints its epoch on the first tick
+      return sub;
+    }
+
     var busy = false;
     entry.timer = setInterval(function () {
       if (busy || !entry.polling) return;
       busy = true;
-      Promise.resolve().then(function () { return channel.tick(); })
-        .catch(function (e) { if (typeof console !== 'undefined') console.error('[numen] fs[' + id + '] tick', e); })
+      Promise.resolve().then(function () { return scanner._readAnnounces(); }).then(function (all) {
+        var liveSet = {}, staleOnly = all.length > 0;
+        for (var i = 0; i < all.length; i++) {
+          if (all[i].stale) continue;
+          staleOnly = false;
+          liveSet[all[i].session] = true;
+          if (!entry.subs.has(all[i].session)) entry.subs.set(all[i].session, makeSub(all[i].session));   // a NEW bridge appeared
+        }
+        var dead = [];
+        entry.subs.forEach(function (sub, session) { if (!liveSet[session]) dead.push(session); });        // a bridge went away/stale
+        for (var k = 0; k < dead.length; k++) { try { entry.subs.get(dead[k]).channel.stop(); } catch (e) {} entry.subs.delete(dead[k]); }
+        var ticks = [];
+        entry.subs.forEach(function (sub) { ticks.push(sub.channel.tick()); });
+        return Promise.all(ticks).then(function () { reaggregate(staleOnly); });
+      }).catch(function (e) { if (typeof console !== 'undefined') console.error('[numen] fs[' + id + '] tick', e); })
         .then(function () { busy = false; });
     }, FS_POLL_MS);
     return entry;
@@ -6461,7 +6538,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     if (!e) return;
     e.polling = false;
     if (e.timer) { clearInterval(e.timer); e.timer = null; }
-    if (e.channel) { try { e.channel.stop(); } catch (x) { /* ignore */ } }
+    if (e.subs) e.subs.forEach(function (s) { try { s.channel.stop(); } catch (x) { /* ignore */ } });
     _fsChannels.delete(id);
     e.state = 'disconnected'; _emitChannel(e);
     _recomputeFsState();
@@ -6479,6 +6556,9 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
   function _handleInvoke(msg, reply, identity) {
     var tool = _tools.get(msg.name);
     if (!tool) { reply({ type: 'tool_result', callId: msg.callId, error: 'Tool not found: ' + msg.name }); return; }
+    if (tool.scopeIdentities && tool.scopeIdentities.indexOf(identity || null) === -1) {   // scoped tool, wrong identity — hidden AND ungated
+      reply({ type: 'tool_result', callId: msg.callId, error: 'Tool not available to ' + (identity || 'this client') + ': ' + msg.name }); return;
+    }
     // `identity` is the calling channel's (folder = identity) — carried into execution
     // so a tool can attribute the write (SPEC-librarian §2). null on ws/http.
     var client = { requestUserInteraction: function (cb) { return cb(); }, identity: identity || null };
@@ -6575,7 +6655,7 @@ if (typeof globalThis !== 'undefined') globalThis.GcuFsChannel = GcuFsChannel;
     notify: function (method, params) {
       var obj = { type: 'notification', method: method, params: params };
       if (_transport) _send(obj);
-      _fsChannels.forEach(function (e) { if (e.channel) e.channel.send(obj); });
+      _fsChannels.forEach(function (e) { e.subs.forEach(function (s) { if (s.channel) s.channel.send(obj); }); });
     },
     get state() { return _state; },
     get clientId() { return _clientId; },
@@ -25924,6 +26004,7 @@ const TOOLS = [
   },
   {
     name: 'weir_mcpDiag', fn: 'mcpDiag',
+    scopeIdentities: ['claude:dev'],   // dev-only: the librarian + generic seats don't see/run this
     description: "Diagnostics for weir's numen fs channels (transport debugging — for tracking down why a channel won't connect). No input. Per known channel returns: connection state + clientId, whether a token is set, the folder-handle NAME it points at, what weir reads from that folder's bridge.live (present? session, ageMs, fresh under 90s?), and the folder's top-level entries. Reading: bridgeLive absent or stale while the bridge insists it is announcing ⇒ FOLDER MISMATCH (weir and the bridge are on different directories); bridgeLive fresh but clientId null ⇒ STALE HANDSHAKE (re-dial / token). If a channel shows hasHandle:false, open weir Settings → Connections once to cache the handle, then re-run.",
     inputSchema: { type: 'object', properties: {} },
     annotations: { title: 'Diagnose numen fs channels', readOnlyHint: true },
@@ -25945,7 +26026,7 @@ function initWebmcp({ store, app, fetch }) {
     ensureCards: async () => { if (app && app.loadCardFacets && (!app._cardFacets || app._cardFacets.size === 0)) await app.loadCardFacets(); },
   });
   for (const t of TOOLS) {
-    mc.registerTool({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations, execute: (input, client) => tools[t.fn](input || {}, client) });
+    mc.registerTool({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations, scopeIdentities: t.scopeIdentities, execute: (input, client) => tools[t.fn](input || {}, client) });
   }
 
   if (wm) {
@@ -26048,7 +26129,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = '0c14a73';          // short content hash of the bundle (build id)
+const COMMIT = 'ee1cf67';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };
