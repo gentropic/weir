@@ -15147,6 +15147,23 @@ class Store {
     this._markVocabDirty(facet);
     return this.getConcept(facet, term);
   }
+  // Hierarchical roll-up (GLASS §7 thesaurus): given facet terms, return a Set INCLUDING every
+  // transitive skos:narrower term (walk the tree). Selecting a parent (japan) thus catches its
+  // children (tokyo → its wards, …). Cycle-safe; flat/unlinked terms come back unchanged. Used by
+  // the faceted browse + weir_queryCatalog so a parent selection intersects on the whole subtree.
+  descendantTerms(facet, terms) {
+    const out = new Set();
+    for (const t of (terms || [])) out.add(String(t).toLowerCase().trim());
+    const v = this.vocab[facet];
+    if (!v) return out;
+    const stack = [...out];
+    while (stack.length) {
+      const c = v[stack.pop()];
+      if (!c || !c.narrower) continue;
+      for (const n of c.narrower) if (!out.has(n)) { out.add(n); stack.push(n); }
+    }
+    return out;
+  }
   // SKOS JSON-LD export — proves the shape is a standard, not a bespoke format.
   vocabExportSkos(facet) {
     const facets = facet ? [facet] : Object.keys(this.vocab);
@@ -20640,7 +20657,7 @@ class App {
     for (const [facet, terms] of Object.entries(this.catalog.filters)) {
       if (!terms.size) continue;
       const u = new Set();
-      for (const t of terms) for (const id of (idx[facet].get(t) || [])) u.add(id);
+      for (const t of this.store.descendantTerms(facet, terms)) for (const id of (idx[facet].get(t) || [])) u.add(id);   // roll-up: a parent selection catches its subtree (japan → tokyo)
       unions.push(u);
     }
     let ids;
@@ -20648,7 +20665,7 @@ class App {
     else { ids = unions[0]; for (let k = 1; k < unions.length; k++) ids = new Set([...ids].filter((id) => unions[k].has(id))); }
     // Exclusions (NOT): drop any item carrying an excluded term.
     for (const [facet, terms] of Object.entries(this.catalog.excludes || {})) {
-      for (const t of terms) for (const id of (idx[facet].get(t) || [])) ids.delete(id);
+      for (const t of this.store.descendantTerms(facet, terms)) for (const id of (idx[facet].get(t) || [])) ids.delete(id);   // exclude a parent → exclude its subtree
     }
     const needle = this.searchText ? this.searchText.toLowerCase() : null;
     const out = [];
@@ -20773,16 +20790,20 @@ class App {
     const excludes = this.catalog.excludes || {};
     const exActive = Object.keys(excludes).filter((f) => excludes[f] && excludes[f].size);
     const total = active.length;
+    // roll-up: expand each include/exclude selection to its transitive narrower subtree ONCE
+    // (not per item), so the counts agree with catalogQuery's hierarchical filtering.
+    const selExp = {}; for (const af of active) selExp[af] = this.store.descendantTerms(af, filters[af]);
+    const exExp = {}; for (const xf of exActive) exExp[xf] = this.store.descendantTerms(xf, excludes[xf]);
     for (const item of this.store.items.values()) {
       if (item.archived) continue;
       const ff = (this._cardFacets && this._cardFacets.get(item.id)) || facetsOf(item, this.store.getFeed(item.feed_id));
       // excluded items are out of the result entirely (NOT)
       let dropped = false;
-      for (const xf of exActive) { for (const t of (ff[xf] || [])) if (excludes[xf].has(t)) { dropped = true; break; } if (dropped) break; }
+      for (const xf of exActive) { for (const t of (ff[xf] || [])) if (exExp[xf].has(t)) { dropped = true; break; } if (dropped) break; }
       if (dropped) continue;
       let matched = 0, missFacet = null;
       for (const af of active) {
-        const sel = filters[af]; let hit = false;
+        const sel = selExp[af]; let hit = false;
         for (const t of (ff[af] || [])) if (sel.has(t)) { hit = true; break; }
         if (hit) matched++; else missFacet = af;
       }
@@ -24397,7 +24418,15 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
 
     // Intersect across facets over the live facet source (cataloged → card facets, else
     // deterministic Stage-0). Track which requested terms actually land a hit.
-    const matched = {};   // facet → Set<term> that hit ≥1 item
+    // Roll-up (GLASS §7): each requested term stands for its whole subtree (japan ⊇ tokyo). Match
+    // on the expanded set, but credit the REQUESTED term when one of its descendants lands — so the
+    // fail-loud check + `why` still speak in the terms the caller asked for.
+    const expanded = {}, reqExp = {};
+    for (const [facet, set] of Object.entries(want)) {
+      expanded[facet] = store.descendantTerms(facet, set);
+      reqExp[facet] = new Map(); for (const t of set) reqExp[facet].set(t, store.descendantTerms(facet, [t]));
+    }
+    const matched = {};   // facet → Set<requested term> that hit ≥1 item (via its subtree)
     const noArchive = input.includeArchived === false;   // reference-desk default: include the archive
     const hits = [];
     for (const it of store.items.values()) {
@@ -24405,12 +24434,15 @@ function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       const f = facetsFor(it);
       const why = {}; let ok = true;
       for (const [facet, set] of Object.entries(want)) {
-        const vals = (f[facet] || []).filter((v) => set.has(String(v).toLowerCase()));
+        const vals = (f[facet] || []).map((v) => String(v).toLowerCase()).filter((v) => expanded[facet].has(v));
         if (!vals.length) { ok = false; break; }
         why[facet] = vals;
       }
       if (!ok) continue;
-      for (const [facet, vs] of Object.entries(why)) { const s = matched[facet] || (matched[facet] = new Set()); for (const v of vs) s.add(String(v).toLowerCase()); }
+      for (const [facet, vs] of Object.entries(why)) {
+        const s = matched[facet] || (matched[facet] = new Set());
+        for (const [reqT, descSet] of reqExp[facet]) if (vs.some((v) => descSet.has(v))) s.add(reqT);
+      }
       hits.push({ it, why });
     }
 
@@ -26220,7 +26252,7 @@ function initWebmcp({ store, app, fetch }) {
 
 const VERSION = '0.0.0';        // replaced at build time
 const BUILD_DATE = '';  // replaced at build time
-const COMMIT = 'b97bf71';          // short content hash of the bundle (build id)
+const COMMIT = '7f97aa3';          // short content hash of the bundle (build id)
 
 const $ = (id) => document.getElementById(id);
 const setText = (id, t) => { const el = $(id); if (el) el.textContent = t; };

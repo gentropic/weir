@@ -1085,7 +1085,7 @@ export class App {
     for (const [facet, terms] of Object.entries(this.catalog.filters)) {
       if (!terms.size) continue;
       const u = new Set();
-      for (const t of terms) for (const id of (idx[facet].get(t) || [])) u.add(id);
+      for (const t of this.store.descendantTerms(facet, terms)) for (const id of (idx[facet].get(t) || [])) u.add(id);   // roll-up: a parent selection catches its subtree (japan → tokyo)
       unions.push(u);
     }
     let ids;
@@ -1093,7 +1093,7 @@ export class App {
     else { ids = unions[0]; for (let k = 1; k < unions.length; k++) ids = new Set([...ids].filter((id) => unions[k].has(id))); }
     // Exclusions (NOT): drop any item carrying an excluded term.
     for (const [facet, terms] of Object.entries(this.catalog.excludes || {})) {
-      for (const t of terms) for (const id of (idx[facet].get(t) || [])) ids.delete(id);
+      for (const t of this.store.descendantTerms(facet, terms)) for (const id of (idx[facet].get(t) || [])) ids.delete(id);   // exclude a parent → exclude its subtree
     }
     const needle = this.searchText ? this.searchText.toLowerCase() : null;
     const out = [];
@@ -1218,16 +1218,20 @@ export class App {
     const excludes = this.catalog.excludes || {};
     const exActive = Object.keys(excludes).filter((f) => excludes[f] && excludes[f].size);
     const total = active.length;
+    // roll-up: expand each include/exclude selection to its transitive narrower subtree ONCE
+    // (not per item), so the counts agree with catalogQuery's hierarchical filtering.
+    const selExp = {}; for (const af of active) selExp[af] = this.store.descendantTerms(af, filters[af]);
+    const exExp = {}; for (const xf of exActive) exExp[xf] = this.store.descendantTerms(xf, excludes[xf]);
     for (const item of this.store.items.values()) {
       if (item.archived) continue;
       const ff = (this._cardFacets && this._cardFacets.get(item.id)) || facetsOf(item, this.store.getFeed(item.feed_id));
       // excluded items are out of the result entirely (NOT)
       let dropped = false;
-      for (const xf of exActive) { for (const t of (ff[xf] || [])) if (excludes[xf].has(t)) { dropped = true; break; } if (dropped) break; }
+      for (const xf of exActive) { for (const t of (ff[xf] || [])) if (exExp[xf].has(t)) { dropped = true; break; } if (dropped) break; }
       if (dropped) continue;
       let matched = 0, missFacet = null;
       for (const af of active) {
-        const sel = filters[af]; let hit = false;
+        const sel = selExp[af]; let hit = false;
         for (const t of (ff[af] || [])) if (sel.has(t)) { hit = true; break; }
         if (hit) matched++; else missFacet = af;
       }

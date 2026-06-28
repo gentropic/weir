@@ -1677,6 +1677,23 @@ export class Store {
     this._markVocabDirty(facet);
     return this.getConcept(facet, term);
   }
+  // Hierarchical roll-up (GLASS §7 thesaurus): given facet terms, return a Set INCLUDING every
+  // transitive skos:narrower term (walk the tree). Selecting a parent (japan) thus catches its
+  // children (tokyo → its wards, …). Cycle-safe; flat/unlinked terms come back unchanged. Used by
+  // the faceted browse + weir_queryCatalog so a parent selection intersects on the whole subtree.
+  descendantTerms(facet, terms) {
+    const out = new Set();
+    for (const t of (terms || [])) out.add(String(t).toLowerCase().trim());
+    const v = this.vocab[facet];
+    if (!v) return out;
+    const stack = [...out];
+    while (stack.length) {
+      const c = v[stack.pop()];
+      if (!c || !c.narrower) continue;
+      for (const n of c.narrower) if (!out.has(n)) { out.add(n); stack.push(n); }
+    }
+    return out;
+  }
   // SKOS JSON-LD export — proves the shape is a standard, not a bespoke format.
   vocabExportSkos(facet) {
     const facets = facet ? [facet] : Object.keys(this.vocab);

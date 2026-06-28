@@ -18,9 +18,9 @@ await store.upsertItems([
 // Injected catalog facets (as if cataloged) — the topical facets queryCatalog intersects.
 const F = (o) => ({ domain: [], entity: [], process: [], method: [], scale: [], spatial: [], stance: [], form: [], provenance: [], temporal: [], ...o });
 const facets = new Map([
-  ['i1', F({ domain: ['geostatistics'], entity: ['kriging', 'iron-ore'], process: ['estimation'], form: ['paper'] })],
-  ['i2', F({ domain: ['geostatistics', 'geology'], entity: ['itabirite', 'iron-ore'], form: ['video'] })],
-  ['i3', F({ domain: ['gaming'], entity: ['minecraft'], form: ['video'] })],
+  ['i1', F({ domain: ['geostatistics'], entity: ['kriging', 'iron-ore'], process: ['estimation'], form: ['paper'], spatial: ['tokyo'] })],
+  ['i2', F({ domain: ['geostatistics', 'geology'], entity: ['itabirite', 'iron-ore'], form: ['video'], spatial: ['osaka'] })],
+  ['i3', F({ domain: ['gaming'], entity: ['minecraft'], form: ['video'], spatial: ['paris'] })],
 ]);
 store.items.get('i1').glass_id = 'g1';   // a cataloged item → glass_id surfaces in output
 
@@ -70,7 +70,19 @@ r = await tools.queryCatalog({ facets: { entity: ['kriging'] }, includeArchived:
 assert.ok(!r.items.some((x) => x.id === 'i1'), 'includeArchived:false excludes the archived item');
 store.items.get('i1').archived = false;   // restore
 
+// ── hierarchical roll-up (GLASS §7 thesaurus): a parent term catches its subtree ──
+store.setVocabRelation('spatial', 'japan', 'narrower', ['tokyo', 'osaka']);   // japan ⊃ tokyo, osaka
+store.setVocabRelation('spatial', 'asia', 'narrower', ['japan']);             // asia ⊃ japan (transitive)
+assert.deepEqual([...store.descendantTerms('spatial', ['japan'])].sort(), ['japan', 'osaka', 'tokyo'], 'descendantTerms walks narrower');
+assert.deepEqual([...store.descendantTerms('spatial', ['asia'])].sort(), ['asia', 'japan', 'osaka', 'tokyo'], 'descendantTerms is transitive');
+r = await tools.queryCatalog({ facets: { spatial: ['japan'] } });
+assert.deepEqual(r.items.map((x) => x.id).sort(), ['i1', 'i2'], 'spatial:japan rolls up to tokyo+osaka items (not paris)');
+assert.ok(r.items.find((x) => x.id === 'i1').matchedTerms.spatial.includes('tokyo'), 'matchedTerms reports the item\'s actual child term (tokyo) that satisfied the parent query');
+assert.ok(!(r.vocabularyNotes || []).some((n) => n.term === 'japan' && /0 items/.test(n.note)), 'the parent (japan), credited via its subtree, is NOT flagged zero-hit');
+r = await tools.queryCatalog({ facets: { spatial: ['asia'] } });
+assert.deepEqual(r.items.map((x) => x.id).sort(), ['i1', 'i2'], 'spatial:asia rolls up transitively (asia→japan→tokyo/osaka)');
+
 // ── validation: facets is required ──
 await assert.rejects(tools.queryCatalog({}), /facets/, 'missing facets throws a helpful error');
 
-console.log('queryCatalog (facet intersection) smoke ok');
+console.log('queryCatalog (facet intersection + roll-up) smoke ok');

@@ -306,7 +306,15 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
 
     // Intersect across facets over the live facet source (cataloged → card facets, else
     // deterministic Stage-0). Track which requested terms actually land a hit.
-    const matched = {};   // facet → Set<term> that hit ≥1 item
+    // Roll-up (GLASS §7): each requested term stands for its whole subtree (japan ⊇ tokyo). Match
+    // on the expanded set, but credit the REQUESTED term when one of its descendants lands — so the
+    // fail-loud check + `why` still speak in the terms the caller asked for.
+    const expanded = {}, reqExp = {};
+    for (const [facet, set] of Object.entries(want)) {
+      expanded[facet] = store.descendantTerms(facet, set);
+      reqExp[facet] = new Map(); for (const t of set) reqExp[facet].set(t, store.descendantTerms(facet, [t]));
+    }
+    const matched = {};   // facet → Set<requested term> that hit ≥1 item (via its subtree)
     const noArchive = input.includeArchived === false;   // reference-desk default: include the archive
     const hits = [];
     for (const it of store.items.values()) {
@@ -314,12 +322,15 @@ export function buildWeirTools({ store, cardFacets, ensureCards, app } = {}) {
       const f = facetsFor(it);
       const why = {}; let ok = true;
       for (const [facet, set] of Object.entries(want)) {
-        const vals = (f[facet] || []).filter((v) => set.has(String(v).toLowerCase()));
+        const vals = (f[facet] || []).map((v) => String(v).toLowerCase()).filter((v) => expanded[facet].has(v));
         if (!vals.length) { ok = false; break; }
         why[facet] = vals;
       }
       if (!ok) continue;
-      for (const [facet, vs] of Object.entries(why)) { const s = matched[facet] || (matched[facet] = new Set()); for (const v of vs) s.add(String(v).toLowerCase()); }
+      for (const [facet, vs] of Object.entries(why)) {
+        const s = matched[facet] || (matched[facet] = new Set());
+        for (const [reqT, descSet] of reqExp[facet]) if (vs.some((v) => descSet.has(v))) s.add(reqT);
+      }
       hits.push({ it, why });
     }
 
